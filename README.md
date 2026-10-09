@@ -2,7 +2,12 @@
 
 ![Classmate](app/public/logo.svg)
 
-Arayüz projesi: [app/](app/README.md) (React + Tailwind, 21st.dev/shadcn uyumlu bileşenler).
+Uygulama: [app/](app/README.md) (React + Tailwind arayüz, Node API, PostgreSQL).
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Grikardinal/classmate)
+
+> **Demo:** Uydurma örnek verilerle çalışır. Personel girişi `/giris` (demo hesapları giriş ekranında, parola `Classmate2026`),
+> veli girişi `/veli` (SMS kodu demo modunda ekranda gösterilir). Ücretsiz sunucuda veriler yeniden başlatmada sıfırlanır.
 
 3–8. sınıf öğrencilerine ders veren **kendi kurumumuz** için kayıt, ödeme, ders programı, yoklama,
 ödev ve veli iletişimini tek yerde toplayan otomasyon sistemi.

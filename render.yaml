@@ -1,0 +1,19 @@
+# Render.com kurulum tarifi: README'deki "Deploy to Render" düğmesi bu dosyayı kullanır.
+# Ücretsiz planda disk kalıcı değildir: uygulama her yeniden başladığında örnek (demo) veriyle sıfırdan kurulur.
+services:
+  - type: web
+    name: classmate-demo
+    runtime: node
+    plan: free
+    rootDir: app
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/durum
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: DEMO
+        value: "1"
+      - key: SMS_SAGLAYICI
+        value: konsol
