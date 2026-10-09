@@ -1,0 +1,43 @@
+{
+  "name": "classmate",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch --clear-screen=false server/index.ts",
+    "dev:web": "vite",
+    "start": "tsx server/index.ts --uretim",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "@hono/node-server": "^1.14.4",
+    "clsx": "2.1.1",
+    "hono": "^4.6.20",
+    "lucide-react": "0.460.0",
+    "pg": "^8.13.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.28.0",
+    "tailwind-merge": "2.5.4",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "@types/node": "22.10.1",
+    "@types/pg": "^8.11.11",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@types/web-push": "^3.6.4",
+    "@vitejs/plugin-react": "4.3.4",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.1.4",
+    "tsx": "^4.19.4",
+    "typescript": "5.6.3",
+    "vite": "6.0.3",
+    "vitest": "^3.0.5"
+  }
+}
