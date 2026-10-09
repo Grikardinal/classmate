@@ -11,6 +11,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { baglan, semaKur } from "./veritabani";
 import { pushHazirla, smsSaglayiciOlustur } from "./gonderim";
 import { uygulamaOlustur } from "./uygulama";
+import { zamaniGuncelle } from "../src/data/model";
 
 // .env dosyası varsa yükle (basit KEY=VALUE)
 if (existsSync(".env"))
@@ -18,6 +19,10 @@ if (existsSync(".env"))
     const m = satir.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
     if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
+
+// Kurum saati: sunucu UTC'de çalışsa da "bugün", yoklama gecikmesi ve hatırlatmalar Türkiye saatine göre hesaplanır
+process.env.TZ ||= "Europe/Istanbul";
+zamaniGuncelle();
 
 const uretim = process.env.NODE_ENV === "production" || process.argv.includes("--uretim");
 const demo = process.env.DEMO !== "0";
