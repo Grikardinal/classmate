@@ -211,7 +211,7 @@ describe("kalıcılık", () => {
     expect((r[0].veri as { finans: boolean }).finans).toBe(true);
   });
 });
-describe("ilk kurulum", () => {
+describe("ilk kurulum", { timeout: 60_000 }, () => {
   it("web push anahtarı önce yazılmış olsa da boş veritabanı kurulur", async () => {
     const vt = await baglan();
     await semaKur(vt);

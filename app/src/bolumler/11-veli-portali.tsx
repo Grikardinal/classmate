@@ -352,19 +352,20 @@ function PortalKabuk({ children }: { children: React.ReactNode }) {
     { to: "/veli/profil", ad: "Profil ve izinler", ikon: UserRound },
   ];
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col bg-background">
-      <header className="sticky top-0 z-30 border-b bg-background/90 px-4 pb-3 pt-3 backdrop-blur">
+    <div className="relative mx-auto flex min-h-dvh max-w-md flex-col">
+      <div className="aurora" aria-hidden />
+      <header className="sticky top-0 z-30 border-b border-border/60 bg-background/70 px-4 pb-3 pt-3 backdrop-blur-xl">
         <div className="flex items-center justify-between">
           <Link to="/veli"><Logo /></Link>
           <div className="flex items-center gap-1">
-            <Link to="/veli/bildirimler" className="grid size-10 place-items-center rounded-full hover:bg-muted" aria-label="Bildirimler"><Bell className="size-5" /></Link>
-            <button onClick={() => setMenu(true)} className="grid size-10 place-items-center rounded-full hover:bg-muted" aria-label="Menü"><Menu className="size-5" /></button>
+            <Link to="/veli/bildirimler" className="grid size-10 place-items-center rounded-xl border border-border/70 bg-card/70 shadow-xs transition hover:border-primary/40" aria-label="Bildirimler"><Bell className="size-5" /></Link>
+            <button onClick={() => setMenu(true)} className="grid size-10 place-items-center rounded-xl border border-border/70 bg-card/70 shadow-xs transition hover:border-primary/40" aria-label="Menü"><Menu className="size-5" /></button>
           </div>
         </div>
         {cocuklar.length > 1 && (
-          <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto">
+          <div className="no-scrollbar -mx-1 mt-2 flex gap-2 overflow-x-auto px-1 py-1.5">
             {cocuklar.map((o) => (
-              <button key={o.id} onClick={() => setCocukId(o.id)} className={cn("flex shrink-0 items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm transition", o.id === cocuk.id ? "border-primary bg-accent font-medium text-accent-foreground" : "text-muted-foreground")}>
+              <button key={o.id} onClick={() => setCocukId(o.id)} className={cn("flex shrink-0 items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm font-semibold transition-all", o.id === cocuk.id ? "border-transparent bg-marka text-white shadow-glow" : "border-border/70 bg-card/70 text-muted-foreground")}>
                 <Avatar ad={tamAd(o)} className="size-7 text-[10px]" />
                 {o.ad} <span className="text-xs opacity-70">{grupEtiket(d, aktifKayit(d, o.id)!.grupId)}</span>
               </button>
@@ -372,10 +373,10 @@ function PortalKabuk({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </header>
-      <main className="flex-1 px-4 pb-24 pt-4">{children}</main>
-      <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto grid max-w-md border-t bg-background/95 backdrop-blur" style={{ gridTemplateColumns: `repeat(${alt.length}, 1fr)` }}>
+      <main className="relative z-10 flex-1 px-4 pb-28 pt-5">{children}</main>
+      <nav className="fixed inset-x-3 bottom-3 z-30 mx-auto grid max-w-[26rem] gap-1 rounded-2xl border border-border/70 bg-card/90 p-1.5 shadow-lift backdrop-blur-xl" style={{ gridTemplateColumns: `repeat(${alt.length}, 1fr)` }}>
         {alt.map((a) => (
-          <NavLink key={a.to} to={a.to} end={"end" in a && a.end} className={({ isActive }) => cn("relative flex flex-col items-center gap-0.5 py-2.5 text-[11px]", isActive ? "text-primary" : "text-muted-foreground")}>
+          <NavLink key={a.to} to={a.to} end={"end" in a && a.end} className={({ isActive }) => cn("relative flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold transition-all", isActive ? "bg-accent text-primary" : "text-muted-foreground hover:text-foreground")}>
             <a.ikon className="size-5" />
             {a.ad}
             {"rozet" in a && !!a.rozet && <span className="absolute right-[22%] top-1.5 grid size-4 place-items-center rounded-full bg-danger text-[9px] font-semibold text-white">{a.rozet}</span>}
@@ -384,16 +385,16 @@ function PortalKabuk({ children }: { children: React.ReactNode }) {
       </nav>
       {menu && (
         <div className="fixed inset-0 z-40">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMenu(false)} />
-          <div className="absolute inset-y-0 right-0 w-72 border-l bg-card p-4 shadow-xl">
+          <div className="absolute inset-0 animate-belir bg-[#14142b]/40 backdrop-blur-sm" onClick={() => setMenu(false)} />
+          <div className="absolute inset-y-0 right-0 w-72 animate-kay rounded-l-3xl border-l bg-card p-4 shadow-lift">
             <div className="mb-4 flex items-center justify-between">
               <div><p className="font-medium">{tamAd(veli)}</p><p className="text-xs text-muted-foreground">{veli.telefon}</p></div>
               <button onClick={() => setMenu(false)} className="grid size-9 place-items-center rounded-full hover:bg-muted" aria-label="Kapat"><X className="size-5" /></button>
             </div>
             <div className="grid gap-1">
               {diger.map((a) => (
-                <Link key={a.to} to={a.to} onClick={() => setMenu(false)} className="flex items-center gap-3 rounded-md px-3 py-3 text-sm hover:bg-muted">
-                  <a.ikon className="size-5 text-muted-foreground" /> {a.ad}
+                <Link key={a.to} to={a.to} onClick={() => setMenu(false)} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold hover:bg-muted">
+                  <span className="grid size-9 place-items-center rounded-xl bg-accent text-primary"><a.ikon className="size-[18px]" /></span> {a.ad}
                 </Link>
               ))}
             </div>
@@ -409,8 +410,8 @@ function Bolum({ baslik, children, link }: { baslik: string; children: React.Rea
   return (
     <section className="grid gap-2">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">{baslik}</h2>
-        {link && <Link to={link.to} className="text-xs text-primary">{link.ad}</Link>}
+        <h2 className="text-[15px] font-bold">{baslik}</h2>
+        {link && <Link to={link.to} className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-semibold text-primary">{link.ad} →</Link>}
       </div>
       {children}
     </section>
@@ -444,16 +445,28 @@ function PortalAnaSayfa() {
 
   return (
     <div className="grid gap-5">
-      <div>
-        <p className="text-sm text-muted-foreground">Merhaba {veli.ad} 👋</p>
-        <h1 className="text-xl font-semibold">{iyelik(cocuk.ad)} günü</h1>
-      </div>
+      <section className="relative overflow-hidden rounded-3xl bg-marka p-5 text-white shadow-glow">
+        <span className="pointer-events-none absolute -right-10 -top-12 size-40 rounded-full bg-white/15 blur-xl" />
+        <span className="pointer-events-none absolute -bottom-16 left-6 size-36 rounded-full bg-fuchsia-300/30 blur-2xl" />
+        <div className="relative flex items-center gap-3">
+          <Avatar ad={tamAd(cocuk)} className="size-14 text-base ring-4 ring-white/25" />
+          <div className="min-w-0">
+            <p className="text-sm text-white/80">Merhaba {veli.ad} 👋</p>
+            <h1 className="truncate text-2xl font-extrabold tracking-tight">{iyelik(cocuk.ad)} günü</h1>
+          </div>
+        </div>
+        <div className="relative mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+          <span className="rounded-full bg-white/20 px-2.5 py-1 backdrop-blur">{grupEtiket(d, k.grupId)}</span>
+          <span className="rounded-full bg-white/20 px-2.5 py-1 backdrop-blur">{s.ad}</span>
+          <span className="rounded-full bg-white px-2.5 py-1 text-primary">Bugün {bugun.filter((o) => !o.iptal && !o.tatil).length} ders</span>
+        </div>
+      </section>
 
       {!veli.pushAcik && !ogrenciModu && (
-        <div className="rounded-xl bg-primary p-4 text-primary-foreground">
-          <p className="font-semibold">Bildirimleri açın</p>
+        <div className="relative overflow-hidden rounded-2xl border border-amber-300/50 bg-gradient-to-br from-amber-50 to-orange-50 p-4 text-[#5a3a00] dark:from-amber-500/10 dark:to-orange-500/10 dark:text-amber-200">
+          <p className="font-bold">🔔 Bildirimleri açın</p>
           <p className="mt-1 text-sm opacity-90">Devamsızlık ve ders iptallerinden anında haberdar olun. iPhone'da önce “Ana Ekrana Ekle” deyin.</p>
-          <Button variant="secondary" className="mt-3 bg-white text-primary hover:bg-white/90" onClick={bildirimAc}><BellRing /> Bildirimleri aç</Button>
+          <Button className="mt-3" onClick={bildirimAc}><BellRing /> Bildirimleri aç</Button>
         </div>
       )}
 

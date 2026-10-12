@@ -34,7 +34,7 @@ export function BarChart({ veri, yukseklik = 180, birim = "", className }: { ver
             aria-label={`${v.etiket}: ${v.deger}${birim}`}
           >
             <span
-              className={cn("relative w-full max-w-10 rounded-t-[4px] bg-primary transition-opacity", aktif !== null && aktif !== i && "opacity-40", v.vurgu === false && "bg-primary/40")}
+              className={cn("relative w-full max-w-10 rounded-t-[6px] bg-gradient-to-t from-primary to-primary-2 transition-opacity", aktif !== null && aktif !== i && "opacity-40", v.vurgu === false && "bg-primary/40")}
               style={{ height: `${(v.deger / enBuyuk) * 100}%`, minHeight: v.deger > 0 ? 2 : 0 }}
             />
             {(i === maxIdx || aktif === i) && (

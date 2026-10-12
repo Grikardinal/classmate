@@ -10,14 +10,14 @@ type ButtonVariant = "default" | "outline" | "ghost" | "secondary" | "destructiv
 type ButtonSize = "default" | "sm" | "icon";
 
 const buttonVariants: Record<ButtonVariant, string> = {
-  default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
-  outline: "border bg-card hover:bg-muted",
+  default: "bg-marka text-primary-foreground shadow-glow hover:brightness-110 hover:-translate-y-px active:translate-y-0",
+  outline: "border bg-card shadow-xs hover:border-primary/40 hover:bg-accent/40",
   ghost: "hover:bg-muted",
   secondary: "bg-muted hover:bg-muted/70",
-  destructive: "bg-danger text-white hover:bg-danger/90",
+  destructive: "bg-danger text-white shadow-[0_8px_20px_-8px_rgb(229_72_77/0.6)] hover:brightness-110",
 };
 const buttonSizes: Record<ButtonSize, string> = {
-  default: "h-9 px-4",
+  default: "h-10 px-4",
   sm: "h-8 px-3 text-[13px]",
   icon: "size-9",
 };
@@ -29,7 +29,7 @@ export const Button = React.forwardRef<
   <button
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors",
+      "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold transition-all duration-200",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
       buttonVariants[variant],
       buttonSizes[size],
@@ -42,13 +42,13 @@ Button.displayName = "Button";
 
 /* Card */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-lg border bg-card shadow-xs", className)} {...props} />;
+  return <div className={cn("rounded-2xl border border-border/70 bg-card shadow-soft", className)} {...props} />;
 }
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex flex-col gap-1 p-5 pb-3", className)} {...props} />;
 }
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h3 className={cn("font-semibold leading-none tracking-tight", className)} {...props} />;
+  return <h3 className={cn("font-display text-[15px] font-bold leading-none tracking-tight", className)} {...props} />;
 }
 export function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
   return <p className={cn("text-sm text-muted-foreground", className)} {...props} />;
@@ -63,9 +63,9 @@ const badgeVariants: Record<BadgeVariant, string> = {
   default: "bg-accent text-accent-foreground",
   secondary: "bg-muted text-muted-foreground",
   outline: "border text-foreground",
-  success: "bg-success/10 text-success",
-  warning: "bg-warning/10 text-warning",
-  danger: "bg-danger/10 text-danger",
+  success: "bg-success/12 text-success ring-1 ring-inset ring-success/20",
+  warning: "bg-warning/12 text-warning ring-1 ring-inset ring-warning/25",
+  danger: "bg-danger/10 text-danger ring-1 ring-inset ring-danger/20",
 };
 export function Badge({
   className,
@@ -75,7 +75,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
         badgeVariants[variant],
         className,
       )}
@@ -86,7 +86,7 @@ export function Badge({
 
 /* Input / Select / Label */
 const fieldBase =
-  "h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none transition placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40";
+  "h-10 w-full rounded-xl border border-input bg-card px-3 text-sm shadow-xs outline-none transition placeholder:text-muted-foreground hover:border-primary/40 focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-60";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => <input ref={ref} className={cn(fieldBase, className)} {...props} />,
@@ -105,7 +105,7 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <label className="grid gap-1.5">
-      <span className="text-sm font-medium">{label}</span>
+      <span className="text-[13px] font-semibold">{label}</span>
       {children}
       {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
     </label>
@@ -134,7 +134,7 @@ export function Switch({
       onClick={() => onCheckedChange(!checked)}
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
-        checked ? "bg-primary" : "bg-input",
+        checked ? "bg-marka shadow-[0_2px_8px_-2px_rgb(91_76_240/0.6)]" : "bg-input",
       )}
     >
       <span
@@ -159,16 +159,16 @@ export function Tabs<T extends string>({
 }) {
   return (
     <div className="no-scrollbar -mx-1 overflow-x-auto">
-      <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+      <div className="inline-flex gap-1 rounded-2xl border border-border/70 bg-card/70 p-1 shadow-xs backdrop-blur">
         {items.map((it) => (
           <button
             key={it.value}
             onClick={() => onChange(it.value)}
             className={cn(
-              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition [&_svg]:size-4",
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-semibold transition-all duration-200 [&_svg]:size-4",
               value === it.value
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                ? "bg-marka text-white shadow-glow"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
             {it.icon}
@@ -191,13 +191,13 @@ export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTab
 export function Th({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={cn("h-10 border-b px-4 text-left align-middle text-xs font-medium uppercase tracking-wide text-muted-foreground", className)}
+      className={cn("h-10 border-b bg-muted/50 px-4 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground first:pl-5 last:pr-5", className)}
       {...props}
     />
   );
 }
 export function Td({ className, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={cn("border-b px-4 py-3 align-middle", className)} {...props} />;
+  return <td className={cn("border-b border-border/60 px-4 py-3 align-middle transition-colors first:pl-5 last:pr-5 [tr:hover>&]:bg-accent/30 [tr:last-child>&]:border-b-0", className)} {...props} />;
 }
 
 /* Dialog (sade modal) */
@@ -226,9 +226,9 @@ export function Dialog({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4">
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
-      <div role="dialog" aria-modal aria-label={title} className={cn("relative w-full rounded-xl border bg-card p-6 shadow-xl", wide ? "max-w-2xl" : "max-w-md")}>
-        <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="fixed inset-0 animate-belir bg-[#14142b]/40 backdrop-blur-sm" onClick={onClose} />
+      <div role="dialog" aria-modal aria-label={title} className={cn("relative w-full animate-buyu rounded-3xl border bg-card p-6 shadow-lift", wide ? "max-w-2xl" : "max-w-md")}>
+        <h2 className="text-lg font-bold">{title}</h2>
         {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
         <div className="mt-5 grid gap-4">{children}</div>
         {footer && <div className="mt-6 flex justify-end gap-2">{footer}</div>}
@@ -252,9 +252,14 @@ export function PageHeader({
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        {code && <p className="mb-1 text-xs font-medium uppercase tracking-wider text-primary">Bölüm {code}</p>}
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {description && <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>}
+        {code && (
+          <p className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-accent px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-accent-foreground">
+            <span className="size-1.5 rounded-full bg-marka" />
+            Bölüm {code}
+          </p>
+        )}
+        <h1 className="text-[28px] font-extrabold leading-tight tracking-tight">{title}</h1>
+        {description && <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex gap-2">{actions}</div>}
     </div>
@@ -267,7 +272,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
     <textarea
       ref={ref}
       className={cn(
-        "min-h-20 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs outline-none transition placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40",
+        "min-h-20 w-full rounded-xl border border-input bg-card px-3 py-2 text-sm shadow-xs outline-none transition placeholder:text-muted-foreground hover:border-primary/40 focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/15",
         className,
       )}
       {...props}
@@ -320,24 +325,37 @@ export function StatCard({
   tone?: "default" | "success" | "warning" | "danger";
   onClick?: () => void;
 }) {
+  // Anlamı olmayan (varsayılan) kartlar etiketlerine göre birkaç canlı tondan birini alır
+  const notr = [
+    { kutu: "from-primary to-primary-2", isik: "bg-primary/25" },
+    { kutu: "from-sky-500 to-cyan-400", isik: "bg-sky-400/25" },
+    { kutu: "from-fuchsia-500 to-pink-400", isik: "bg-fuchsia-400/25" },
+  ];
+  const ozet = [...label].reduce((t, c) => t + c.charCodeAt(0), 0);
   const tonlar = {
-    default: "bg-accent text-accent-foreground",
-    success: "bg-success/10 text-success",
-    warning: "bg-warning/10 text-warning",
-    danger: "bg-danger/10 text-danger",
-  };
+    default: notr[ozet % notr.length],
+    success: { kutu: "from-emerald-500 to-teal-400", isik: "bg-emerald-400/25" },
+    warning: { kutu: "from-amber-500 to-orange-400", isik: "bg-amber-400/25" },
+    danger: { kutu: "from-rose-500 to-pink-500", isik: "bg-rose-400/25" },
+  }[tone];
   const Kok = onClick ? "button" : "div";
   return (
     <Kok
       onClick={onClick}
-      className={cn("rounded-lg border bg-card p-4 text-left shadow-xs", onClick && "transition hover:border-primary/40")}
+      className={cn(
+        "group relative overflow-hidden rounded-2xl border border-border/70 bg-card p-4 text-left shadow-soft transition-all duration-300",
+        onClick && "hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lift",
+      )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{label}</p>
-        {icon && <span className={cn("grid size-8 place-items-center rounded-md [&_svg]:size-4", tonlar[tone])}>{icon}</span>}
+      <span className={cn("pointer-events-none absolute -right-8 -top-8 size-28 rounded-full blur-2xl transition-opacity duration-300 group-hover:opacity-100", tonlar.isik, onClick ? "opacity-60" : "opacity-50")} />
+      <div className="relative flex items-center justify-between gap-2">
+        <p className="text-[13px] font-semibold text-muted-foreground">{label}</p>
+        {icon && (
+          <span className={cn("grid size-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-md [&_svg]:size-[18px]", tonlar.kutu)}>{icon}</span>
+        )}
       </div>
-      <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{value}</p>
-      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+      <p className="relative mt-2 font-display text-[26px] font-extrabold tabular-nums tracking-tight">{value}</p>
+      {hint && <p className="relative mt-0.5 text-xs text-muted-foreground">{hint}</p>}
     </Kok>
   );
 }
@@ -390,15 +408,15 @@ export function Sheet({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="absolute inset-0 animate-belir bg-[#14142b]/40 backdrop-blur-sm" onClick={onClose} />
       <div
         role="dialog"
         aria-modal
-        className={cn("absolute inset-y-0 right-0 flex w-full flex-col border-l bg-card shadow-xl", wide ? "max-w-2xl" : "max-w-lg")}
+        className={cn("absolute inset-y-0 right-0 flex w-full animate-kay flex-col rounded-l-3xl border-l bg-card shadow-lift", wide ? "max-w-2xl" : "max-w-lg")}
       >
         <div className="flex items-start justify-between gap-3 border-b p-5">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold">{title}</h2>
+            <h2 className="text-lg font-bold">{title}</h2>
             {description && <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>}
           </div>
           <button onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label="Kapat">
@@ -442,7 +460,7 @@ export function Toaster() {
           key={t.id}
           role="status"
           className={cn(
-            "pointer-events-auto rounded-lg border bg-card px-4 py-3 text-sm shadow-lg",
+            "pointer-events-auto animate-buyu rounded-2xl border bg-card/95 px-4 py-3 text-sm font-medium shadow-lift backdrop-blur",
             t.tur === "basari" && "border-l-4 border-l-success",
             t.tur === "uyari" && "border-l-4 border-l-warning",
             t.tur === "hata" && "border-l-4 border-l-danger",
@@ -468,13 +486,13 @@ export function Alert({
   className?: string;
 }) {
   const t = {
-    info: "bg-accent/50 text-foreground",
+    info: "border-primary/15 bg-accent/60 text-foreground [&>svg]:text-primary",
     warning: "border-warning/30 bg-warning/10",
     danger: "border-danger/30 bg-danger/10",
     success: "border-success/30 bg-success/10",
   };
   return (
-    <div className={cn("flex items-start gap-3 rounded-lg border p-3.5 text-sm [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0", t[tone], className)}>
+    <div className={cn("flex items-start gap-3 rounded-2xl border p-3.5 text-sm [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0", t[tone], className)}>
       {icon}
       <div className="min-w-0 flex-1">{children}</div>
     </div>
@@ -483,8 +501,8 @@ export function Alert({
 
 export function EmptyState({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed px-6 py-14 text-center">
-      <div className="mb-3 grid size-11 place-items-center rounded-full bg-accent text-accent-foreground [&_svg]:size-5">
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed bg-card/50 px-6 py-14 text-center">
+      <div className="mb-3 grid size-12 place-items-center rounded-2xl bg-marka text-white shadow-glow [&_svg]:size-5">
         {icon}
       </div>
       <p className="font-medium">{title}</p>
