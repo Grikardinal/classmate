@@ -6,6 +6,7 @@ import {
   acikMi,
   adayAramaUyar,
   adayDogrula,
+  adayDevirEngeli,
   adayYazmaEngeli,
   anonimMi,
   bugunAranacakMi,
@@ -160,5 +161,34 @@ describe("yazma engeli (sunucu ile ortak)", () => {
     expect(kesinKayitEngeli(anonim)).toMatch(/Anonim/);
     expect(kesinKayitEngeli(aday({ durum: "kayit", ogrenciId: "o1" }))).toMatch(/zaten/);
     expect(kesinKayitEngeli(aday())).toBeNull();
+  });
+});
+
+describe("kapsam dışına devir (karar 2026-11-07)", () => {
+  const veri = { ...db, adaylar: [] as Aday[] };
+  const KAPSAM = { ...ACIK, kapsam: ["s1"] };
+  const eski = aday();
+  const devir = (p: Partial<Aday> = {}) => aday({ subeId: "s2", sorumluId: "p10", ...p });
+  it("yalnızca şube, sorumlu ve eklenen not değişebilir; sorumlu hedefin varsayılanı olmalı", () => {
+    expect(adayDevirEngeli(devir(), eski, veri)).toBeNull();
+    expect(adayDevirEngeli(devir({ notlar: [{ tarih: "t", yazar: "y", metin: "Devredildi" }] }), eski, veri)).toBeNull();
+    expect(adayDevirEngeli(devir({ seviye: 6 }), eski, veri)).toMatch(/diğer bilgileri/);
+    expect(adayDevirEngeli(devir({ sorumluId: "p2" }), eski, veri)).toMatch(/varsayılan sorumlu/);
+    expect(adayDevirEngeli(devir({ sorumluId: "p2" }), eski, veri, false)).toBeNull(); // ekranda sorumluyu sunucu atar
+  });
+  it("pasif şubeye, kayda dönmüş veya anonim aday devredilemez", () => {
+    expect(adayDevirEngeli(devir({ subeId: "s3", sorumluId: "p3" }), eski, veri)).toMatch(/Pasif/);
+    expect(adayDevirEngeli(devir(), aday({ durum: "kayit", ogrenciId: "o1" }), veri)).toMatch(/Kayda/);
+    expect(adayDevirEngeli(devir(), aday({ veliTelefon: ANONIM_TELEFON }), veri)).toMatch(/Anonim/);
+  });
+  it("adayYazmaEngeli: kapsam dışına devirde devir kuralı uygulanır, kapsam içinde ve genel yöneticide uygulanmaz", () => {
+    expect(adayYazmaEngeli(devir(), eski, veri, KAPSAM)).toBeNull();
+    expect(adayYazmaEngeli(devir({ kaynak: "Google" }), eski, veri, KAPSAM)).toMatch(/diğer bilgileri/);
+    expect(adayYazmaEngeli(devir({ kaynak: "Google" }), eski, veri, ACIK)).toBeNull(); // genel yönetici (kapsam yok)
+    expect(adayYazmaEngeli(devir({ kaynak: "Google" }), eski, veri, { ...ACIK, kapsam: ["s1", "s2"] })).toBeNull();
+    expect(adayYazmaEngeli(devir({ sorumluId: "p9" }), eski, veri, { ...KAPSAM, istemci: true })).toBeNull();
+    expect(adayYazmaEngeli(devir({ sorumluId: "p9" }), eski, veri, KAPSAM)).toMatch(/varsayılan sorumlu/);
+    const kayitli = aday({ durum: "kayit", ogrenciId: db.ogrenciler[0].id });
+    expect(adayYazmaEngeli({ ...kayitli, subeId: "s2", sorumluId: "p10" }, kayitli, veri, ACIK)).toMatch(/devredilemez/);
   });
 });

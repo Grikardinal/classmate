@@ -77,8 +77,7 @@ describe("şube kapsamı ve yetki", () => {
     reddedilir(dene(ekle(yeniAday({ subeId: "s2", sorumluId: "p10" })), GUL), /kapsam/);
     expect(dene(degistir(s2Acik.id, { kaynak: "Google" }), MURAT)).not.toThrow();
   });
-  it("kapsam dışındaki şubeye devredemez; genel yönetici devredebilir (sorumlu yeni şubede olmalı)", () => {
-    reddedilir(dene(degistir(s1Acik.id, { subeId: "s2", sorumluId: "p10" }), GUL), /kapsam/);
+  it("genel yönetici devredebilir (sorumlu yeni şubede olmalı)", () => {
     reddedilir(dene(degistir(s1Acik.id, { subeId: "s2", sorumluId: "p1" }), YONETICI), /Sorumlu/);
     expect(dene(degistir(s1Acik.id, { subeId: "s2", sorumluId: "p10" }), YONETICI)).not.toThrow();
   });
@@ -155,5 +154,42 @@ describe("modül kapalı ve KVKK", () => {
   });
   it("aday silinemez", () => {
     reddedilir(dene((x) => void (x.adaylar = x.adaylar.filter((a) => a.id !== s1Acik.id)), YONETICI), /silinemez/);
+  });
+});
+
+describe("kapsam dışındaki şubeye devir (karar 2026-11-07)", () => {
+  const devret = (id: string, subeId: string, p: Partial<Aday> = {}) => (x: Db) =>
+    void (x.adaylar = x.adaylar.map((a) =>
+      a.id === id ? { ...a, subeId, notlar: [...a.notlar, { tarih: ZAMAN, yazar: "Gül Koç", metin: "Devredildi" }], ...p } : a));
+  it("kapsamı sınırlı kullanıcı kendi adayını kapsam dışındaki aktif şubeye devreder; sorumlu hedef şubeden atanır", () => {
+    const t = dene(devret(s1Acik.id, "s2", { sorumluId: "p9" }), GUL)();
+    const [a] = yazilan(t);
+    expect(a.subeId).toBe("s2");
+    expect(a.sorumluId).toBe("p10"); // istemcinin gönderdiği p9 yerine s2'nin sekreteri
+    // Devirden sonra aday devredenin kapsamından çıkar
+    const sonraki = farkUygula(db, t);
+    expect(okumaSuz(sonraki, GUL).adaylar.some((x) => x.id === s1Acik.id)).toBe(false);
+    expect(okumaSuz(sonraki, MURAT).adaylar.some((x) => x.id === s1Acik.id)).toBe(true);
+  });
+  it("devirle aynı pakette başka alan değiştirilemez, not silinemez", () => {
+    reddedilir(dene(devret(s1Acik.id, "s2", { kaynak: "Google" }), GUL), /diğer bilgileri/);
+    reddedilir(dene(devret(s1Acik.id, "s2", { notlar: [] }), GUL), /notları/);
+  });
+  it("pasif şubeye, kayda dönmüş veya başka şubenin adayı devredilemez", () => {
+    reddedilir(dene(devret(s1Acik.id, "s3"), GUL), /Pasif/);
+    reddedilir(dene(devret(kayitli.id, kayitli.subeId === "s1" ? "s2" : "s1"), YONETICI), /devredilemez/);
+    const v = structuredClone(db);
+    v.adaylar = v.adaylar.map((a) => (a.id === s1Acik.id ? { ...a, durum: "kayit", ogrenciId: db.ogrenciler[0].id } : a));
+    reddedilir(dene(devret(s1Acik.id, "s2"), GUL, v), /devredilemez/);
+    reddedilir(dene(devret(s2Acik.id, "s1"), GUL), /kapsam/); // eski şubede yetkisi yok
+  });
+  it("hedef şubede takip edecek personel yoksa devredilemez", () => {
+    const v = structuredClone(db);
+    v.personel = v.personel.map((p) => (p.subeIds.includes("s2") && p.gorev !== "ogretmen" ? { ...p, subeIds: p.subeIds.filter((x) => x !== "s2") } : p));
+    reddedilir(dene(devret(s1Acik.id, "s2"), aktor("u9", v), v), /personel yok/);
+  });
+  it("istisna yalnızca aday devri içindir: başka koleksiyonda kapsam dışına yazma reddedilir", () => {
+    reddedilir(dene((x) => void x.islemler.unshift({ id: "is-t", zaman: ZAMAN, kullanici: "", islem: "x", detay: "", subeId: "s2" }), GUL), /kapsam/);
+    reddedilir(dene(ekle(yeniAday({ subeId: "s2", sorumluId: "p10" })), GUL), /kapsam/); // yeni aday devir değildir
   });
 });

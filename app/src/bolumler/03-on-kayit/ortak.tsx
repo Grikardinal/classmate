@@ -21,16 +21,24 @@ export function AksiyonTarihi({ a }: { a: Aday }) {
   );
 }
 
+/** Kullanıcının kapsamı dışında kalan şube mi (devirden sonra aday görünmez) */
+export function useKapsamDisi() {
+  const { rol, kapsam } = useOturum();
+  return (subeId: string) => rol !== "genel-yonetici" && !kapsam.includes(subeId);
+}
+
 /** Sunucudaki onKayitDenetle ile aynı kural: kaydetmeden önce ekranda göstermek için */
 export function useAdayDenetimi() {
   const d = useDb();
   const { moduller } = useApp();
-  const { yetki } = useOturum();
+  const { yetki, rol, kapsam } = useOturum();
+  // Sunucuyla aynı: genel yönetici için kapsam verilmez (kapsam dışına devir kuralı uygulanmaz)
+  const devirKapsami = rol === "genel-yonetici" ? undefined : kapsam;
   return React.useCallback(
     (a: Aday, eski?: Aday): Hata => {
       const adaylar = eski ? d.adaylar.map((x) => (x.id === a.id ? a : x)) : [a, ...d.adaylar];
-      return adayYazmaEngeli(a, eski, { ...d, adaylar }, { modulAcik: moduller.onKayit, onKayitYetkisi: yetki("03"), kvkkYetkisi: yetki("14") });
+      return adayYazmaEngeli(a, eski, { ...d, adaylar }, { modulAcik: moduller.onKayit, onKayitYetkisi: yetki("03"), kvkkYetkisi: yetki("14"), kapsam: devirKapsami, istemci: true });
     },
-    [d, moduller.onKayit, yetki],
+    [d, moduller.onKayit, yetki, devirKapsami],
   );
 }

@@ -158,12 +158,14 @@ export function kesinKayitEngeli(a: Aday | undefined): Hata {
  * - modulAcik: "onKayit" modülü açık mı
  * - onKayitYetkisi: aktörün Bölüm 03 yetkisi (yoksa yalnızca Bölüm 04 kesin kayıt dönüşümü yapılabilir)
  * - kvkkYetkisi: aktörün Bölüm 14 yetkisi (vazgeçen adayın anonimleştirilmesi)
+ * - kapsam: aktörün şube kapsamı (genel yönetici için verilmez). Kapsam dışındaki şubeye devir adayDevirEngeli ile denetlenir.
+ * - istemci: ekrandan çağrı. Ekran hedef şubenin tüm personelini göremeyebilir; kapsam dışına devirde sorumluyu sunucu atar ve denetler.
  */
 export function adayYazmaEngeli(
   a: Aday,
   eski: Aday | undefined,
   sonraki: Pick<Db, "subeler" | "personel" | "ogrenciler" | "adaylar">,
-  secenek: { modulAcik: boolean; onKayitYetkisi: boolean; kvkkYetkisi?: boolean },
+  secenek: { modulAcik: boolean; onKayitYetkisi: boolean; kvkkYetkisi?: boolean; kapsam?: string[]; istemci?: boolean },
 ): Hata {
   // KVKK anonimleştirmesi (Bölüm 14) modül kapalıyken de yapılabilir
   if (eski && anonimMi(a)) {
@@ -181,6 +183,7 @@ export function adayYazmaEngeli(
   // Kayda dönüşmüş aday kilitlidir (eski verideki öğrenci bağı olmayan kayıtlar da)
   if (eski?.durum === "kayit") {
     if (a.durum !== "kayit") return "Kayda dönüşmüş aday geri alınamaz.";
+    if (a.subeId !== eski.subeId) return "Kayda dönüşmüş aday devredilemez.";
     if (JSON.stringify({ ...eski, notlar: [] }) !== JSON.stringify({ ...a, notlar: [] })) return "Kayda dönüşmüş adayın bilgileri değiştirilemez.";
     if (!secenek.onKayitYetkisi) return "Ön kayıt (aday) verisini değiştirme yetkiniz yok.";
     return notlarEklemeMi(eski.notlar, a.notlar) ? null : "Görüşme notları silinemez veya değiştirilemez; yalnızca yeni not eklenir.";
@@ -198,6 +201,12 @@ export function adayYazmaEngeli(
     if (!o) return "Kesin kayıt için öğrenci kartı bulunamadı.";
     if (sonraki.adaylar.some((x) => x.id !== a.id && x.ogrenciId === a.ogrenciId)) return "Bu öğrenci kartı başka bir adaya bağlı.";
   } else if (a.ogrenciId !== eski?.ogrenciId) return "Adayın öğrenci bağlantısı yalnızca kesin kayıtla kurulur.";
+  // Kapsam dışındaki şubeye devir (karar 2026-11-07): yalnızca şube + sorumlu değişir, sorumlu hedef şubeden atanır
+  const disariDevir = !!eski && eski.subeId !== a.subeId && !!secenek.kapsam && !secenek.kapsam.includes(a.subeId);
+  if (eski && disariDevir) {
+    const devir = adayDevirEngeli(a, eski, sonraki, !secenek.istemci);
+    if (devir) return devir;
+  }
   // Şube: yeni adayda veya devirde aktif şube olmalı
   if (!eski || eski.subeId !== a.subeId) {
     const s = sonraki.subeler.find((x) => x.id === a.subeId);
@@ -205,7 +214,7 @@ export function adayYazmaEngeli(
     if (!s.aktif) return "Pasif şubeye aday eklenemez / devredilemez.";
   }
   // Sorumlu: yeni adayda, devirde veya sorumlu değişince şubede görevli aktif personel olmalı
-  if (!eski || eski.subeId !== a.subeId || eski.sorumluId !== a.sorumluId) {
+  if ((!eski || eski.subeId !== a.subeId || eski.sorumluId !== a.sorumluId) && !(disariDevir && secenek.istemci)) {
     if (!sorumluAdaylari(sonraki.personel, a.subeId).some((p) => p.id === a.sorumluId))
       return "Sorumlu personel adayın şubesinde görevli aktif bir personel (öğretmen dışı) olmalı.";
   }
@@ -215,5 +224,31 @@ export function adayYazmaEngeli(
     const y = yinelenenAday(a, sonraki.adaylar);
     if (y) return `Bu veli telefonuyla açık bir aday zaten var: ${y.veliAd} (${y.ogrenciAd}).`;
   }
+  return null;
+}
+
+/** Kapsam dışına devirde değişmesine izin verilen alanlar dışındaki her şey */
+const devirDisi = (x: Aday) => JSON.stringify({ ...x, subeId: "", sorumluId: "", notlar: [] });
+
+/**
+ * Kapsam dışındaki şubeye devir (karar 2026-11-07): kapsamı sınırlı kullanıcı kendi şubesindeki adayı
+ * kapsamı dışındaki aktif bir şubeye devredebilir; devirden sonra aday onun kapsamından çıkar.
+ * En güvenli yol: aynı pakette adayın başka alanı değişmez (yalnızca şube, sorumlu ve sona eklenen not),
+ * sorumlu hedef şubeden varsayilanSorumlu() ile atanır, kayda dönmüş / anonim aday devredilemez.
+ * Eski şubede yetkili olma şartı sunucuda (yazmaDenetle · eski halin kapsamı) denetlenir.
+ */
+export function adayDevirEngeli(a: Aday, eski: Aday, sonraki: Pick<Db, "subeler" | "personel">, sorumluDenetle = true): Hata {
+  if (eski.durum === "kayit") return "Kayda dönüşmüş aday devredilemez.";
+  if (anonimMi(eski)) return "Anonimleştirilmiş aday devredilemez.";
+  const hedef = sonraki.subeler.find((x) => x.id === a.subeId);
+  if (!hedef) return "Adayın şubesi bulunamadı.";
+  if (!hedef.aktif) return "Pasif şubeye aday eklenemez / devredilemez.";
+  if (devirDisi(a) !== devirDisi(eski))
+    return "Başka şubeye devirde adayın diğer bilgileri değiştirilemez; önce değişiklikleri kaydedip sonra devredin.";
+  if (!notlarEklemeMi(eski.notlar, a.notlar)) return "Görüşme notları silinemez veya değiştirilemez; yalnızca yeni not eklenir.";
+  if (!sorumluDenetle) return null;
+  const sorumlu = varsayilanSorumlu(sonraki.personel, a.subeId);
+  if (!sorumlu) return "Hedef şubede adayı takip edecek aktif personel yok.";
+  if (a.sorumluId !== sorumlu) return "Devirde sorumlu, hedef şubenin varsayılan sorumlusu olmalı.";
   return null;
 }

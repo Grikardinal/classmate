@@ -19,12 +19,13 @@ import {
   sorumluAdaylari,
   varsayilanSorumlu,
 } from "./kurallar";
-import { tarihKisa, useAdayDenetimi } from "./ortak";
+import { tarihKisa, useAdayDenetimi, useKapsamDisi } from "./ortak";
 
 export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) {
   const d = useDb();
   const { moduller } = useApp();
-  const { ad: oturumAd, kapsam, yetki } = useOturum();
+  const { ad: oturumAd, yetki } = useOturum();
+  const kapsamDisi = useKapsamDisi();
   const navigate = useNavigate();
   const denetle = useAdayDenetimi();
   const a = d.adaylar.find((x) => x.id === id);
@@ -53,6 +54,7 @@ export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) 
   };
   const hata = kapali ? null : denetle(sonHal(), a);
 
+  const disariDevir = form.subeId !== a.subeId && kapsamDisi(form.subeId);
   const kaydet = () => {
     const yeni = sonHal();
     const h = denetle(yeni, a);
@@ -60,11 +62,13 @@ export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) 
       toast(h, "hata");
       return;
     }
+    if (disariDevir && !window.confirm(`Aday ${sube(yeni.subeId)?.ad} şubesine devredilecek. Devirden sonra bu adayı göremeyeceksiniz. Devam edilsin mi?`)) return;
     guncelle((x) => {
-      if (yeni.subeId !== a.subeId) islemYaz(x, oturumAd, "Aday devri", `${a.ogrenciAd}: ${sube(a.subeId)?.kod} → ${sube(yeni.subeId)?.kod}`, yeni.subeId);
+      // İşlem kaydı devreden şubeye yazılır (kapsam dışına devirde de devredenin kapsamında kalır)
+      if (yeni.subeId !== a.subeId) islemYaz(x, oturumAd, "Aday devri", `${a.ogrenciAd}: ${sube(a.subeId)?.kod} → ${sube(yeni.subeId)?.kod}`, a.subeId);
       x.adaylar = x.adaylar.map((y) => (y.id === id ? yeni : y));
     });
-    toast("Aday kaydedildi.");
+    toast(disariDevir ? `Aday ${sube(yeni.subeId)?.ad} şubesine devredildi.` : "Aday kaydedildi.");
     onClose();
   };
   const notEkle = () => {
@@ -84,8 +88,11 @@ export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) 
     setNot("");
   };
   const sorumlular = sorumluAdaylari(d.personel, form.subeId);
-  const subeSec = (subeId: string) => setForm({ ...form, subeId, sorumluId: varsayilanSorumlu(d.personel, subeId, form.sorumluId) ?? form.sorumluId });
-  const subeSecenekleri = tanimlar().subeler.filter((s) => (s.aktif && kapsam.includes(s.id)) || s.id === form.subeId);
+  // Kapsam dışına devirde sorumlu hedef şubenin varsayılan sorumlusu olur (sunucu da bunu ister)
+  const subeSec = (subeId: string) =>
+    setForm({ ...form, subeId, sorumluId: varsayilanSorumlu(d.personel, subeId, subeId !== a.subeId && kapsamDisi(subeId) ? undefined : form.sorumluId) ?? form.sorumluId });
+  // Devir hedefi: tüm aktif şubeler (karar 2026-11-07) ve mevcut şube
+  const subeSecenekleri = tanimlar().subeler.filter((s) => s.aktif || s.id === a.subeId);
 
   return (
     <Sheet
@@ -113,7 +120,7 @@ export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) 
             </Button>
           )}
           <Button variant="outline" onClick={onClose}>Kapat</Button>
-          {!kapali && <Button onClick={kaydet} disabled={!!hata}>Kaydet</Button>}
+          {!kapali && <Button onClick={kaydet} disabled={!!hata}>{disariDevir ? "Devret" : "Kaydet"}</Button>}
         </>
       }
     >
@@ -130,6 +137,12 @@ export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) 
         )}
         {anonim && <Alert tone="warning">Bu adayın kişisel verileri KVKK saklama süresi dolduğu için anonimleştirildi.</Alert>}
         {hata && <Alert tone="danger">{hata}</Alert>}
+        {disariDevir && !hata && (
+          <Alert tone="warning">
+            {sube(form.subeId)?.ad} şubesi yetki kapsamınız dışında: devirden sonra bu adayı göremeyeceksiniz. Devirde adayın diğer bilgileri değiştirilemez;
+            sorumlu, hedef şubenin personelinden atanır.
+          </Alert>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Veli adı soyadı *">
             <Input value={form.veliAd} disabled={kapali} maxLength={80} onChange={(e) => setForm({ ...form, veliAd: e.target.value })} />
@@ -184,15 +197,15 @@ export function AdayKarti({ id, onClose }: { id: string; onClose: () => void }) 
               </Select>
             </Field>
           )}
-          <Field label="İlgilendiği şube" hint="Şubeler arası devredilebilir (yalnızca yetkili olduğunuz aktif şubelere).">
+          <Field label="İlgilendiği şube" hint="Herhangi bir aktif şubeye devredilebilir.">
             <Select value={form.subeId} disabled={kapali} onChange={(e) => subeSec(e.target.value)}>
               {subeSecenekleri.map((s) => (
                 <option key={s.id} value={s.id}>{s.ad}{s.aktif ? "" : " (pasif)"}</option>
               ))}
             </Select>
           </Field>
-          <Field label="Sorumlu personel">
-            <Select value={form.sorumluId} disabled={kapali} onChange={(e) => setForm({ ...form, sorumluId: e.target.value })}>
+          <Field label="Sorumlu personel" hint={disariDevir ? "Devirde hedef şubenin sekreteri (yoksa müdürü) atanır." : undefined}>
+            <Select value={form.sorumluId} disabled={kapali || disariDevir} onChange={(e) => setForm({ ...form, sorumluId: e.target.value })}>
               {sorumlular.map((p) => (
                 <option key={p.id} value={p.id}>{p.ad} {p.soyad}</option>
               ))}

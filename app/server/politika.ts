@@ -31,7 +31,7 @@ import {
   sonGenelYoneticiEngeli,
   yonetimEngeli,
 } from "../src/bolumler/02-kullanicilar/kurallar";
-import { adayYazmaEngeli, anonimMi, adTemizle } from "../src/bolumler/03-on-kayit/kurallar";
+import { adayYazmaEngeli, anonimMi, adTemizle, varsayilanSorumlu } from "../src/bolumler/03-on-kayit/kurallar";
 import { telefonNormalize } from "../src/lib/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
@@ -230,7 +230,9 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
       const eski = eskiler.get(id);
       // Eski ve yeni hali kapsamda olmalı (başka şubeye taşıma / başka şubenin kaydını ezme engeli)
       if (eski && !kapsamda(satirSubeleri(onceki, k, eski), k)) hata("Bu kayıt şube kapsamınız dışında.");
-      if (!kapsamda(satirSubeleri(sonrakiDb, k, s), k)) hata("Kayıt şube kapsamınız dışında.");
+      // Tek istisna (karar 2026-11-07): kapsamdaki adayın kapsam dışındaki şubeye devri; ayrıntı onKayitDenetle · adayDevirEngeli
+      const adayDevri = k === "adaylar" && !!eski && eski.subeId !== s.subeId && !!s.subeId;
+      if (!adayDevri && !kapsamda(satirSubeleri(sonrakiDb, k, s), k)) hata("Kayıt şube kapsamınız dışında.");
 
       switch (k) {
         case "islemler":
@@ -277,6 +279,9 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
             if (typeof s.ogrenciAd === "string") s.ogrenciAd = adTemizle(s.ogrenciAd) || "—";
           }
           s.olusturma = eski ? eski.olusturma : zaman.slice(0, 10);
+          // Kapsam dışına devir: sorumlu hedef şubeden sunucuda atanır (ekran o şubenin personelini göremeyebilir)
+          if (eski && eski.subeId !== s.subeId && !genel && !kap.has(String(s.subeId)))
+            s.sorumluId = varsayilanSorumlu(sonrakiDb.personel, String(s.subeId)) ?? s.sorumluId;
           if (eski && Array.isArray(s.notlar) && Array.isArray(eski.notlar))
             s.notlar = (s.notlar as Aday["notlar"]).map((n, i) => (i < (eski.notlar as unknown[]).length ? n : { ...n, yazar: ad, tarih: zaman }));
           break;
@@ -316,12 +321,14 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
  * - Bölüm 03 yetkisi olmayan (yalnızca 04) aktör yalnızca kesin kayıt dönüşümü yapabilir
  * - alan kuralları (veli adı, telefon, sınıf, tarih, vazgeçme nedeni, teklif), durum geçişi (kayıt geri alınamaz),
  *   notlar yalnızca eklenir, kesin kayıtta öğrenci kartı aynı pakette olmalı, aktif şube, şubede görevli sorumlu,
- *   yinelenen açık aday engeli. Şube kapsamı yazmaDenetle() içinde (eski + yeni hal) denetlenir.
+ *   yinelenen açık aday engeli. Şube kapsamı yazmaDenetle() içinde (eski + yeni hal) denetlenir;
+ *   tek istisna kapsam dışındaki aktif şubeye devirdir (adayDevirEngeli: yalnızca şube/sorumlu/not değişir).
  */
 export function onKayitDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor): void {
   const yaz = (temiz.koleksiyonlar.adaylar?.yaz ?? []) as unknown as Aday[];
   if (!yaz.length) return;
-  const secenek = { modulAcik: onceki.moduller.onKayit !== false, onKayitYetkisi: yetki(onceki, a, "03"), kvkkYetkisi: yetki(onceki, a, "14") };
+  const secenek = { modulAcik: onceki.moduller.onKayit !== false, onKayitYetkisi: yetki(onceki, a, "03"), kvkkYetkisi: yetki(onceki, a, "14"),
+    kapsam: a.kullanici.rol === "genel-yonetici" ? undefined : kapsam(onceki, a.kullanici) };
   // Sunucunun düzelttiği alanlarla (telefon biçimi, notlar) son hal
   const adaylar = sonraki.adaylar.map((x) => yaz.find((y) => y.id === x.id) ?? x);
   for (const s of yaz) {
