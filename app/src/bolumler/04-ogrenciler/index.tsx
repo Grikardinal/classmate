@@ -89,6 +89,7 @@ import {
 import { devamsizlikOzeti, mukerrerMi, normalAd, sozlesmeNo, taksitPlani, telefonNormalize, tl } from "@/lib/kurallar";
 import { esc, yazdir } from "@/lib/yazdir";
 import { cn } from "@/lib/utils";
+import { kesinKayitEngeli } from "../03-on-kayit/kurallar";
 
 export default function Ogrenciler() {
   return (
@@ -240,7 +241,8 @@ function KayitSihirbazi() {
   const { ad: oturumAd, kapsam } = useOturum();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const aday = d.adaylar.find((a) => a.id === params.get("aday"));
+  // Kayda dönüşmüş veya anonimleştirilmiş aday ikinci kez kayda çevrilmez (Bölüm 03 · kesinKayitEngeli)
+  const aday = d.adaylar.find((a) => a.id === params.get("aday") && !kesinKayitEngeli(a));
 
   const [adim, setAdim] = React.useState(0);
   const [ogr, setOgr] = React.useState(() => {
@@ -406,7 +408,7 @@ function KayitSihirbazi() {
       if (moduller.finans)
         for (const p of planOnizleme)
           x.taksitler.push({ id: yeniId("tk"), kayitId, ogrenciId: ogrId, veliId: birincilId, subeId, no: p.no, vade: p.vade, tutar: p.tutar, odenen: 0 });
-      if (aday) x.adaylar = x.adaylar.map((a) => (a.id === aday.id ? { ...a, durum: "kayit", ogrenciId: ogrId, sonrakiAksiyon: null, notlar: [...a.notlar, { tarih: simdiZaman(), yazar: oturumAd, metin: `Kesin kayıt yapıldı (${no})` }] } : a));
+      if (aday) x.adaylar = x.adaylar.map((a) => (a.id === aday.id ? { ...a, durum: "kayit", ogrenciId: ogrId, sonrakiAksiyon: null, vazgecmeNedeni: null, notlar: [...a.notlar, { tarih: simdiZaman(), yazar: oturumAd, metin: `Kesin kayıt yapıldı (${no})` }] } : a));
       if (dolu) islemYaz(x, oturumAd, "Kapasite aşımı", `${grupEtiket(x, grupId)} grubuna kapasite üstü kayıt onaylandı`, subeId);
       islemYaz(x, oturumAd, "Kayıt", `${ogr.ad} ${ogr.soyad} — ${no}`, subeId);
       bildirimEkle(x, "hosgeldin", ogrId, {});

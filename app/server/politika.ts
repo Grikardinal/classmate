@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { aktifKayit, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kullanici, type Kurum, type Personel, type ProgramSatiri, type Sezon, type Sube } from "../src/data/model";
+import { aktifKayit, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kullanici, type Kurum, type Personel, type ProgramSatiri, type Sezon, type Sube } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -31,6 +31,8 @@ import {
   sonGenelYoneticiEngeli,
   yonetimEngeli,
 } from "../src/bolumler/02-kullanicilar/kurallar";
+import { adayYazmaEngeli, anonimMi, adTemizle } from "../src/bolumler/03-on-kayit/kurallar";
+import { telefonNormalize } from "../src/lib/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
 export class YetkiHatasi extends Error {}
@@ -121,6 +123,8 @@ export function okumaSuz(db: Db, a: Aktor): Db {
     if (k === "girisler") return genel;
     if ((k === "kvkk" || k === "iceAktarmalar") && !yetki(db, a, "14")) return false;
     if (k === "kullanicilar" && !yetki(db, a, "02")) return s.id === a.kullanici.id;
+    // Aday kişisel verisi (KVKK): yalnızca ön kayıt (03) veya kesin kayıt (04) yetkisi olan görür
+    if (k === "adaylar" && !genel && !yetki(db, a, "03") && !yetki(db, a, "04")) return false;
     if (k === "islemler" && !s.subeId) return genel;
     if (k === "giderler" && s.subeId === "merkez") return genel;
     const l = satirSubeleri(db, k, s);
@@ -164,7 +168,7 @@ const YAZMA: Record<Koleksiyon, string[]> = {
   personel: ["13", "02"], kullanicilar: ["02", "13"], girisler: [],
   veliler: ["04", "14", "02"], ogrenciler: ["04", "14"], kayitlar: ["04", "14"],
   program: ["06"], tatiller: ["06"], iptaller: ["06"], yoklamalar: ["07"], izinler: ["07"],
-  adaylar: ["03", "04"], odevler: ["08"], musaitlikler: ["09"], randevular: ["09"], paketler: ["09", "04"],
+  adaylar: ["03", "04", "14"], odevler: ["08"], musaitlikler: ["09"], randevular: ["09"], paketler: ["09", "04"],
   olaylar: ["10"], gonderimler: ["*"], duyurular: ["10"],
   taksitler: ["05", "04", "09"], tahsilatlar: ["05"], giderler: ["05", "13"], virmanlar: ["05"],
   islemler: ["*"], iceAktarmalar: ["14"], kvkk: ["14"], avanslar: ["13"],
@@ -265,6 +269,17 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
             if (eski && eski.tarih !== zaman.slice(0, 10)) hata("Geçmiş günün yoklamasını yalnızca yönetici düzeltebilir.");
           }
           break;
+        case "adaylar":
+          // Ayrıntılı kurallar: onKayitDenetle() (Bölüm 03). Telefon tek biçime çevrilir; oluşturma tarihi ve not yazarı sunucudan.
+          if (!anonimMi(s as unknown as Aday)) {
+            s.veliTelefon = telefonNormalize(String(s.veliTelefon ?? "")) ?? s.veliTelefon;
+            if (typeof s.veliAd === "string") s.veliAd = adTemizle(s.veliAd);
+            if (typeof s.ogrenciAd === "string") s.ogrenciAd = adTemizle(s.ogrenciAd) || "—";
+          }
+          s.olusturma = eski ? eski.olusturma : zaman.slice(0, 10);
+          if (eski && Array.isArray(s.notlar) && Array.isArray(eski.notlar))
+            s.notlar = (s.notlar as Aday["notlar"]).map((n, i) => (i < (eski.notlar as unknown[]).length ? n : { ...n, yazar: ad, tarih: zaman }));
+          break;
         case "odevler": case "musaitlikler": case "randevular":
           if (ogrGrup && s.ogretmenId !== a.personel.id) hata("Yalnızca kendi kayıtlarınızı değiştirebilirsiniz.");
           break;
@@ -290,7 +305,29 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   }
   tanimDenetle(onceki, sonrakiDb, temiz);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
+  onKayitDenetle(onceki, sonrakiDb, temiz, a);
   return temiz;
+}
+
+/* =========================== Bölüm 03 ön kayıt =========================== */
+/**
+ * Aday (ön kayıt) kuralları (ekranla ortak: src/bolumler/03-on-kayit/kurallar.ts):
+ * - "onKayit" modülü kapalıyken aday yazılamaz (yalnızca KVKK anonimleştirmesi)
+ * - Bölüm 03 yetkisi olmayan (yalnızca 04) aktör yalnızca kesin kayıt dönüşümü yapabilir
+ * - alan kuralları (veli adı, telefon, sınıf, tarih, vazgeçme nedeni, teklif), durum geçişi (kayıt geri alınamaz),
+ *   notlar yalnızca eklenir, kesin kayıtta öğrenci kartı aynı pakette olmalı, aktif şube, şubede görevli sorumlu,
+ *   yinelenen açık aday engeli. Şube kapsamı yazmaDenetle() içinde (eski + yeni hal) denetlenir.
+ */
+export function onKayitDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor): void {
+  const yaz = (temiz.koleksiyonlar.adaylar?.yaz ?? []) as unknown as Aday[];
+  if (!yaz.length) return;
+  const secenek = { modulAcik: onceki.moduller.onKayit !== false, onKayitYetkisi: yetki(onceki, a, "03"), kvkkYetkisi: yetki(onceki, a, "14") };
+  // Sunucunun düzelttiği alanlarla (telefon biçimi, notlar) son hal
+  const adaylar = sonraki.adaylar.map((x) => yaz.find((y) => y.id === x.id) ?? x);
+  for (const s of yaz) {
+    const m = adayYazmaEngeli(s, onceki.adaylar.find((x) => x.id === s.id), { ...sonraki, adaylar }, secenek);
+    if (m) throw new YetkiHatasi(m);
+  }
 }
 
 /* =========================== Bölüm 02 kullanıcılar =========================== */
