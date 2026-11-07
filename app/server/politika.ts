@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { aktifKayit, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kullanici, type Kurum, type Personel, type ProgramSatiri, type Sezon, type Sube } from "../src/data/model";
+import { aktifKayit, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Veli } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -32,6 +32,20 @@ import {
   yonetimEngeli,
 } from "../src/bolumler/02-kullanicilar/kurallar";
 import { adayYazmaEngeli, anonimMi, adTemizle, varsayilanSorumlu } from "../src/bolumler/03-on-kayit/kurallar";
+import {
+  adayYenidenAc,
+  adayYenidenAcmaEngeli,
+  bagliAday,
+  iptalPaketiMi,
+  iptalSonrasiOgrenciDurumu,
+  kayitYazmaEngeli,
+  ogrenciAnonimMi,
+  ogrenciYazmaEngeli,
+  veliAnonimMi,
+  veliBirlestirmeleri,
+  veliYazmaEngeli,
+  yeniSozlesmeNo,
+} from "../src/bolumler/04-ogrenciler/kurallar";
 import { telefonNormalize } from "../src/lib/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
@@ -80,7 +94,8 @@ export function satirSubeleri(db: Db, k: Koleksiyon, s: Satir): string[] | null 
     case "izinler": case "paketler":
       return tek(ogrenciSube(db, s.ogrenciId));
     case "ogrenciler":
-      return tek(ogrenciSube(db, s.id));
+      // Kaydı olmayan öğrenci hiçbir şubeye ait değildir: kurum geneli sayılmaz, yalnızca genel yönetici görür (Bölüm 04)
+      return tek(ogrenciSube(db, s.id)) ?? [];
     case "veliler": {
       const l = db.ogrenciler.filter((o) => o.veliIds.includes(String(s.id))).map((o) => ogrenciSube(db, o.id)).filter(Boolean) as string[];
       return l.length ? [...new Set(l)] : [];
@@ -285,6 +300,26 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           if (eski && Array.isArray(s.notlar) && Array.isArray(eski.notlar))
             s.notlar = (s.notlar as Aday["notlar"]).map((n, i) => (i < (eski.notlar as unknown[]).length ? n : { ...n, yazar: ad, tarih: zaman }));
           break;
+        case "veliler":
+          // Ayrıntılı kurallar: kayitDenetle() (Bölüm 04). Telefon tek biçime çevrilir (veli portalı girişi telefonla eşleşir).
+          if (!veliAnonimMi(s as unknown as Veli)) {
+            s.telefon = telefonNormalize(String(s.telefon ?? "")) ?? s.telefon;
+            if (typeof s.ad === "string") s.ad = adTemizle(s.ad);
+            if (typeof s.soyad === "string") s.soyad = adTemizle(s.soyad);
+            if (typeof s.eposta === "string") s.eposta = s.eposta.trim();
+          }
+          break;
+        case "ogrenciler":
+          // Ayrıntılı kurallar: kayitDenetle() (Bölüm 04). Yeni notlar başa eklenir; yazarı ve zamanı sunucudan.
+          if (!ogrenciAnonimMi(s as unknown as Ogrenci)) {
+            if (typeof s.ad === "string") s.ad = adTemizle(s.ad);
+            if (typeof s.soyad === "string") s.soyad = adTemizle(s.soyad);
+          }
+          if (Array.isArray(s.notlar)) {
+            const yeni = s.notlar.length - (Array.isArray(eski?.notlar) ? (eski.notlar as unknown[]).length : 0);
+            s.notlar = (s.notlar as Ogrenci["notlar"]).map((n, i) => (i < yeni && n && typeof n === "object" ? { ...n, yazar: ad, tarih: zaman } : n));
+          }
+          break;
         case "odevler": case "musaitlikler": case "randevular":
           if (ogrGrup && s.ogretmenId !== a.personel.id) hata("Yalnızca kendi kayıtlarınızı değiştirebilirsiniz.");
           break;
@@ -310,8 +345,83 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   }
   tanimDenetle(onceki, sonrakiDb, temiz);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
+  kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   onKayitDenetle(onceki, sonrakiDb, temiz, a);
   return temiz;
+}
+
+/* =========================== Bölüm 04 öğrenci, veli ve kayıt =========================== */
+/**
+ * Öğrenci, veli ve kayıt kuralları (ekranla ortak: src/bolumler/04-ogrenciler/kurallar.ts):
+ * - yeni velinin telefonu kayıtlı bir veliye aitse (başka şubede olsa da) yeni veli yazılmaz, öğrenci mevcut veliye bağlanır
+ * - veli: ad, geçerli telefon (tek biçim), e-posta, yakınlık; var olan velinin telefonu başka veliye ait olamaz
+ * - öğrenci: alan kuralları, kayıtla birlikte oluşturulur, notlar yalnızca eklenir, mükerrer öğrenci kurum genelinde engellenir,
+ *   "ayrıldı" yalnızca tüm kayıtlar iptal edilince; KVKK anonimleştirmesi yalnızca 14 yetkisiyle
+ * - kayıt: benzersiz sözleşme no (şube koduyla), aktif şube, grubun şube/sezon uyumu, aktif sezon (genel yönetici hariç),
+ *   sezonda tek ana kayıt, durum geçişi (iptal geri alınamaz), grup geçmişi yalnızca eklenir, kapasite aşımı yalnızca yönetici
+ * - kayıt iptali öğrencinin son kaydıysa bağlı aday aynı pakette yeniden açılır (karar 2026-11-07; aday başka şubede olsa da)
+ * Şube kapsamı (nakilde eski ve yeni şube) yazmaDenetle() içinde denetlenir. `temiz` yerinde güncellenir.
+ */
+export function kayitDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  if (!K.veliler?.yaz.length && !K.ogrenciler?.yaz.length && !K.kayitlar?.yaz.length) return;
+  const bugun = zaman.slice(0, 10);
+  const kvkkYetkisi = yetki(onceki, a, "14");
+  const ogrYaz = (K.ogrenciler?.yaz ?? []) as unknown as Ogrenci[];
+  const kayitYaz = (K.kayitlar?.yaz ?? []) as unknown as Kayit[];
+
+  // 0) Sözleşme no çakışması: ekran başka şubeye nakledilmiş kayıtları göremediği için aynı numarayı üretebilir;
+  //    yeni kayda sunucu şube ve sezon yılındaki sıradaki numarayı verir (numara hiçbir zaman iki kayıtta olmaz)
+  const nolar = onceki.kayitlar.map((k) => k.sozlesmeNo);
+  for (const k of kayitYaz) {
+    if (onceki.kayitlar.some((x) => x.id === k.id) || typeof k.sozlesmeNo !== "string") continue;
+    if (nolar.includes(k.sozlesmeNo)) k.sozlesmeNo = yeniSozlesmeNo(onceki, nolar, k.subeId, k.sezonId, bugun);
+    nolar.push(k.sozlesmeNo);
+  }
+
+  // 1) Kayıtlı telefona sahip yeni veli → mevcut veli (ekran başka şubedeki veliyi göremeyebilir)
+  const yeniVeliler = ((K.veliler?.yaz ?? []) as unknown as Veli[]).filter((v) => !onceki.veliler.some((x) => x.id === v.id));
+  const birlestir = veliBirlestirmeleri(yeniVeliler, onceki.veliler);
+  if (birlestir.size) {
+    const es = (id: string) => birlestir.get(id) ?? id;
+    K.veliler!.yaz = K.veliler!.yaz.filter((v) => !birlestir.has(String(v.id)));
+    for (const o of ogrYaz) {
+      if (Array.isArray(o.veliIds)) o.veliIds = [...new Set(o.veliIds.map(es))];
+      o.birincilVeliId = es(o.birincilVeliId);
+    }
+    for (const t of K.taksitler?.yaz ?? []) t.veliId = es(String(t.veliId));
+    for (const g of K.gonderimler?.yaz ?? []) if (g.veliId) g.veliId = es(String(g.veliId));
+  }
+  const veliYaz = (K.veliler?.yaz ?? []) as unknown as Veli[];
+  const yerine = <T extends { id: string }>(liste: T[], yaz: T[]) => liste.map((x) => yaz.find((y) => y.id === x.id) ?? x);
+  const son = {
+    ...sonraki,
+    veliler: yerine(sonraki.veliler.filter((v) => !birlestir.has(v.id)), veliYaz),
+    ogrenciler: yerine(sonraki.ogrenciler, ogrYaz),
+    kayitlar: yerine(sonraki.kayitlar, kayitYaz),
+  };
+
+  for (const v of veliYaz) reddet(veliYazmaEngeli(v, onceki.veliler.find((x) => x.id === v.id), son, { kvkkYetkisi }));
+  for (const o of ogrYaz) reddet(ogrenciYazmaEngeli(o, onceki.ogrenciler.find((x) => x.id === o.id), son, { kvkkYetkisi, bugun }));
+  for (const k of kayitYaz) reddet(kayitYazmaEngeli(k, onceki.kayitlar.find((x) => x.id === k.id), son, { rol: a.kullanici.rol }));
+
+  // 2) Kayıt iptali: öğrenci ayrılır, bağlı aday yeniden açılır
+  const ad = `${a.personel.ad} ${a.personel.soyad}`;
+  for (const k of kayitYaz) {
+    if (k.durum !== "iptal" || onceki.kayitlar.find((x) => x.id === k.id)?.durum === "iptal") continue;
+    if (!iptalPaketiMi(k.ogrenciId, onceki.kayitlar, kayitYaz, son.kayitlar)) continue;
+    const o = son.ogrenciler.find((x) => x.id === k.ogrenciId);
+    if (o && o.durum !== iptalSonrasiOgrenciDurumu(o.id, son.kayitlar)) reddet("Tüm kayıtları iptal edilen öğrenci “ayrıldı” durumuna alınmalı.");
+    if (!o || ogrenciAnonimMi(o)) continue; // KVKK silmesinde aday takibe açılmaz
+    const aday = bagliAday(k.ogrenciId, onceki.adaylar);
+    if (!aday) continue;
+    const ay = (K.adaylar ??= { yaz: [], sil: [] });
+    if (ay.yaz.some((x) => x.id === aday.id)) continue; // ekran gönderdiyse onKayitDenetle denetler
+    ay.yaz.push(adayYenidenAc(aday, { tarih: zaman, yazar: ad, metin: `Kayıt iptal edildi (${k.sozlesmeNo}); aday yeniden açıldı.` }, bugun) as unknown as Satir);
+  }
 }
 
 /* =========================== Bölüm 03 ön kayıt =========================== */
@@ -331,8 +441,17 @@ export function onKayitDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
     kapsam: a.kullanici.rol === "genel-yonetici" ? undefined : kapsam(onceki, a.kullanici) };
   // Sunucunun düzelttiği alanlarla (telefon biçimi, notlar) son hal
   const adaylar = sonraki.adaylar.map((x) => yaz.find((y) => y.id === x.id) ?? x);
+  const kayitYaz = (temiz.koleksiyonlar.kayitlar?.yaz ?? []) as unknown as Kayit[];
+  const kayitlar = sonraki.kayitlar.map((x) => kayitYaz.find((y) => y.id === x.id) ?? x);
   for (const s of yaz) {
-    const m = adayYazmaEngeli(s, onceki.adaylar.find((x) => x.id === s.id), { ...sonraki, adaylar }, secenek);
+    const eski = onceki.adaylar.find((x) => x.id === s.id);
+    // Tek istisna (karar 2026-11-07): kayıt iptaliyle aynı pakette kayda dönüşmüş aday yeniden açılır (Bölüm 04)
+    if (eski?.durum === "kayit" && s.durum !== "kayit" && eski.ogrenciId && iptalPaketiMi(eski.ogrenciId, onceki.kayitlar, kayitYaz, kayitlar)) {
+      const m = adayYenidenAcmaEngeli(s, eski);
+      if (m) throw new YetkiHatasi(m);
+      continue;
+    }
+    const m = adayYazmaEngeli(s, eski, { ...sonraki, adaylar }, secenek);
     if (m) throw new YetkiHatasi(m);
   }
 }

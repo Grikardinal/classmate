@@ -123,7 +123,7 @@ describe("kesin kayda dönüşüm (Bölüm 04 sihirbazının paketi)", () => {
   const donustur = (a: Aday, ogrId = "o-yeni") => (x: Db) => {
     x.ogrenciler.push({ ...db.ogrenciler[0], id: ogrId, ad: "Yeni", soyad: "Öğrenci" });
     const g = db.gruplar.find((y) => y.subeId === a.subeId)!;
-    x.kayitlar.push({ ...db.kayitlar[0], id: "k-" + ogrId, ogrenciId: ogrId, subeId: a.subeId, grupId: g.id, sozlesmeNo: "TEST-1" });
+    x.kayitlar.push({ ...db.kayitlar[0], id: "k-" + ogrId, ogrenciId: ogrId, subeId: a.subeId, grupId: g.id, sozlesmeNo: `${a.subeId === "s1" ? "MRK" : "KZY"}-2026-9001` }); // Bölüm 04: şube koduyla başlamalı
     x.adaylar = x.adaylar.map((y) => (y.id === a.id ? { ...y, durum: "kayit", ogrenciId: ogrId, sonrakiAksiyon: null, vazgecmeNedeni: null } : y));
   };
   it("öğrenci kartı aynı pakette gelince kabul edilir (vazgeçmiş aday dahil)", () => {
