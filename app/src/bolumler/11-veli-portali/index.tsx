@@ -77,7 +77,7 @@ import {
   type Veli,
 } from "@/data/store";
 import { gunFarki, haftaGunu, iyelik, tarihEkle, telefonNormalize, tl } from "@/lib/kurallar";
-import { bosSlotlar, etutTurAd } from "./09-etut";
+import { bosSlotlar, etutTurAd } from "@/bolumler/09-etut";
 import { api, ApiHatasi } from "@/lib/api";
 import { Yukleniyor, useSunucuDurumu } from "@/layout/Giris";
 import { cn } from "@/lib/utils";

@@ -10,7 +10,10 @@
     "start": "tsx server/index.ts --uretim",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "smoke": "node scripts/duman-testi.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run smoke"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.17",

@@ -44,7 +44,7 @@ import {
   type Kullanici,
   type Rol,
 } from "@/data/store";
-import { bolumler } from "./registry";
+import { bolumler } from "@/bolumler/registry";
 import { telefonNormalize } from "@/lib/kurallar";
 import { api } from "@/lib/api";
 
