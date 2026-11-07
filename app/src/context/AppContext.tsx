@@ -1,5 +1,6 @@
 import * as React from "react";
 import { guncelle, useDb, type Db, type Kullanici, type ModulKey, type Personel, type Rol } from "@/data/store";
+import { bolumYetkisi } from "@/bolumler/02-kullanicilar/kurallar";
 
 export type { ModulKey };
 
@@ -137,7 +138,8 @@ export function useOturum() {
       if (!g || !seciliSubeler.includes(g.subeId)) return false;
       return grupIds ? grupIds.has(grupId) : true;
     },
-    yetki: (bolumKod: string) => d.rolYetkileri[rol]?.[bolumKod] ?? false,
+    // Sunucuyla aynı kural (server/politika.ts): yalnızca `true` yetki verir
+    yetki: (bolumKod: string) => bolumYetkisi(d.rolYetkileri, rol, bolumKod),
   };
 }
 

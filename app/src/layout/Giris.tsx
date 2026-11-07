@@ -10,6 +10,7 @@ import { Alert, Button, Card, CardContent, Dialog, Field, Input, toast } from "@
 import { useApp, type BenBilgisi } from "@/context/AppContext";
 import { rolAdlari, useVeriHazir, veriYukle, veriyiTemizle, type Rol } from "@/data/store";
 import { api, ApiHatasi, type SunucuDurumu } from "@/lib/api";
+import { parolaDegisimDogrula } from "@/bolumler/02-kullanicilar/kurallar";
 
 export function useSunucuDurumu() {
   const [d, setD] = React.useState<SunucuDurumu | null>(null);
@@ -236,7 +237,9 @@ export async function cikisYap(setBen: (b: BenBilgisi | null) => void) {
 export function ParolaDegistir({ onClose, zorunlu }: { onClose: () => void; zorunlu?: boolean }) {
   const [f, setF] = React.useState({ eski: "", yeni: "", tekrar: "" });
   const [hata, setHata] = React.useState("");
-  const gecerli = f.yeni.length >= 8 && /\d/.test(f.yeni) && /\D/.test(f.yeni) && f.yeni === f.tekrar;
+  // Sunucuyla aynı kural (src/bolumler/02-kullanicilar/kurallar.ts)
+  const kural = parolaDegisimDogrula(f.eski, f.yeni, f.tekrar);
+  const gecerli = !kural;
   const kaydet = async () => {
     setHata("");
     try {
@@ -261,7 +264,7 @@ export function ParolaDegistir({ onClose, zorunlu }: { onClose: () => void; zoru
       }
     >
       <Field label={zorunlu ? "Geçici parola" : "Mevcut parola"}><Input type="password" autoComplete="current-password" value={f.eski} onChange={(e) => setF({ ...f, eski: e.target.value })} /></Field>
-      <Field label="Yeni parola" hint="En az 8 karakter; harf ve rakam içermeli."><Input type="password" autoComplete="new-password" value={f.yeni} onChange={(e) => setF({ ...f, yeni: e.target.value })} /></Field>
+      <Field label="Yeni parola" hint={f.yeni && kural && kural !== "Parolalar eşleşmiyor." ? kural : "En az 8 karakter; harf ve rakam içermeli."}><Input type="password" autoComplete="new-password" value={f.yeni} onChange={(e) => setF({ ...f, yeni: e.target.value })} /></Field>
       <Field label="Yeni parola (tekrar)" hint={f.tekrar && f.tekrar !== f.yeni ? "Parolalar eşleşmiyor." : undefined}>
         <Input type="password" autoComplete="new-password" value={f.tekrar} onChange={(e) => setF({ ...f, tekrar: e.target.value })} />
       </Field>

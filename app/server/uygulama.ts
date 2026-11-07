@@ -30,16 +30,17 @@ import {
 import { farkBos, farkHesapla, farkUygula, type Degisiklik } from "../src/data/fark";
 import { dakika, haftaGunu, telefonNormalize, tarihEkle } from "../src/lib/kurallar";
 import * as m from "../src/data/mock";
+import { ayniEposta, bolumYetkisi, epostaNormalize, parolaDegisimDogrula, parolaSifirlamaEngeli } from "../src/bolumler/02-kullanicilar/kurallar";
 import {
   denemeHakki,
   denemeSifirla,
+  digerOturumlariKapat,
   kodDogrula,
   kodUret,
   oturumAc,
   oturumBul,
   oturumKapat,
   parolaDogru,
-  parolaGucluMu,
   parolaOzeti,
   rastgeleParola,
   tumOturumlariKapat,
@@ -174,9 +175,10 @@ export async function uygulamaOlustur(s: Secenekler) {
     setCookie(c, ad, deger, { httpOnly: true, sameSite: "Strict", secure: uretim, path: "/", maxAge: saat * 3600 });
   const hata = (c: Context, mesaj: string, kod: 400 | 401 | 403 | 404 | 409 | 429 = 400) => c.json({ hata: mesaj }, kod);
 
+  /** Hesap ve bağlı personel kartı aktifse aktör (her istekte güncel veriden: pasife alınan hesap hemen düşer) */
   function aktorBul(kullaniciId: string): Aktor | null {
     const k = durum.db.kullanicilar.find((x) => x.id === kullaniciId && x.aktif);
-    const p = k && durum.db.personel.find((x) => x.id === k.personelId);
+    const p = k && durum.db.personel.find((x) => x.id === k.personelId && x.aktif !== false);
     return k && p ? { kullanici: k, personel: p } : null;
   }
   const benBilgisi = async (a: Aktor) => {
@@ -249,17 +251,22 @@ export async function uygulamaOlustur(s: Secenekler) {
   /* ---------- Personel girişi ---------- */
   app.post("/api/giris", async (c) => {
     const { eposta, parola } = await c.req.json<{ eposta: string; parola: string }>();
-    const e = String(eposta ?? "").trim().toLocaleLowerCase("tr-TR");
-    if (!denemeHakki(`giris:${e}:${ip(c)}`, 5, 15 * 60_000)) return hata(c, "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin.", 429);
-    const k = durum.db.kullanicilar.find((x) => x.eposta.toLocaleLowerCase("tr-TR") === e);
+    const e = epostaNormalize(eposta);
+    // IP başına 5 ve (x-forwarded-for değiştirilerek aşılmasın diye) e-posta başına 20 deneme / 15 dk
+    if (!denemeHakki(`giris:${e}:${ip(c)}`, 5, 15 * 60_000) || !denemeHakki(`giris:${e}`, 20, 15 * 60_000))
+      return hata(c, "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin.", 429);
+    const k = durum.db.kullanicilar.find((x) => ayniEposta(x.eposta, e));
     const kayit = k ? (await vt.q("select ozet from parola where kullanici_id = $1", [k.id]))[0] : undefined;
-    const dogru = !!kayit && (await parolaDogru(String(parola ?? ""), String(kayit.ozet)));
-    if (!k || !dogru || !k.aktif) {
+    // Kullanıcı yoksa da özet hesaplanır: yanıt süresinden e-postanın kayıtlı olduğu anlaşılmasın
+    const dogru = await parolaDogru(String(parola ?? ""), kayit ? String(kayit.ozet) : null);
+    const aktif = !!k && !!aktorBul(k.id);
+    if (!k || !dogru || !aktif) {
       if (k) await girisKaydet(k, c, false);
-      return hata(c, k && dogru && !k.aktif ? "Hesabınız pasif. Yöneticinizle görüşün." : "E-posta veya parola hatalı.", 401);
+      return hata(c, k && dogru && !aktif ? "Hesabınız pasif. Yöneticinizle görüşün." : "E-posta veya parola hatalı.", 401);
     }
-    denemeSifirla(`giris:${e}:${ip(c)}`);
     if (k.ikiAdim) {
+      // Sayaç ikinci adım tamamlanınca sıfırlanır (parolayı bilen biri sınırsız kod isteyip deneyemesin)
+      if (!denemeHakki(`2fa:${k.id}`, 5, 15 * 60_000)) return hata(c, "Çok fazla doğrulama kodu istendi. 15 dakika sonra tekrar deneyin.", 429);
       const p = durum.db.personel.find((x) => x.id === k.personelId)!;
       const tel = telefonNormalize(p.telefon);
       if (!tel) return hata(c, "İki adımlı doğrulama için kayıtlı cep telefonu yok. Yöneticinizle görüşün.", 400);
@@ -268,6 +275,8 @@ export async function uygulamaOlustur(s: Secenekler) {
       await kodGonder(tel, kod, null, p.anaSubeId);
       return c.json({ ikiAdim: true, gecici, telefon: tel.slice(0, 4) + " *** ** " + tel.slice(-2), demoKod: demo && sms.ad === "konsol" ? kod : undefined });
     }
+    denemeSifirla(`giris:${e}:${ip(c)}`);
+    denemeSifirla(`giris:${e}`);
     cerez(c, PERSONEL_CEREZ, await oturumAc(vt, "personel", k.id, PERSONEL_SAAT, cihaz(c)), PERSONEL_SAAT);
     await girisKaydet(k, c, true);
     return c.json(await benBilgisi(aktorBul(k.id)!));
@@ -279,6 +288,9 @@ export async function uygulamaOlustur(s: Secenekler) {
     if (!r.tamam) return hata(c, r.neden === "deneme" ? "Çok fazla hatalı kod. Yeniden giriş yapın." : r.neden === "sure" ? "Kodun süresi doldu." : "Kod hatalı.", 401);
     const a = aktorBul(r.veri);
     if (!a) return hata(c, "Hesap bulunamadı.", 401);
+    denemeSifirla(`giris:${epostaNormalize(a.kullanici.eposta)}:${ip(c)}`);
+    denemeSifirla(`giris:${epostaNormalize(a.kullanici.eposta)}`);
+    denemeSifirla(`2fa:${a.kullanici.id}`);
     cerez(c, PERSONEL_CEREZ, await oturumAc(vt, "personel", a.kullanici.id, PERSONEL_SAAT, cihaz(c)), PERSONEL_SAAT);
     await girisKaydet(a.kullanici, c, true);
     return c.json(await benBilgisi(a));
@@ -324,10 +336,16 @@ export async function uygulamaOlustur(s: Secenekler) {
   app.post("/api/parola", personelGerekli, async (c) => {
     const { eski, yeni } = await c.req.json<{ eski: string; yeni: string }>();
     const a = c.get("aktor");
+    // Açık oturumu ele geçiren biri mevcut parolayı deneme-yanılmayla bulamasın
+    if (!denemeHakki(`parola:${a.kullanici.id}`, 5, 15 * 60_000)) return hata(c, "Çok fazla hatalı deneme. 15 dakika sonra tekrar deneyin.", 429);
     const kayit = (await vt.q("select ozet from parola where kullanici_id = $1", [a.kullanici.id]))[0];
     if (!kayit || !(await parolaDogru(String(eski ?? ""), String(kayit.ozet)))) return hata(c, "Mevcut parola hatalı.", 403);
-    if (!parolaGucluMu(String(yeni ?? ""))) return hata(c, "Yeni parola en az 8 karakter olmalı, harf ve rakam içermeli.");
+    const kural = parolaDegisimDogrula(String(eski ?? ""), String(yeni ?? ""));
+    if (kural) return hata(c, kural);
+    denemeSifirla(`parola:${a.kullanici.id}`);
     await vt.q("update parola set ozet = $2, degistirmeli = false where kullanici_id = $1", [a.kullanici.id, await parolaOzeti(yeni)]);
+    // Parola değişince bu oturum dışındaki açık oturumlar kapanır
+    await digerOturumlariKapat(vt, "personel", a.kullanici.id, getCookie(c, PERSONEL_CEREZ));
     await sunucuDegisikligi((x) => islemYaz(x, tamAd(a.personel), "Parola", "Parola değiştirildi"));
     return c.json({ tamam: true });
   });
@@ -335,9 +353,11 @@ export async function uygulamaOlustur(s: Secenekler) {
   app.post("/api/kullanicilar/:id/parola-sifirla", personelGerekli, async (c) => {
     const a = c.get("aktor");
     const hedef = durum.db.kullanicilar.find((k) => k.id === c.req.param("id"));
-    const yetkili = a.kullanici.rol === "genel-yonetici" || durum.db.rolYetkileri[a.kullanici.rol]?.["02"];
+    const yetkili = a.kullanici.rol === "genel-yonetici" || bolumYetkisi(durum.db.rolYetkileri, a.kullanici.rol, "02");
     if (!hedef || !yetkili) return hata(c, "Bu işlem için yetkiniz yok.", 403);
-    if (a.kullanici.rol !== "genel-yonetici" && hedef.subeIds === "all") return hata(c, "Bu kullanıcının parolasını sıfırlayamazsınız.", 403);
+    // Kendinden yetkili hesap, kapsam dışı şube ve kendi hesabı (eski parola sorulmadan) sıfırlanamaz
+    const engel = parolaSifirlamaEngeli(a.kullanici, hedef, kapsam(durum.db, a.kullanici));
+    if (engel) return hata(c, engel, 403);
     const parola = rastgeleParola();
     await vt.q(
       "insert into parola (kullanici_id, ozet, degistirmeli) values ($1, $2, true) on conflict (kullanici_id) do update set ozet = excluded.ozet, degistirmeli = true",
@@ -358,7 +378,8 @@ export async function uygulamaOlustur(s: Secenekler) {
     if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici geri yükleyebilir.", 403);
     const yeni = await c.req.json<Db>();
     if (yeni?.surum !== SURUM || !Array.isArray(yeni.ogrenciler) || !Array.isArray(yeni.kullanicilar)) return hata(c, "Geçerli bir Classmate yedeği değil (veya farklı sürüm).");
-    if (!yeni.kullanicilar.some((k) => k.id === a.kullanici.id && k.aktif)) return hata(c, "Yedekte sizin hesabınız yok; geri yükleme sizi dışarıda bırakırdı.");
+    if (!yeni.kullanicilar.some((k) => k.id === a.kullanici.id && k.aktif && k.rol === "genel-yonetici"))
+      return hata(c, "Yedekte sizin aktif genel yönetici hesabınız yok; geri yükleme sizi dışarıda bırakırdı.");
     await sirali(async () => {
       await tamamenYaz(vt, yeni, (k, x) => subeSutunu(yeni, k, x));
       durum.db = (await hepsiniYukle(vt))!;

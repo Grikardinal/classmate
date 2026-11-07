@@ -20,6 +20,16 @@ import {
   subePasifeAlmaEngeli,
   type Hata,
 } from "../src/bolumler/01-kurum-yapisi/kurallar";
+import {
+  bolumYetkisi,
+  epostaNormalize,
+  kendiHesabiEngeli,
+  kullaniciDogrula,
+  rolAtamaEngeli,
+  rolYetkileriDogrula,
+  sonGenelYoneticiEngeli,
+  yonetimEngeli,
+} from "../src/bolumler/02-kullanicilar/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
 export class YetkiHatasi extends Error {}
@@ -44,7 +54,7 @@ export function ogretmenGruplari(db: Db, personelId: string): Set<string> {
   ]);
 }
 
-const yetki = (db: Db, a: Aktor, kod: string) => db.rolYetkileri[a.kullanici.rol]?.[kod] === true;
+const yetki = (db: Db, a: Aktor, kod: string) => bolumYetkisi(db.rolYetkileri, a.kullanici.rol, kod);
 const grupSube = (db: Db, grupId: unknown) => db.gruplar.find((g) => g.id === grupId)?.subeId ?? null;
 const ogrenciSube = (db: Db, ogrenciId: unknown) =>
   aktifKayit(db, String(ogrenciId))?.subeId ?? db.kayitlar.find((k) => k.ogrenciId === ogrenciId)?.subeId ?? null;
@@ -244,8 +254,9 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           } else s.kullanici = ad;
           break;
         case "kullanicilar":
-          if (s.rol === "genel-yonetici" && !genel) hata("Genel yönetici yetkisi veremezsiniz.");
-          if (eski && eski.id === a.kullanici.id && (s.rol !== eski.rol || s.aktif === false)) hata("Kendi rolünüzü değiştiremez veya hesabınızı kapatamazsınız.");
+          // Ayrıntılı kurallar: kullaniciDenetle() (Bölüm 02). Son giriş zamanını yalnızca sunucu yazar.
+          s.eposta = epostaNormalize(s.eposta);
+          s.sonGiris = eski ? (eski.sonGiris ?? null) : null;
           break;
         case "yoklamalar":
           if (ogrGrup) {
@@ -277,7 +288,69 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
     temiz.koleksiyonlar[k] = { yaz, sil };
   }
   tanimDenetle(onceki, sonrakiDb, temiz);
+  kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   return temiz;
+}
+
+/* =========================== Bölüm 02 kullanıcılar =========================== */
+/**
+ * Kullanıcı hesabı ve rol yetki tablosu kuralları (ekranla ortak: src/bolumler/02-kullanicilar/kurallar.ts):
+ * - alan kuralları: geçerli rol, personel kartı, benzersiz e-posta (büyük/küçük harf ve İ/I/ı farkı yok), şube kapsamı
+ * - yetki yükseltme: genel yönetici olmayan aktör kendinden yetkili rol atayamaz, yetkili hesabı değiştiremez/silemez
+ * - kendi hesabı: kendi rolü, şube kapsamı değişmez; kendini pasife alamaz / silemez
+ * - personel pasife alınınca bağlı hesap da pasife alınır (oturumları uygulama.ts kapatır)
+ * - her zaman en az bir aktif genel yönetici kalır
+ * - rol yetki tablosu tam ve boolean olmalı; genel yöneticinin bölümleri kapatılamaz
+ * `temiz` yerinde güncellenir (zincirleme pasife alma eklenir).
+ */
+export function kullaniciDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const ben = a.kullanici;
+  const kap = kapsam(onceki, ben);
+
+  if ("rolYetkileri" in (temiz.tekil ?? {})) reddet(rolYetkileriDogrula(temiz.tekil.rolYetkileri));
+
+  const kullaniciYaz = (temiz.koleksiyonlar.kullanicilar?.yaz ?? []) as unknown as Kullanici[];
+  const kullaniciSil = temiz.koleksiyonlar.kullanicilar?.sil ?? [];
+
+  // Personel pasife alındıysa bağlı aktif hesap da pasife alınır (hesabı görmeyen şube müdürü de pasife alabilsin)
+  const zincir: Kullanici[] = [];
+  for (const p of (temiz.koleksiyonlar.personel?.yaz ?? []) as unknown as Personel[]) {
+    if (p.aktif !== false) continue;
+    const k = sonraki.kullanicilar.find((x) => x.personelId === p.id);
+    if (!k || !k.aktif || kullaniciYaz.some((x) => x.id === k.id && !x.aktif)) continue;
+    if (k.id === ben.id) reddet("Kendi hesabınızı pasife alamazsınız.");
+    reddet(yonetimEngeli(ben, k, kap) && "Bu personelin kullanıcı hesabını yönetme yetkiniz yok; pasife alma genel yöneticiye bırakılmalı.");
+    zincir.push({ ...k, aktif: false });
+  }
+
+  if (!kullaniciYaz.length && !kullaniciSil.length && !zincir.length) return;
+
+  for (const s of kullaniciYaz) {
+    const eski = onceki.kullanicilar.find((x) => x.id === s.id);
+    if (eski) {
+      reddet(yonetimEngeli(ben, eski, kap));
+      if (eski.id === ben.id) reddet(kendiHesabiEngeli(eski, s));
+    }
+    reddet(kullaniciDogrula(s, sonraki));
+    reddet(rolAtamaEngeli(ben.rol, s.rol));
+    reddet(yonetimEngeli(ben, s, kap));
+  }
+  for (const id of kullaniciSil) {
+    const eski = onceki.kullanicilar.find((x) => x.id === id);
+    if (!eski) continue;
+    if (eski.id === ben.id) reddet("Kendi hesabınızı silemezsiniz.");
+    reddet(yonetimEngeli(ben, eski, kap));
+  }
+
+  if (zincir.length) {
+    const k = (temiz.koleksiyonlar.kullanicilar ??= { yaz: [], sil: [] });
+    k.yaz = [...k.yaz.filter((x) => !zincir.some((z) => z.id === x.id)), ...(zincir as unknown as Satir[])];
+  }
+  const sonListe = sonraki.kullanicilar.map((k) => zincir.find((z) => z.id === k.id) ?? k);
+  reddet(sonGenelYoneticiEngeli(sonListe));
 }
 
 /* =========================== Bölüm 01 tanımları =========================== */

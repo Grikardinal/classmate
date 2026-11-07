@@ -5,6 +5,7 @@
 import { createHash, randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type { Veritabani } from "./veritabani";
+import { PAROLA_EN_FAZLA, parolaKurali } from "../src/bolumler/02-kullanicilar/kurallar";
 
 const scrypt = promisify(scryptCb) as (p: string, s: Buffer, n: number) => Promise<Buffer>;
 
@@ -14,17 +15,22 @@ export async function parolaOzeti(parola: string): Promise<string> {
   return `scrypt$${tuz.toString("base64")}$${ozet.toString("base64")}`;
 }
 
-export async function parolaDogru(parola: string, kayitli: string): Promise<boolean> {
-  const [tur, tuzB64, ozetB64] = kayitli.split("$");
+/** Kullanıcı bulunamadığında da aynı sürede yanıt vermek için kullanılan sahte özet (e-posta varlığı süreden anlaşılmasın) */
+const SAHTE_OZET = `scrypt$${randomBytes(16).toString("base64")}$${randomBytes(64).toString("base64")}`;
+
+export async function parolaDogru(parola: string, kayitli: string | null | undefined): Promise<boolean> {
+  // Aşırı uzun girdi scrypt'i yormasın (kural zaten en fazla 128 karakter)
+  const p = parola.length > PAROLA_EN_FAZLA * 4 ? "" : parola;
+  const [tur, tuzB64, ozetB64] = (kayitli ?? SAHTE_OZET).split("$");
   if (tur !== "scrypt" || !tuzB64 || !ozetB64) return false;
   const beklenen = Buffer.from(ozetB64, "base64");
-  const ozet = await scrypt(parola, Buffer.from(tuzB64, "base64"), beklenen.length);
-  return ozet.length === beklenen.length && timingSafeEqual(ozet, beklenen);
+  const ozet = await scrypt(p, Buffer.from(tuzB64, "base64"), beklenen.length);
+  return !!kayitli && !!p && ozet.length === beklenen.length && timingSafeEqual(ozet, beklenen);
 }
 
-/** En az 8 karakter, harf ve rakam */
+/** Parola kuralı (ekranla ortak: src/bolumler/02-kullanicilar/kurallar.ts · parolaKurali) */
 export function parolaGucluMu(p: string) {
-  return p.length >= 8 && /[a-zA-ZçğıöşüÇĞİÖŞÜ]/.test(p) && /\d/.test(p);
+  return parolaKurali(p) === null;
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -34,6 +40,8 @@ export type Oturum = { tur: OturumTuru; sahipId: string };
 
 export async function oturumAc(vt: Veritabani, tur: OturumTuru, sahipId: string, saat: number, cihaz: string) {
   const belirtec = randomBytes(32).toString("base64url");
+  // Süresi dolmuş oturumlar tabloda birikmesin
+  await vt.q("delete from oturum where bitis <= now()");
   await vt.q("insert into oturum (belirtec_ozet, tur, sahip_id, bitis, cihaz) values ($1, $2, $3, now() + ($4 || ' hours')::interval, $5)", [
     sha256(belirtec), tur, sahipId, String(saat), cihaz.slice(0, 200),
   ]);
@@ -55,12 +63,19 @@ export async function tumOturumlariKapat(vt: Veritabani, tur: OturumTuru, sahipI
   await vt.q("delete from oturum where tur = $1 and sahip_id = $2", [tur, sahipId]);
 }
 
+/** Bu oturum dışındaki tüm oturumları kapat (kullanıcı kendi parolasını değiştirince) */
+export async function digerOturumlariKapat(vt: Veritabani, tur: OturumTuru, sahipId: string, belirtec: string | undefined) {
+  await vt.q("delete from oturum where tur = $1 and sahip_id = $2 and belirtec_ozet <> $3", [tur, sahipId, sha256(belirtec ?? "")]);
+}
+
 /* ---------- Tek kullanımlık kodlar (bellekte; 5 dk geçerli, en çok 5 deneme) ---------- */
 type Kod = { ozet: string; bitis: number; deneme: number; veri: string };
 const kodlar = new Map<string, Kod>();
 
 export function kodUret(anahtar: string, veri = ""): string {
   const kod = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const simdi = Date.now();
+  for (const [a, k] of kodlar) if (simdi > k.bitis) kodlar.delete(a); // süresi dolanlar birikmesin
   kodlar.set(anahtar, { ozet: sha256(anahtar + kod), bitis: Date.now() + 5 * 60_000, deneme: 0, veri });
   return kod;
 }

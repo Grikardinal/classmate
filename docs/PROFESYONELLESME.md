@@ -18,7 +18,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 |---|---|---|---|---|
 | 00 | Hazırlık: klasör yapısı, `check`/`smoke` betikleri | — | ana oturum | ✅ |
 | 01 | Kurum yapısı ve tanımlar | `app/src/bolumler/01-kurum-yapisi` | 1 | ✅ |
-| 02 | Kullanıcılar ve yetkiler | `app/src/bolumler/02-kullanicilar` | 2 | ⏳ |
+| 02 | Kullanıcılar ve yetkiler | `app/src/bolumler/02-kullanicilar` | 2 | ✅ |
 | 03 | Ön kayıt | `app/src/bolumler/03-on-kayit` | 3 | ⏳ |
 | 04 | Öğrenci, veli ve kayıt | `app/src/bolumler/04-ogrenciler` | 4 | ⏳ |
 | 05 | Finans | `app/src/bolumler/05-finans` | 5 | ⏳ |
@@ -31,6 +31,14 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 12 | Yönetim paneli ve raporlar | `app/src/bolumler/12-yonetim-paneli` | 2 | ⏳ |
 | 13 | Personel | `app/src/bolumler/13-personel` | 3 | ⏳ |
 | 14 | Altyapı, güvenlik, KVKK | `app/src/bolumler/14-altyapi` | 4 | ⏳ |
+
+## Kullanıcı kararları
+
+| Tarih | Konu | Karar | Nerede uygulanacak |
+|---|---|---|---|
+| 2026-11-07 | Fiyat listesi modeli (doküman: sezon + seviye + şube; kod: yalnızca şube) | Bölüm 05'te ele alınacak | Bölüm 05 |
+| 2026-11-07 | Sezon geçişinde fiyat / indirim / ek hizmet | Eski kayıttan kopyalanmaz, **yeni sezonun fiyatları** uygulanır | Bölüm 05 (sezona bağlı fiyat listesiyle birlikte) |
+| 2026-11-07 | Programda kullanılmış derslik / ders saati | **Sil + pasif** ikisi de olsun: kullanılmamış kayıt silinir, kullanılmış kayıt pasife alınır (geçmiş korunur, yeni programda seçilemez) | Bölüm 01 ek iş (Bölüm 02'den sonra, 03'ten önce) |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır
