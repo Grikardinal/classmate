@@ -23,6 +23,28 @@ const bos = (s: unknown) => typeof s !== "string" || s.trim() === "";
 const ayniAd = (a: string, b: string) => normalAd(a) === normalAd(b);
 const isoTarihMi = (s: unknown) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + "T00:00:00").getTime());
 
+/* ---------- Aktif / pasif tanım ---------- */
+
+/** Derslik ve ders saati: `aktif` alanı yoksa (eski veri, yedek) aktif sayılır. */
+export function tanimAktif(x: { aktif?: boolean } | null | undefined): boolean {
+  return !!x && x.aktif !== false;
+}
+
+/**
+ * Seçim listesi için: aktif kayıtlar ve (pasif olsa bile) şu an seçili olan kayıt.
+ * Pasif kayıt yeni atamada seçilemez ama mevcut atama görünür kalmalı.
+ */
+export function secilebilirTanimlar<T extends { id: string; aktif?: boolean }>(liste: T[], seciliId?: string): T[] {
+  return liste.filter((x) => tanimAktif(x) || x.id === seciliId);
+}
+
+/** Seçeneğin sonuna pasif kayıtlarda " (pasif)" eki */
+export function pasifEki(x: { aktif?: boolean }): string {
+  return tanimAktif(x) ? "" : " (pasif)";
+}
+
+const aktiflikGecersiz = (a: unknown) => a !== undefined && typeof a !== "boolean";
+
 /* ---------- Ortak sayısal kurallar ---------- */
 
 /** Kapasite pozitif tam sayı olmalı (1 … 500) */
@@ -207,6 +229,7 @@ export function grupDogrula(
     const dl = d.derslikler.find((x) => x.id === g.derslikId);
     if (!dl) return "Seçilen derslik bulunamadı.";
     if (dl.subeId !== g.subeId) return "Derslik grubun şubesine ait olmalı.";
+    if (!tanimAktif(dl)) return "Seçilen derslik pasif; aktif bir derslik seçin.";
   }
   return null;
 }
@@ -228,8 +251,9 @@ export function dersDogrula(f: { id?: string; ad: string; kisaAd: string; renk: 
 }
 
 /* ---------- Derslik ---------- */
-export function derslikDogrula(f: { id?: string; subeId: string; ad: string; kapasite: number }, mevcut: Derslik[]): Hata {
+export function derslikDogrula(f: { id?: string; subeId: string; ad: string; kapasite: number; aktif?: unknown }, mevcut: Derslik[]): Hata {
   if (bos(f.subeId)) return "Şube seçilmeli.";
+  if (aktiflikGecersiz(f.aktif)) return "Aktif/pasif değeri geçersiz.";
   if (bos(f.ad)) return "Derslik adı boş olamaz.";
   if (!kapasiteGecerli(f.kapasite)) return `Kapasite 1–${EN_BUYUK_KAPASITE} arasında tam sayı olmalı.`;
   if (mevcut.some((x) => x.id !== f.id && x.subeId === f.subeId && ayniAd(x.ad, f.ad))) return "Bu şubede aynı adlı derslik var.";
@@ -241,8 +265,8 @@ export function derslikDogrula(f: { id?: string; subeId: string; ad: string; kap
  * geçmiş programdan silmek eski yoklama/oturum kayıtlarını dersliksiz bırakırdı.
  */
 export function derslikSilmeEngeli(id: string, d: { gruplar: Pick<Grup, "derslikId">[]; program: Pick<ProgramSatiri, "derslikId">[] }): Hata {
-  if (d.gruplar.some((g) => g.derslikId === id)) return "Bu derslik bir grubun varsayılan dersliği; önce grubu güncelleyin.";
-  if (d.program.some((p) => p.derslikId === id)) return "Bu derslik ders programında kullanılıyor (geçmiş dönem dahil).";
+  if (d.gruplar.some((g) => g.derslikId === id)) return "Bu derslik bir grubun varsayılan dersliği; önce grubu güncelleyin ya da dersliği pasife alın.";
+  if (d.program.some((p) => p.derslikId === id)) return "Bu derslik ders programında kullanılıyor (geçmiş dönem dahil); silinemez, pasife alınabilir.";
   return null;
 }
 
@@ -254,8 +278,9 @@ export function saatGecerli(s: unknown): boolean {
 }
 
 /** Aynı şube ve gün tipinde iki dilim örtüşemez (uç uca değmek serbest). */
-export function dersSaatiDogrula(h: Pick<DersSaati, "id" | "subeId" | "gunTipi" | "baslangic" | "bitis">, mevcut: DersSaati[]): Hata {
+export function dersSaatiDogrula(h: Pick<DersSaati, "id" | "subeId" | "gunTipi" | "baslangic" | "bitis"> & { aktif?: unknown }, mevcut: DersSaati[]): Hata {
   if (bos(h.subeId)) return "Şube seçilmeli.";
+  if (aktiflikGecersiz(h.aktif)) return "Aktif/pasif değeri geçersiz.";
   if (!(GUN_TIPLERI as readonly string[]).includes(h.gunTipi)) return "Gün tipi geçersiz.";
   if (!saatGecerli(h.baslangic) || !saatGecerli(h.bitis)) return "Saat SS:DD biçiminde olmalı.";
   if (dakika(h.bitis) <= dakika(h.baslangic)) return "Bitiş saati başlangıçtan sonra olmalı.";
@@ -267,7 +292,29 @@ export function dersSaatiDogrula(h: Pick<DersSaati, "id" | "subeId" | "gunTipi" 
 
 /** Ders programında (geçmiş dahil) kullanılan ders saati silinemez. */
 export function dersSaatiSilmeEngeli(id: string, program: Pick<ProgramSatiri, "saatId">[]): Hata {
-  return program.some((p) => p.saatId === id) ? "Bu ders saati ders programında kullanılıyor; önce dersi taşıyın." : null;
+  return program.some((p) => p.saatId === id) ? "Bu ders saati ders programında kullanılıyor (geçmiş dönem dahil); silinemez, pasife alınabilir." : null;
+}
+
+/* ---------- Ders programı ataması ---------- */
+/**
+ * Program satırı pasif derslik veya ders saatine atanamaz. Yalnızca değişen alan denetlenir:
+ * eski = aynı kimlikli önceki satır (yeni satırda undefined). Pasife alınmadan önce yapılmış,
+ * değişmemiş atamalar (ör. satırın bitişini girmek) kilitlenmez.
+ */
+export function programAtamaEngeli(
+  p: Pick<ProgramSatiri, "derslikId" | "saatId">,
+  eski: Pick<ProgramSatiri, "derslikId" | "saatId"> | undefined,
+  d: Pick<Db, "derslikler" | "dersSaatleri">,
+): Hata {
+  if (p.derslikId !== eski?.derslikId) {
+    const dl = d.derslikler.find((x) => x.id === p.derslikId);
+    if (dl && !tanimAktif(dl)) return "Seçilen derslik pasif; yeni derse aktif bir derslik seçin.";
+  }
+  if (p.saatId !== eski?.saatId) {
+    const h = d.dersSaatleri.find((x) => x.id === p.saatId);
+    if (h && !tanimAktif(h)) return "Bu ders saati pasif; yeni ders aktif bir saate konmalı.";
+  }
+  return null;
 }
 
 /** Şubenin dilimlerini her gün tipinde başlangıca göre 1'den numaralar; diğer şubelere dokunmaz. */

@@ -89,6 +89,41 @@ describe("derslik ve ders saati", () => {
   });
 });
 
+describe("pasif derslik ve ders saati", () => {
+  const pasifli = structuredClone(db);
+  pasifli.derslikler = pasifli.derslikler.map((x) => (x.id === "d1" ? { ...x, aktif: false } : x));
+  pasifli.dersSaatleri = pasifli.dersSaatleri.map((h) => (h.id === "h1" ? { ...h, aktif: false } : h));
+  const kullanilan = pasifli.program.find((p) => p.derslikId === "d1" && p.saatId === "h1")!;
+  const yeniSatir = { ...kullanilan, id: "ps999", gun: 7, saatId: "h6", derslikId: "d2" };
+
+  it("kullanılmış derslik ve ders saati pasife alınır, tekrar aktife alınır", () => {
+    expect(dene((x) => (x.derslikler = x.derslikler.map((d) => (d.id === "d1" ? { ...d, aktif: false } : d))))).not.toThrow();
+    expect(dene((x) => (x.dersSaatleri = x.dersSaatleri.map((h) => (h.id === "h1" ? { ...h, aktif: false } : h))))).not.toThrow();
+    expect(dene((x) => (x.derslikler = x.derslikler.map((d) => (d.id === "d1" ? { ...d, aktif: true } : d))), YONETICI, pasifli)).not.toThrow();
+  });
+  it("pasif olsa da kullanılmış kayıt silinemez", () => {
+    reddedilir(dene((x) => (x.derslikler = x.derslikler.filter((d) => d.id !== "d1")), YONETICI, pasifli), /pasife/);
+    reddedilir(dene((x) => (x.dersSaatleri = x.dersSaatleri.filter((h) => h.id !== "h1")), YONETICI, pasifli), /pasife/);
+  });
+  it("bozuk aktiflik değeri reddedilir", () => {
+    reddedilir(dene((x) => (x.derslikler = x.derslikler.map((d) => (d.id === "d2" ? { ...d, aktif: "hayır" as unknown as boolean } : d)))), /geçersiz/);
+  });
+  it("yeni program satırı pasif derslik veya ders saatine eklenemez", () => {
+    expect(dene((x) => x.program.push(yeniSatir), YONETICI, pasifli)).not.toThrow();
+    reddedilir(dene((x) => x.program.push({ ...yeniSatir, derslikId: "d1" }), YONETICI, pasifli), /derslik pasif/);
+    reddedilir(dene((x) => x.program.push({ ...yeniSatir, saatId: "h1" }), YONETICI, pasifli), /saati pasif/);
+  });
+  it("var olan satır pasif kayda taşınamaz ama değişmemiş ataması kilitlenmez", () => {
+    reddedilir(dene((x) => (x.program = x.program.map((p) => (p.derslikId === "d2" && p.saatId !== "h1" ? { ...p, saatId: "h1" } : p))), YONETICI, pasifli), /saati pasif/);
+    expect(dene((x) => (x.program = x.program.map((p) => (p.id === kullanilan.id ? { ...p, bitis: "2026-12-31" } : p))), YONETICI, pasifli)).not.toThrow();
+    expect(dene((x) => (x.program = x.program.map((p) => (p.id === kullanilan.id ? { ...p, dersId: "l3" } : p))), YONETICI, pasifli)).not.toThrow();
+  });
+  it("gruba pasif derslik atanamaz; pasif dersliği olan grup başka alanı değişince kilitlenmez", () => {
+    reddedilir(dene((x) => (x.gruplar = x.gruplar.map((g) => (g.id === "g1" ? { ...g, derslikId: "d1" } : g))), YONETICI, pasifli), /pasif/);
+    expect(dene((x) => (x.gruplar = x.gruplar.map((g) => (g.id === "g2" ? { ...g, kapasite: 18 } : g))), YONETICI, pasifli)).not.toThrow();
+  });
+});
+
 describe("gruplar", () => {
   const yeni = { id: "g99", subeId: "s1", sezonId: "z2", seviye: 5, ad: "5-B", kapasite: 14, derslikId: "d1", rehberId: "p5" };
   it("geçerli grup eklenir", () => expect(dene((x) => x.gruplar.push(yeni))).not.toThrow());

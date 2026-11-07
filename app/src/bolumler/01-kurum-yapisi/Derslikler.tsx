@@ -1,9 +1,10 @@
 import * as React from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Plus, Trash2 } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, Select, Table, Td, Th, toast } from "@/components/ui";
 import { subeKodu, useApp, useOturum, useSubeFiltre } from "@/context/AppContext";
 import { guncelle, islemYaz, useDb, yeniId, type Derslik } from "@/data/store";
-import { derslikDogrula, derslikSilmeEngeli, kapasiteDuzelt } from "./kurallar";
+import { derslikDogrula, derslikSilmeEngeli, kapasiteDuzelt, tanimAktif } from "./kurallar";
+import { cn } from "@/lib/utils";
 import { HataMetni, useSubeTanimYazar } from "./ortak";
 
 export function Derslikler() {
@@ -21,7 +22,7 @@ export function Derslikler() {
   const ekle = () => {
     if (hata) return;
     guncelle((x) => {
-      x.derslikler.push({ id: yeniId("d"), ...yeniDerslik });
+      x.derslikler.push({ id: yeniId("d"), ...yeniDerslik, aktif: true });
       islemYaz(x, ad, "Derslik", `${yeniDerslik.ad} eklendi`, yeniDerslik.subeId);
     });
     setF({ ...f, ad: "" });
@@ -32,6 +33,14 @@ export function Derslikler() {
     guncelle((x) => {
       x.derslikler = x.derslikler.filter((y) => y.id !== dl.id);
       islemYaz(x, ad, "Derslik", `${dl.ad} silindi`, dl.subeId);
+    });
+  };
+  /** Kullanılmış derslik silinmez, pasife alınır: geçmiş program ve yoklamalar bozulmaz, yeni atamada seçilemez. */
+  const aktiflikDegistir = (dl: Derslik) => {
+    const aktif = !tanimAktif(dl);
+    guncelle((x) => {
+      x.derslikler = x.derslikler.map((z) => (z.id === dl.id ? { ...z, aktif } : z));
+      islemYaz(x, ad, "Derslik", `${dl.ad} ${aktif ? "aktife alındı" : "pasife alındı"}`, dl.subeId);
     });
   };
   const kapasiteKaydet = (dl: Derslik, kapasite: number) => {
@@ -46,20 +55,36 @@ export function Derslikler() {
     <Card>
       <CardHeader>
         <CardTitle>Derslikler</CardTitle>
-        <CardDescription>Şubeye özel. Üst bardaki şube seçicisine göre filtrelenir.</CardDescription>
+        <CardDescription>Şubeye özel. Üst bardaki şube seçicisine göre filtrelenir. Ders programında kullanılmış derslik silinemez; pasife alınır (geçmiş kayıtlar korunur, yeni atamada seçilemez).</CardDescription>
       </CardHeader>
       <Table>
         <thead><tr><Th>Şube</Th><Th>Derslik</Th><Th>Kapasite</Th><Th>Kullanan gruplar (aktif sezon)</Th><Th /></tr></thead>
         <tbody>
-          {liste.map((x) => (
-            <tr key={x.id}>
+          {liste.map((x) => {
+            const aktif = tanimAktif(x);
+            const silmeEngeli = derslikSilmeEngeli(x.id, d);
+            return (
+            <tr key={x.id} className={cn(!aktif && "opacity-60")}>
               <Td className="font-mono text-xs text-muted-foreground">{subeKodu(d, x.subeId)}</Td>
-              <Td className="font-medium">{x.ad}</Td>
+              <Td className="font-medium">
+                <span className={cn(!aktif && "text-muted-foreground")}>{x.ad}</span>
+                {!aktif && <Badge variant="outline" className="ml-2">Pasif</Badge>}
+              </Td>
               <Td><KapasiteHucresi deger={x.kapasite} disabled={!yazabilir} etiket={`${x.ad} kapasitesi`} onKaydet={(k) => kapasiteKaydet(x, k)} /></Td>
               <Td><div className="flex flex-wrap gap-1">{d.gruplar.filter((g) => g.derslikId === x.id && g.sezonId === aktifSezon).map((g) => <Badge key={g.id} variant="outline">{g.ad}</Badge>)}</div></Td>
-              <Td className="text-right">{yazabilir && <Button variant="ghost" size="icon" aria-label={`${x.ad} sil`} onClick={() => sil(x)}><Trash2 /></Button>}</Td>
+              <Td className="whitespace-nowrap text-right">
+                {yazabilir && (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => aktiflikDegistir(x)} title={aktif ? "Yeni ders programı ve grup atamasında seçilemez; geçmiş kayıtlar korunur." : undefined}>
+                      {aktif ? <><Archive /> Pasife al</> : <><ArchiveRestore /> Aktife al</>}
+                    </Button>
+                    <span title={silmeEngeli ?? undefined} className="inline-block"><Button variant="ghost" size="icon" aria-label={silmeEngeli ? `${x.ad} silinemez: ${silmeEngeli}` : `${x.ad} sil`} disabled={!!silmeEngeli} onClick={() => sil(x)}><Trash2 /></Button></span>
+                  </>
+                )}
+              </Td>
             </tr>
-          ))}
+            );
+          })}
           {liste.length === 0 && (
             <tr><Td colSpan={5} className="py-6 text-center text-sm text-muted-foreground">Tanımlı derslik yok</Td></tr>
           )}

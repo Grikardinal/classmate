@@ -38,7 +38,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 |---|---|---|---|
 | 2026-11-07 | Fiyat listesi modeli (doküman: sezon + seviye + şube; kod: yalnızca şube) | Bölüm 05'te ele alınacak | Bölüm 05 |
 | 2026-11-07 | Sezon geçişinde fiyat / indirim / ek hizmet | Eski kayıttan kopyalanmaz, **yeni sezonun fiyatları** uygulanır | Bölüm 05 (sezona bağlı fiyat listesiyle birlikte) |
-| 2026-11-07 | Programda kullanılmış derslik / ders saati | **Sil + pasif** ikisi de olsun: kullanılmamış kayıt silinir, kullanılmış kayıt pasife alınır (geçmiş korunur, yeni programda seçilemez) | Bölüm 01 ek iş (Bölüm 02'den sonra, 03'ten önce) |
+| 2026-11-07 | Programda kullanılmış derslik / ders saati | **Sil + pasif** ikisi de olsun: kullanılmamış kayıt silinir, kullanılmış kayıt pasife alınır (geçmiş korunur, yeni programda seçilemez) | Bölüm 01 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

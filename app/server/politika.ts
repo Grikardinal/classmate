@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { aktifKayit, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kullanici, type Kurum, type Personel, type Sezon, type Sube } from "../src/data/model";
+import { aktifKayit, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kullanici, type Kurum, type Personel, type ProgramSatiri, type Sezon, type Sube } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -15,6 +15,7 @@ import {
   fiyatListesiDogrula,
   grupDogrula,
   kurumDogrula,
+  programAtamaEngeli,
   sezonDogrula,
   subeDogrula,
   subePasifeAlmaEngeli,
@@ -356,7 +357,7 @@ export function kullaniciDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: 
 /* =========================== Bölüm 01 tanımları =========================== */
 /**
  * Kurum yapısı tanımlarının iş kuralları (boş/yinelenen ad, çakışan ders saati, bağlı kayıt varken silme,
- * tek aktif sezon, grubun şube/sezon değişmezliği…) ekrana güvenilmeden sunucuda da uygulanır.
+ * tek aktif sezon, grubun şube/sezon değişmezliği, pasif derslik/ders saatine yeni atama…) ekrana güvenilmeden sunucuda da uygulanır.
  * Kurallar ekranla ortaktır: src/bolumler/01-kurum-yapisi/kurallar.ts
  */
 export function tanimDenetle(onceki: Db, sonraki: Db, d: Degisiklik): void {
@@ -392,6 +393,9 @@ export function tanimDenetle(onceki: Db, sonraki: Db, d: Degisiklik): void {
     if (eski && eski.subeId !== h.subeId) reddet("Ders saati başka şubeye taşınamaz.");
   }
   for (const id of silinen("dersSaatleri")) reddet(dersSaatiSilmeEngeli(id, sonraki.program));
+
+  // Pasif derslik/ders saati yeni program satırına atanamaz; yalnızca değişen alan denetlenir
+  for (const p of yazilan<ProgramSatiri>("program")) reddet(programAtamaEngeli(p, onceki.program.find((y) => y.id === p.id), sonraki));
 
   for (const g of yazilan<Grup>("gruplar")) {
     const eski = onceki.gruplar.find((x) => x.id === g.id);

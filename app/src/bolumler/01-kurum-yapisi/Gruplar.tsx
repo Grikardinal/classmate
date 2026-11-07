@@ -4,7 +4,7 @@ import { Alert, Button, Card, CardContent, CardDescription, CardHeader, CardTitl
 import { subeKodu, useApp, useOturum, useSubeFiltre } from "@/context/AppContext";
 import { AKTIF_SEZON, derslikAdi, grupDoluluk, guncelle, islemYaz, personelAdi, useDb, yeniId, type Grup } from "@/data/store";
 import { cn } from "@/lib/utils";
-import { grupDogrula, kapasiteDuzelt, SEVIYELER } from "./kurallar";
+import { grupDogrula, kapasiteDuzelt, pasifEki, secilebilirTanimlar, SEVIYELER } from "./kurallar";
 import { HataMetni, useSubeTanimYazar } from "./ortak";
 
 export function Gruplar() {
@@ -95,10 +95,12 @@ function GrupDialog({ grup, varsayilanSube, sezonId, onClose, onKaydet }: { grup
   const [f, setF] = React.useState<Grup>(grup ?? { id: "", subeId: varsayilanSube, sezonId: sezonId || AKTIF_SEZON, seviye: 5, ad: "", kapasite: 14, derslikId: "", rehberId: "" });
   const [kapasiteMetni, setKapasiteMetni] = React.useState(String(f.kapasite));
   const ogretmenler = d.personel.filter((p) => p.gorev === "ogretmen" && p.aktif && p.subeIds.includes(f.subeId));
-  const derslikler = d.derslikler.filter((x) => x.subeId === f.subeId);
+  // Pasif derslik seçilemez; grubun mevcut (pasife alınmış) dersliği "(pasif)" ekiyle görünür kalır
+  const derslikler = secilebilirTanimlar(d.derslikler.filter((x) => x.subeId === f.subeId), grup?.derslikId);
   const kayitli = grup ? grupDoluluk(d, grup.id) : 0;
   const temiz: Grup = { ...f, ad: f.ad.trim() };
-  const hata = grupDogrula(temiz, d);
+  // Sunucuyla aynı: derslik yalnızca değiştiyse denetlenir (pasife alınmış mevcut derslik grubu kilitlemesin)
+  const hata = grupDogrula({ ...temiz, derslikId: temiz.derslikId !== grup?.derslikId ? temiz.derslikId : "" }, d);
   const mevcutRehberListede = !f.rehberId || ogretmenler.some((p) => p.id === f.rehberId);
   return (
     <Dialog
@@ -142,7 +144,7 @@ function GrupDialog({ grup, varsayilanSube, sezonId, onClose, onKaydet }: { grup
       <Field label="Varsayılan derslik">
         <Select value={f.derslikId} onChange={(e) => setF({ ...f, derslikId: e.target.value })}>
           <option value="">Seçilmedi</option>
-          {derslikler.map((x) => <option key={x.id} value={x.id}>{x.ad} ({x.kapasite})</option>)}
+          {derslikler.map((x) => <option key={x.id} value={x.id}>{x.ad} ({x.kapasite}){pasifEki(x)}</option>)}
         </Select>
       </Field>
       <Field label="Rehber öğretmen" hint={mevcutRehberListede ? undefined : `Mevcut rehber (${personelAdi(d, f.rehberId)}) artık bu şubede aktif değil.`}>

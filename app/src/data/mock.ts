@@ -13,8 +13,12 @@ export type Grup = {
   rehberId: string;
 };
 export type Ders = { id: string; ad: string; kisaAd: string; renk: string; aktif: boolean };
-export type Derslik = { id: string; subeId: string; ad: string; kapasite: number };
-export type DersSaati = { id: string; subeId: string; gunTipi: "hafta-ici" | "hafta-sonu"; sira: number; baslangic: string; bitis: string };
+/**
+ * Derslik ve ders saatinde `aktif` alanı sonradan eklendi: eski verilerde ve yedeklerde bulunmayabilir.
+ * Alan yoksa kayıt aktif sayılır (`aktif !== false`); okurken kurallar.ts → tanimAktif() kullanılır.
+ */
+export type Derslik = { id: string; subeId: string; ad: string; kapasite: number; aktif?: boolean };
+export type DersSaati = { id: string; subeId: string; gunTipi: "hafta-ici" | "hafta-sonu"; sira: number; baslangic: string; bitis: string; aktif?: boolean };
 
 export const kurum = {
   ad: "Örnek Eğitim Kurumu",
@@ -36,11 +40,11 @@ export const sezonlar: Sezon[] = [
 ];
 
 export const derslikler: Derslik[] = [
-  { id: "d1", subeId: "s1", ad: "Derslik 1", kapasite: 16 },
-  { id: "d2", subeId: "s1", ad: "Derslik 2", kapasite: 14 },
-  { id: "d3", subeId: "s1", ad: "Etüt Odası", kapasite: 6 },
-  { id: "d4", subeId: "s2", ad: "Mavi Sınıf", kapasite: 15 },
-  { id: "d5", subeId: "s2", ad: "Yeşil Sınıf", kapasite: 12 },
+  { id: "d1", subeId: "s1", ad: "Derslik 1", kapasite: 16, aktif: true },
+  { id: "d2", subeId: "s1", ad: "Derslik 2", kapasite: 14, aktif: true },
+  { id: "d3", subeId: "s1", ad: "Etüt Odası", kapasite: 6, aktif: true },
+  { id: "d4", subeId: "s2", ad: "Mavi Sınıf", kapasite: 15, aktif: true },
+  { id: "d5", subeId: "s2", ad: "Yeşil Sınıf", kapasite: 12, aktif: true },
 ];
 
 export const gruplar: Grup[] = [
@@ -62,15 +66,15 @@ export const dersler: Ders[] = [
 ];
 
 export const dersSaatleri: DersSaati[] = [
-  { id: "h1", subeId: "s1", gunTipi: "hafta-ici", sira: 1, baslangic: "16:00", bitis: "16:40" },
-  { id: "h2", subeId: "s1", gunTipi: "hafta-ici", sira: 2, baslangic: "16:50", bitis: "17:30" },
-  { id: "h3", subeId: "s1", gunTipi: "hafta-ici", sira: 3, baslangic: "17:40", bitis: "18:20" },
-  { id: "h4", subeId: "s1", gunTipi: "hafta-sonu", sira: 1, baslangic: "09:30", bitis: "10:10" },
-  { id: "h5", subeId: "s1", gunTipi: "hafta-sonu", sira: 2, baslangic: "10:20", bitis: "11:00" },
-  { id: "h6", subeId: "s1", gunTipi: "hafta-sonu", sira: 3, baslangic: "11:10", bitis: "11:50" },
-  { id: "h7", subeId: "s2", gunTipi: "hafta-ici", sira: 1, baslangic: "16:30", bitis: "17:10" },
-  { id: "h8", subeId: "s2", gunTipi: "hafta-ici", sira: 2, baslangic: "17:20", bitis: "18:00" },
-  { id: "h9", subeId: "s2", gunTipi: "hafta-sonu", sira: 1, baslangic: "10:00", bitis: "10:40" },
+  { id: "h1", subeId: "s1", gunTipi: "hafta-ici", sira: 1, baslangic: "16:00", bitis: "16:40", aktif: true },
+  { id: "h2", subeId: "s1", gunTipi: "hafta-ici", sira: 2, baslangic: "16:50", bitis: "17:30", aktif: true },
+  { id: "h3", subeId: "s1", gunTipi: "hafta-ici", sira: 3, baslangic: "17:40", bitis: "18:20", aktif: true },
+  { id: "h4", subeId: "s1", gunTipi: "hafta-sonu", sira: 1, baslangic: "09:30", bitis: "10:10", aktif: true },
+  { id: "h5", subeId: "s1", gunTipi: "hafta-sonu", sira: 2, baslangic: "10:20", bitis: "11:00", aktif: true },
+  { id: "h6", subeId: "s1", gunTipi: "hafta-sonu", sira: 3, baslangic: "11:10", bitis: "11:50", aktif: true },
+  { id: "h7", subeId: "s2", gunTipi: "hafta-ici", sira: 1, baslangic: "16:30", bitis: "17:10", aktif: true },
+  { id: "h8", subeId: "s2", gunTipi: "hafta-ici", sira: 2, baslangic: "17:20", bitis: "18:00", aktif: true },
+  { id: "h9", subeId: "s2", gunTipi: "hafta-sonu", sira: 1, baslangic: "10:00", bitis: "10:40", aktif: true },
 ];
 
 /** Varsayılan fiyat listesi (yalnızca Finans modülü açıkken kullanılır); şube bazında farklılaşabilir. */

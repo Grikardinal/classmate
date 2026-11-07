@@ -15,6 +15,9 @@ import {
   kapasiteDuzelt,
   kapasiteGecerli,
   kurumDogrula,
+  pasifEki,
+  programAtamaEngeli,
+  secilebilirTanimlar,
   sezonDogrula,
   sezonGecisEngeli,
   sezonGecisHedefleri,
@@ -22,6 +25,7 @@ import {
   subeDogrula,
   subeKopyasi,
   subePasifeAlmaEngeli,
+  tanimAktif,
 } from "./kurallar";
 
 let sayac = 0;
@@ -267,5 +271,59 @@ describe("ders saatleri", () => {
     // Değişmeyen satırlar aynı nesne kalır (sunucuya yalnızca değişenler gider)
     const s2 = dersSaatleriniSirala(saatler, "s1");
     expect(s2.every((h, i) => h === saatler[i])).toBe(true);
+  });
+});
+
+describe("derslik ve ders saati: aktif / pasif", () => {
+  const pasifli = {
+    ...d,
+    derslikler: d.derslikler.map((x) => (x.id === "d3" ? { ...x, aktif: false } : x)),
+    dersSaatleri: d.dersSaatleri.map((h) => (h.id === "h3" ? { ...h, aktif: false } : h)),
+  };
+  it("aktif alanı olmayan eski kayıt aktif sayılır; yalnızca aktif:false pasiftir", () => {
+    expect(tanimAktif({})).toBe(true);
+    expect(tanimAktif({ aktif: true })).toBe(true);
+    expect(tanimAktif({ aktif: false })).toBe(false);
+    expect(tanimAktif(undefined)).toBe(false);
+    const { aktif: _a, ...eski } = d.derslikler[0];
+    void _a;
+    expect(derslikDogrula(eski, d.derslikler)).toBeNull();
+    expect(pasifEki(eski as { aktif?: boolean })).toBe(""); // alanı olmayan eski kayıt
+    expect(pasifEki({ aktif: false })).toBe(" (pasif)");
+  });
+  it("örnek veride tüm derslik ve ders saatleri aktif", () => {
+    expect(d.derslikler.every((x) => x.aktif === true)).toBe(true);
+    expect(d.dersSaatleri.every((h) => h.aktif === true)).toBe(true);
+  });
+  it("aktiflik değeri boolean olmalı", () => {
+    expect(derslikDogrula({ subeId: "s1", ad: "Derslik 3", kapasite: 12, aktif: "hayır" }, d.derslikler)).toMatch(/geçersiz/);
+    expect(dersSaatiDogrula({ id: "", subeId: "s1", gunTipi: "hafta-ici", baslangic: "18:30", bitis: "19:10", aktif: 0 }, d.dersSaatleri)).toMatch(/geçersiz/);
+    expect(dersSaatiDogrula({ ...d.dersSaatleri[0], aktif: false }, d.dersSaatleri)).toBeNull();
+  });
+  it("seçim listesi pasifleri çıkarır, mevcut seçili pasif kaydı tutar", () => {
+    const s1 = pasifli.derslikler.filter((x) => x.subeId === "s1");
+    expect(secilebilirTanimlar(s1).map((x) => x.id)).toEqual(["d1", "d2"]);
+    expect(secilebilirTanimlar(s1, "d3").map((x) => x.id)).toEqual(["d1", "d2", "d3"]);
+  });
+  it("gruba pasif derslik atanamaz", () => {
+    const taban = { id: "", subeId: "s1", sezonId: "z2", seviye: 5, ad: "5-B", kapasite: 14, derslikId: "d3" };
+    expect(grupDogrula(taban, pasifli)).toMatch(/pasif/);
+    expect(grupDogrula(taban, d)).toBeNull();
+  });
+  it("yeni program satırı pasif derslik veya ders saatine konamaz", () => {
+    expect(programAtamaEngeli({ derslikId: "d3", saatId: "h1" }, undefined, pasifli)).toMatch(/derslik pasif/);
+    expect(programAtamaEngeli({ derslikId: "d1", saatId: "h3" }, undefined, pasifli)).toMatch(/saati pasif/);
+    expect(programAtamaEngeli({ derslikId: "d1", saatId: "h1" }, undefined, pasifli)).toBeNull();
+  });
+  it("değişmemiş eski atama kilitlenmez; yalnızca değişen alan denetlenir", () => {
+    const eski = { derslikId: "d3", saatId: "h3" };
+    expect(programAtamaEngeli(eski, eski, pasifli)).toBeNull();
+    expect(programAtamaEngeli({ derslikId: "d1", saatId: "h3" }, eski, pasifli)).toBeNull();
+    expect(programAtamaEngeli({ derslikId: "d3", saatId: "h3" }, { derslikId: "d1", saatId: "h3" }, pasifli)).toMatch(/derslik pasif/);
+  });
+  it("pasif olsa da kullanılmış kayıt silinemez; kullanılmamış pasif kayıt silinebilir", () => {
+    expect(derslikSilmeEngeli("d3", { gruplar: [], program: [{ derslikId: "d3" }] })).toMatch(/pasife alınabilir/);
+    expect(dersSaatiSilmeEngeli("h3", [{ saatId: "h3" }])).toMatch(/pasife alınabilir/);
+    expect(dersSaatiSilmeEngeli("h3", [])).toBeNull();
   });
 });

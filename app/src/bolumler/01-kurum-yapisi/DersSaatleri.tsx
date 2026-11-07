@@ -1,9 +1,10 @@
 import * as React from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { Alert, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, Select, toast } from "@/components/ui";
+import { Archive, ArchiveRestore, Plus, Trash2 } from "lucide-react";
+import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, Select, toast } from "@/components/ui";
 import { useApp, useOturum } from "@/context/AppContext";
 import { guncelle, islemYaz, useDb, yeniId, type DersSaati } from "@/data/store";
-import { dersSaatiDogrula, dersSaatiSilmeEngeli, dersSaatleriniSirala, GUN_TIPLERI } from "./kurallar";
+import { dersSaatiDogrula, dersSaatiSilmeEngeli, dersSaatleriniSirala, GUN_TIPLERI, tanimAktif } from "./kurallar";
+import { cn } from "@/lib/utils";
 import { HataMetni, useSubeTanimYazar } from "./ortak";
 
 const GUN_TIPI_ADI: Record<DersSaati["gunTipi"], string> = { "hafta-ici": "Hafta içi", "hafta-sonu": "Hafta sonu" };
@@ -29,7 +30,7 @@ export function DersSaatleri() {
   const ekle = () => {
     if (hata) return;
     guncelle((x) => {
-      x.dersSaatleri = dersSaatleriniSirala([...x.dersSaatleri, { id: yeniId("h"), subeId: secili, gunTipi: yeni.gunTipi, sira: 0, baslangic: yeni.baslangic, bitis: yeni.bitis }], secili);
+      x.dersSaatleri = dersSaatleriniSirala([...x.dersSaatleri, { id: yeniId("h"), subeId: secili, gunTipi: yeni.gunTipi, sira: 0, baslangic: yeni.baslangic, bitis: yeni.bitis, aktif: true }], secili);
       islemYaz(x, ad, "Ders saati", `${GUN_TIPI_ADI[yeni.gunTipi]} ${yeni.baslangic}–${yeni.bitis} eklendi`, secili);
     });
   };
@@ -42,12 +43,21 @@ export function DersSaatleri() {
     });
   };
 
+  /** Kullanılmış dilim silinmez, pasife alınır: geçmiş program ve yoklamalar bozulmaz, yeni derse seçilemez. */
+  const aktiflikDegistir = (h: DersSaati) => {
+    const aktif = !tanimAktif(h);
+    guncelle((x) => {
+      x.dersSaatleri = x.dersSaatleri.map((z) => (z.id === h.id ? { ...z, aktif } : z));
+      islemYaz(x, ad, "Ders saati", `${GUN_TIPI_ADI[h.gunTipi]} ${h.baslangic}–${h.bitis} ${aktif ? "aktife alındı" : "pasife alındı"}`, h.subeId);
+    });
+  };
+
   return (
     <Card>
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
         <div>
           <CardTitle>Ders saatleri</CardTitle>
-          <CardDescription className="mt-1">Şubelerin çalışma saatleri farklı olabilir. Ders programı bu dilimleri kullanır.</CardDescription>
+          <CardDescription className="mt-1">Şubelerin çalışma saatleri farklı olabilir. Ders programı bu dilimleri kullanır. Programda kullanılmış dilim silinemez; pasife alınır.</CardDescription>
         </div>
         <Select aria-label="Şube" className="w-44" value={secili} onChange={(e) => setSecili(e.target.value)}>
           {subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
@@ -60,13 +70,29 @@ export function DersSaatleri() {
             <div key={tip} className="rounded-md border">
               <p className="border-b px-4 py-2.5 text-sm font-medium">{GUN_TIPI_ADI[tip]}</p>
               <ul className="divide-y">
-                {liste.map((h) => (
-                  <li key={h.id} className="flex items-center gap-3 px-4 py-2 text-sm">
-                    <span className="grid size-6 place-items-center rounded-full bg-muted text-xs font-medium">{h.sira}</span>
-                    <span className="flex-1 tabular-nums">{h.baslangic} – {h.bitis}</span>
-                    {yazabilir && <Button variant="ghost" size="icon" aria-label={`${h.baslangic}–${h.bitis} sil`} onClick={() => sil(h)}><Trash2 /></Button>}
-                  </li>
-                ))}
+                {liste.map((h) => {
+                  const aktif = tanimAktif(h);
+                  const silmeEngeli = dersSaatiSilmeEngeli(h.id, d.program);
+                  return (
+                    <li key={h.id} className={cn("flex items-center gap-3 px-4 py-2 text-sm", !aktif && "opacity-60")}>
+                      <span className="grid size-6 place-items-center rounded-full bg-muted text-xs font-medium">{h.sira}</span>
+                      <span className={cn("flex-1 tabular-nums", !aktif && "text-muted-foreground")}>
+                        {h.baslangic} – {h.bitis}
+                        {!aktif && <Badge variant="outline" className="ml-2">Pasif</Badge>}
+                      </span>
+                      {yazabilir && (
+                        <>
+                          <Button variant="ghost" size="sm" onClick={() => aktiflikDegistir(h)} title={aktif ? "Yeni ders programında seçilemez; geçmiş kayıtlar korunur." : undefined}>
+                            {aktif ? <><Archive /> Pasife al</> : <><ArchiveRestore /> Aktife al</>}
+                          </Button>
+                          <span title={silmeEngeli ?? undefined} className="inline-block">
+                            <Button variant="ghost" size="icon" aria-label={silmeEngeli ? `${h.baslangic}–${h.bitis} silinemez: ${silmeEngeli}` : `${h.baslangic}–${h.bitis} sil`} disabled={!!silmeEngeli} onClick={() => sil(h)}><Trash2 /></Button>
+                          </span>
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
                 {liste.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted-foreground">Tanımlı saat yok</li>}
               </ul>
             </div>

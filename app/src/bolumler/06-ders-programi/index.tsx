@@ -64,6 +64,7 @@ import {
 } from "@/data/store";
 import { cakismaBul, dakika, haftaBasi, haftaGunu, subeGecisUyarisi, tarihEkle, type Slot } from "@/lib/kurallar";
 import { esc, yazdir } from "@/lib/yazdir";
+import { pasifEki, programAtamaEngeli, secilebilirTanimlar, tanimAktif } from "@/bolumler/01-kurum-yapisi/kurallar";
 import { cn } from "@/lib/utils";
 
 type Gorunum = "grup" | "ogretmen" | "derslik";
@@ -167,7 +168,7 @@ function HaftalikProgram() {
           <Select aria-label="Seçim" className="w-52" value={secili} onChange={(e) => setSecim({ ...secim, [gorunum]: e.target.value })} disabled={ogretmenMi && gorunum === "ogretmen"}>
             {gorunum === "grup" && gruplar.map((g) => <option key={g.id} value={g.id}>{grupEtiket(d, g.id)}</option>)}
             {gorunum === "ogretmen" && ogretmenler.map((o) => <option key={o.id} value={o.id}>{o.ad} {o.soyad}</option>)}
-            {gorunum === "derslik" && dersliklerim.map((x) => <option key={x.id} value={x.id}>{sube(x.subeId)?.kod} · {x.ad}</option>)}
+            {gorunum === "derslik" && dersliklerim.map((x) => <option key={x.id} value={x.id}>{sube(x.subeId)?.kod} · {x.ad}{pasifEki(x)}</option>)}
           </Select>
           <div className="ml-auto flex items-center gap-1">
             <Button variant="ghost" size="icon" aria-label="Önceki hafta" onClick={() => setHafta(tarihEkle(hafta, -7))}><ChevronLeft /></Button>
@@ -187,7 +188,12 @@ function HaftalikProgram() {
       ) : (
         (["hafta-ici", "hafta-sonu"] as const).map((tip) => {
           const subeIdx = gorunum === "grup" ? grup(d, secili)?.subeId : tanimlar().derslikler.find((x) => x.id === secili)?.subeId;
-          const saatler = tanimlar().dersSaatleri.filter((h) => h.subeId === subeIdx && h.gunTipi === tip).sort((a, b) => a.sira - b.sira);
+          // Pasif dilim yalnızca bu hafta görünen bir dersi varsa satır olarak gösterilir (yeni ders eklenemez)
+          const kullanilan = (h: DersSaati) =>
+            [1, 2, 3, 4, 5, 6, 7].some((g) => gecerliSatirlar(d, gunTarihi(g)).some((p) => p.gun === g && p.saatId === h.id && (gorunum === "grup" ? p.grupId === secili : p.derslikId === secili)));
+          const saatler = tanimlar()
+            .dersSaatleri.filter((h) => h.subeId === subeIdx && h.gunTipi === tip && (tanimAktif(h) || kullanilan(h)))
+            .sort((a, b) => a.sira - b.sira);
           const gunler = tip === "hafta-ici" ? [1, 2, 3, 4, 5] : [6, 7];
           if (!saatler.length) return null;
           return (
@@ -249,6 +255,12 @@ function ProgramGrid({
     const s = d.program.find((p) => p.id === satirId);
     if (!s || (s.gun === gun && s.saatId === saatId)) return;
     const yeni = { ...s, gun, saatId };
+    // Geçmişi olan satır bölünür (yeni satır açılır); yeni satır pasif derslik/saate konamaz
+    const atamaEngeli = programAtamaEngeli(yeni, s.baslangic >= BUGUN ? s : undefined, tanimlar());
+    if (atamaEngeli) {
+      toast(`Taşınamadı: ${atamaEngeli}`, "hata");
+      return;
+    }
     const slot = satirSlot(d, yeni);
     const cak = cakismaBul(slot, gecerliSatirlar(d, gunTarihi(gun)).filter((p) => p.id !== s.id).map((p) => satirSlot(d, p)));
     if (cak.length) {
@@ -281,10 +293,16 @@ function ProgramGrid({
       <tbody>
         {saatler.map((h) => (
           <tr key={h.id}>
-            <td className="pr-1 text-right align-top text-xs tabular-nums text-muted-foreground">
+            <td className={cn("pr-1 text-right align-top text-xs tabular-nums text-muted-foreground", !tanimAktif(h) && "opacity-60")}>
               {h.baslangic}
               <br />
               {h.bitis}
+              {!tanimAktif(h) && (
+                <>
+                  <br />
+                  (pasif)
+                </>
+              )}
             </td>
             {gunler.map((g) => {
               const t = gunTarihi(g);
@@ -295,7 +313,7 @@ function ProgramGrid({
               return (
                 <td
                   key={g}
-                  onDragOver={(e) => duzenleyebilir && !satir && e.preventDefault()}
+                  onDragOver={(e) => duzenleyebilir && !satir && tanimAktif(h) && e.preventDefault()}
                   onDrop={(e) => {
                     e.preventDefault();
                     if (surukle) tasi(surukle, g, h.id);
@@ -323,10 +341,10 @@ function ProgramGrid({
                   ) : (
                     <button
                       onClick={() => onHucre(g, h.id)}
-                      disabled={!duzenleyebilir || gorunum !== "grup"}
+                      disabled={!duzenleyebilir || gorunum !== "grup" || !tanimAktif(h)}
                       className={cn(
                         "grid h-full w-full place-items-center rounded-md border border-dashed text-muted-foreground/0 transition",
-                        duzenleyebilir && gorunum === "grup" && "hover:border-primary/50 hover:text-primary",
+                        duzenleyebilir && gorunum === "grup" && tanimAktif(h) && "hover:border-primary/50 hover:text-primary",
                         tatil && "bg-muted/60",
                       )}
                       aria-label={`${gunAdlari[g]} ${h.baslangic} ders ekle`}
@@ -364,10 +382,15 @@ function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: ProgramSa
   const { ad } = useOturum();
   const g = grup(d, grupId)!;
   const h = saat(saatId)!;
+  // Pasif derslik seçeneklerde yok; satırın/grubun mevcut dersliği pasifse "(pasif)" ekiyle görünür kalır
+  const subeDerslikleri = tanimlar().derslikler.filter((x) => x.subeId === g.subeId);
+  const grupDersligi = subeDerslikleri.find((x) => x.id === g.derslikId);
+  const ilkDerslik = satir?.derslikId ?? (!grupDersligi || tanimAktif(grupDersligi) ? g.derslikId : subeDerslikleri.find((x) => tanimAktif(x))?.id ?? g.derslikId);
+  const derslikSecenekleri = secilebilirTanimlar(subeDerslikleri, ilkDerslik);
   const [form, setForm] = React.useState({
     dersId: satir?.dersId ?? tanimlar().dersler.find((x) => x.aktif)!.id,
     ogretmenId: satir?.ogretmenId ?? "",
-    derslikId: satir?.derslikId ?? g.derslikId,
+    derslikId: ilkDerslik,
     gecerlilik: BUGUN,
     gecisOnay: false,
     bildir: true,
@@ -379,7 +402,9 @@ function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: ProgramSa
   const slot = satirSlot(d, yeni);
   const cakismalar = form.ogretmenId ? cakismaBul(slot, mevcut) : [];
   const gecisler = form.ogretmenId ? subeGecisUyarisi(slot, mevcut, d.ayarlar.subeGecisDk) : [];
-  const engel = !form.ogretmenId || cakismalar.length > 0 || (gecisler.length > 0 && !form.gecisOnay);
+  // programDegistir ile aynı: geçerlilik satırın başlangıcından sonraysa yeni satır açılır ve atama yeniden denetlenir
+  const atamaEngeli = programAtamaEngeli(yeni, satir && satir.baslangic >= form.gecerlilik ? satir : undefined, tanimlar());
+  const engel = !form.ogretmenId || !!atamaEngeli || cakismalar.length > 0 || (gecisler.length > 0 && !form.gecisOnay);
 
   const kaydet = () => {
     if (engel) return;
@@ -433,12 +458,17 @@ function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: ProgramSa
       </Field>
       <Field label="Derslik">
         <Select value={form.derslikId} onChange={(e) => setForm({ ...form, derslikId: e.target.value })}>
-          {tanimlar().derslikler.filter((x) => x.subeId === g.subeId).map((x) => <option key={x.id} value={x.id}>{x.ad} ({x.kapasite})</option>)}
+          {derslikSecenekleri.map((x) => <option key={x.id} value={x.id}>{x.ad} ({x.kapasite}){pasifEki(x)}</option>)}
         </Select>
       </Field>
       <Field label="Geçerlilik başlangıcı" hint="Değişiklik bu tarihten itibaren uygulanır; geçmiş oturumlar ve yoklamalar korunur.">
         <Input type="date" value={form.gecerlilik} min={BUGUN} onChange={(e) => setForm({ ...form, gecerlilik: e.target.value || BUGUN })} />
       </Field>
+      {atamaEngeli && (
+        <Alert tone="danger" icon={<XCircle />}>
+          {atamaEngeli}
+        </Alert>
+      )}
       {cakismalar.map((c, i) => {
         const p = d.program.find((x) => x.id === c.slot.id)!;
         return (
