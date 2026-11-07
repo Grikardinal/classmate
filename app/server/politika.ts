@@ -4,7 +4,22 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { aktifKayit, type Db, type Kullanici, type Personel } from "../src/data/model";
+import { aktifKayit, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kullanici, type Kurum, type Personel, type Sezon, type Sube } from "../src/data/model";
+import {
+  aktifSezonDenetle,
+  dersDogrula,
+  dersSaatiDogrula,
+  dersSaatiSilmeEngeli,
+  derslikDogrula,
+  derslikSilmeEngeli,
+  fiyatListesiDogrula,
+  grupDogrula,
+  kurumDogrula,
+  sezonDogrula,
+  subeDogrula,
+  subePasifeAlmaEngeli,
+  type Hata,
+} from "../src/bolumler/01-kurum-yapisi/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
 export class YetkiHatasi extends Error {}
@@ -261,7 +276,74 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
     }
     temiz.koleksiyonlar[k] = { yaz, sil };
   }
+  tanimDenetle(onceki, sonrakiDb, temiz);
   return temiz;
+}
+
+/* =========================== Bölüm 01 tanımları =========================== */
+/**
+ * Kurum yapısı tanımlarının iş kuralları (boş/yinelenen ad, çakışan ders saati, bağlı kayıt varken silme,
+ * tek aktif sezon, grubun şube/sezon değişmezliği…) ekrana güvenilmeden sunucuda da uygulanır.
+ * Kurallar ekranla ortaktır: src/bolumler/01-kurum-yapisi/kurallar.ts
+ */
+export function tanimDenetle(onceki: Db, sonraki: Db, d: Degisiklik): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const yazilan = <T>(k: Koleksiyon) => (d.koleksiyonlar[k]?.yaz ?? []) as unknown as T[];
+  const silinen = (k: Koleksiyon) => d.koleksiyonlar[k]?.sil ?? [];
+
+  for (const s of yazilan<Sube>("subeler")) {
+    reddet(subeDogrula(s, sonraki.subeler));
+    const eski = onceki.subeler.find((x) => x.id === s.id);
+    if (eski?.aktif && s.aktif === false) reddet(subePasifeAlmaEngeli(s.id, onceki.kayitlar, onceki.sezonlar.find((z) => z.aktif)?.id));
+  }
+
+  if (d.koleksiyonlar.sezonlar) {
+    for (const s of yazilan<Sezon>("sezonlar")) reddet(sezonDogrula(s, sonraki.sezonlar));
+    reddet(aktifSezonDenetle(sonraki.sezonlar));
+  }
+
+  for (const x of yazilan<Ders>("dersler")) reddet(dersDogrula(x, sonraki.dersler));
+
+  for (const x of yazilan<Derslik>("derslikler")) {
+    reddet(derslikDogrula(x, sonraki.derslikler));
+    const eski = onceki.derslikler.find((y) => y.id === x.id);
+    if (eski && eski.subeId !== x.subeId) reddet("Derslik başka şubeye taşınamaz.");
+  }
+  for (const id of silinen("derslikler")) reddet(derslikSilmeEngeli(id, sonraki));
+
+  for (const h of yazilan<DersSaati>("dersSaatleri")) {
+    reddet(dersSaatiDogrula(h, sonraki.dersSaatleri));
+    const eski = onceki.dersSaatleri.find((y) => y.id === h.id);
+    if (eski && eski.subeId !== h.subeId) reddet("Ders saati başka şubeye taşınamaz.");
+  }
+  for (const id of silinen("dersSaatleri")) reddet(dersSaatiSilmeEngeli(id, sonraki.program));
+
+  for (const g of yazilan<Grup>("gruplar")) {
+    const eski = onceki.gruplar.find((x) => x.id === g.id);
+    // Derslik ve rehber yalnızca değiştiyse denetlenir (eski veride sonradan değişen atamalar kaydı kilitlemesin)
+    reddet(grupDogrula({ ...g, derslikId: g.derslikId !== eski?.derslikId ? g.derslikId : "" }, sonraki));
+    if (!sonraki.subeler.some((s) => s.id === g.subeId)) reddet("Grubun şubesi bulunamadı.");
+    if (!sonraki.sezonlar.some((s) => s.id === g.sezonId)) reddet("Grubun sezonu bulunamadı.");
+    if (eski) {
+      if (eski.subeId !== g.subeId || eski.sezonId !== g.sezonId) reddet("Grubun şubesi ve sezonu sonradan değiştirilemez.");
+      if (eski.seviye !== g.seviye && onceki.kayitlar.some((k) => k.grupId === g.id && k.durum !== "iptal"))
+        reddet("Kayıtlı öğrencisi olan grubun seviyesi değiştirilemez.");
+    }
+    if (g.rehberId && g.rehberId !== eski?.rehberId) {
+      const p = sonraki.personel.find((x) => x.id === g.rehberId);
+      if (!p || !p.aktif || !p.subeIds.includes(g.subeId)) reddet("Rehber öğretmen bu şubede görevli aktif bir personel olmalı.");
+    }
+  }
+
+  const tekil = d.tekil ?? {};
+  if ("kurum" in tekil) reddet(kurumDogrula(tekil.kurum as Kurum));
+  if ("fiyatListesi" in tekil) reddet(fiyatListesiDogrula(tekil.fiyatListesi));
+  if ("moduller" in tekil) {
+    const m = tekil.moduller;
+    if (!m || typeof m !== "object" || Object.values(m as object).some((v) => typeof v !== "boolean")) reddet("Modül ayarı geçersiz.");
+  }
 }
 
 /* =========================== Veli =========================== */
