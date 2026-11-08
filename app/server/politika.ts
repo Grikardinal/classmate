@@ -73,8 +73,9 @@ import {
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
 import { devamsizlikBildirimiMi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
+import { etutBildirimiMi, etutBildirimiYineleniyor, hakDuser, musaitlikEngeli, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
 import { farkUygula } from "../src/data/fark";
-import type { Gider, Gonderim, Iade, Odev, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
+import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
 const ayni = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 import { tarihEkle, telefonNormalize } from "../src/lib/kurallar";
@@ -198,7 +199,11 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
       const ogrIds = new Set(db.kayitlar.filter((x) => ogrGrup.has(x.grupId)).map((x) => x.ogrenciId));
       if (k === "gruplar") l = l.filter((s) => ogrGrup.has(String(s.id)));
       if (k === "kayitlar") l = l.filter((s) => ogrGrup.has(String(s.grupId)));
-      if (k === "ogrenciler") l = l.filter((s) => ogrIds.has(String(s.id)));
+      // Kendi etüt randevusundaki başka grubun öğrencisi: yalnızca adı görünür (Bölüm 09)
+      const etutOgr = k === "ogrenciler" ? new Set(db.randevular.filter((r) => r.ogretmenId === a.personel.id && r.durum !== "iptal").flatMap((r) => r.ogrenciIds)) : null;
+      if (etutOgr) l = l.filter((s) => ogrIds.has(String(s.id)) || etutOgr.has(String(s.id))).map((s) => (ogrIds.has(String(s.id)) ? s : { ...s, dogum: "", okul: "", okulSinifi: "", saglikNotu: "", veliIds: [], birincilVeliId: "", notlar: [] }));
+      // Öğretmen yalnızca kendi etüt kayıtlarını görür; paket ücreti finans verisidir (Bölüm 09)
+      if (k === "randevular" || k === "musaitlikler" || k === "paketler") l = l.filter((s) => s.ogretmenId === a.personel.id);
       // Devredilen grubun yoklama ve ödevi (öğrenci kimlikli veri) gitmez; öğretmenin kendi eski program satırı kalır (öğrenci verisi yok)
       if (k === "yoklamalar" || k === "odevler") l = l.filter((s) => ogrGrup.has(String(s.grupId)));
       if (k === "program") l = l.filter((s) => ogrGrup.has(String(s.grupId)) || s.ogretmenId === a.personel.id);
@@ -213,6 +218,7 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
     }
     if (k === "personel" && !genel && !yetki(db, a, "13"))
       l = l.map((s) => (s.id === a.personel.id ? s : { ...s, telefon: "", eposta: "", sabitUcret: 0, dersUcreti: 0 }));
+    if (k === "paketler" && !finans) l = l.map((s) => ({ ...s, fiyat: 0 }));
     // Kayıt ücreti finans verisidir; yazarken sunucu maskeli alanları eski değerle korur (yazmaDenetle)
     if (k === "kayitlar" && !finans)
       l = l.map((s) => {
@@ -288,8 +294,8 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
     const izin = YAZMA[k];
     if (!izin.includes("*") && !izin.some((b) => yetki(onceki, a, b))) hata(`“${k}” verisini değiştirme yetkiniz yok.`);
     if (GENEL_TANIM.has(k) && !genel) hata("Kurum geneli tanımları yalnızca genel yönetici değiştirebilir.");
-    // Öğretmen finans verisine ve ücretli paket satışına hiçbir yoldan yazamaz (Bölüm 02)
-    if (rol === "ogretmen" && (FINANS.includes(k) || k === "paketler")) hata("Öğretmen finans kayıtlarını değiştiremez.");
+    // Öğretmen finans verisine hiçbir yoldan yazamaz (Bölüm 02); paket satışı engeli: etutDenetle
+    if (rol === "ogretmen" && FINANS.includes(k)) hata("Öğretmen finans kayıtlarını değiştiremez.");
     const eskiler = new Map(dizi(onceki, k).map((s) => [anahtar(k, s), s]));
     const yaz: Satir[] = [];
 
@@ -408,6 +414,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           }
           break;
         // Ödevin ayrıntılı kuralları: odevDenetle() (Bölüm 08)
+        // Etüdün ayrıntılı kuralları: etutDenetle() (Bölüm 09)
         case "musaitlikler": case "randevular":
           if (ogrGrup && s.ogretmenId !== a.personel.id) hata("Yalnızca kendi kayıtlarınızı değiştirebilirsiniz.");
           break;
@@ -435,6 +442,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   programDenetle(onceki, sonrakiDb, temiz, a, zaman);
   yoklamaDenetle(onceki, sonrakiDb, temiz, a, zaman);
   odevDenetle(onceki, sonrakiDb, temiz, a, zaman);
+  etutDenetle(onceki, sonrakiDb, temiz, a, zaman);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   finansDenetle(onceki, temiz, a, zaman);
@@ -630,6 +638,82 @@ export function odevDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor
         hedef.yaz.push(g as unknown as Satir);
       }
     }
+  }
+}
+
+/* =========================== Bölüm 09 etüt =========================== */
+/**
+ * Müsaitlik, randevu ve paket kuralları (ekranla ortak: src/bolumler/09-etut/kurallar.ts):
+ * - modül kapalıyken yazılamaz, silinemez; etüt bildirimi kuyruğa girmez
+ * - yeni randevu müsait slotta, ileri tarihte; öğretmen, öğrenci çakışması tüm şubelerde aranır; olusturan sunucudan
+ * - var olan randevuda yalnızca durum değişir; planlıdan bir kez çıkılır
+ * - paket hakkını sunucu yazar (istemcinin bayat değeri çift düşüm yapamaz); paket satışı öğretmene kapalı
+ * - bildirim yeni randevuya bağlanır (randevuId); SMS izni kapalı veliye SMS gitmez
+ * Şube kapsamı ve "öğretmen yalnızca kendi kaydı" yazmaDenetle() içinde. `temiz` yerinde güncellenir.
+ */
+export function etutDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  const modulAcik = onceki.moduller?.etut !== false;
+  const var_ = (k: "musaitlikler" | "randevular" | "paketler") => !!K[k]?.yaz.length || !!K[k]?.sil.length;
+  if (!modulAcik && (var_("musaitlikler") || var_("randevular") || var_("paketler"))) reddet("Etüt modülü kapalı.");
+  const rol = a.kullanici.rol;
+  const ogretmen = rol === "ogretmen";
+  const an = { bugun: zaman.slice(0, 10), simdi: zaman.slice(11, 16) };
+
+  for (const m of (K.musaitlikler?.yaz ?? []) as unknown as Musaitlik[]) reddet(musaitlikEngeli(m, sonraki));
+
+  const hakDusumu = new Map<string, number>();
+  const yeniRandevular: Randevu[] = [];
+  const gruplar = ogretmen ? ogretmenGruplari(onceki, a.personel.id, an.bugun) : null;
+  for (const r of (K.randevular?.yaz ?? []) as unknown as Randevu[]) {
+    const eski = onceki.randevular.find((x) => x.id === r.id);
+    if (eski) {
+      reddet(randevuDurumEngeli(r, eski, { ...an, rol }));
+      if (r.durum !== eski.durum && hakDuser(eski, r.durum, onceki.ayarlar.gelmeyenHakDussun)) hakDusumu.set(eski.paketId!, (hakDusumu.get(eski.paketId!) ?? 0) + 1);
+    } else {
+      r.olusturan = "yonetim";
+      reddet(randevuYeniEngeli(r, sonraki, { ...an, ogretmenGruplari: gruplar }));
+      yeniRandevular.push(r);
+    }
+  }
+
+  const finans = onceki.moduller?.finans === true;
+  const paketYaz: Satir[] = [];
+  for (const p of (K.paketler?.yaz ?? []) as unknown as Paket[]) {
+    const eski = onceki.paketler.find((x) => x.id === p.id);
+    if (eski) {
+      reddet(paketDegisimEngeli(p, eski, hakDusumu.get(p.id) ?? 0));
+      if (!hakDusumu.has(p.id)) paketYaz.push(eski as unknown as Satir);
+      continue;
+    }
+    if (ogretmen) reddet("Öğretmen paket satışı yapamaz.");
+    reddet(paketYeniEngeli(p, sonraki));
+    const temizPaket: Paket = { ...p, kalan: p.toplam, fiyat: finans ? p.fiyat : 0, tarih: an.bugun };
+    if (temizPaket.fiyat > 0 && !(K.taksitler?.yaz ?? []).some((t) => t.ogrenciId === p.ogrenciId && t.tutar === p.fiyat && !onceki.taksitler.some((x) => x.id === t.id))) reddet("Paket ücreti ödeme planına aynı işlemde eklenmeli.");
+    paketYaz.push(temizPaket as unknown as Satir);
+  }
+  // Kalan hak: istemcinin gönderdiği değil, o anki değerden düşülmüş hali
+  for (const [id, adet] of hakDusumu) {
+    const eski = onceki.paketler.find((x) => x.id === id);
+    if (eski) paketYaz.push({ ...eski, kalan: Math.max(0, eski.kalan - adet) } as unknown as Satir);
+  }
+  if (paketYaz.length) K.paketler = { yaz: paketYaz, sil: K.paketler?.sil ?? [] };
+
+  if (K.gonderimler) {
+    const mevcut: Gonderim[] = [...onceki.gonderimler];
+    K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
+      if (!etutBildirimiMi(g.olay) || onceki.gonderimler.some((x) => x.id === g.id)) return true;
+      if (!modulAcik) return false;
+      const r = yeniRandevular.find((x) => x.ogrenciIds.includes(String(g.ogrenciId)) && !etutBildirimiYineleniyor(g, x.id, mevcut));
+      if (!r) return false;
+      g.randevuId = r.id;
+      mevcut.push(g);
+      smsIzniUygula(g, onceki.veliler);
+      return true;
+    }) as unknown as Satir[];
   }
 }
 
@@ -1043,7 +1127,8 @@ export function veliVerisi(db: Db, veliId: string): Db {
   const grupIds = new Set(kayitlar.map((k) => k.grupId));
   const subeIds = new Set(kayitlar.map((k) => k.subeId));
   const program = db.program.filter((p) => grupIds.has(p.grupId));
-  const ogretmenIds = new Set([...program.map((p) => p.ogretmenId), ...db.musaitlikler.map((m) => m.ogretmenId), ...db.gruplar.filter((g) => grupIds.has(g.id)).map((g) => g.rehberId)]);
+  const etut = veliEtutVerisi(db, ogrIds, subeIds);
+  const ogretmenIds = new Set([...program.map((p) => p.ogretmenId), ...etut.ogretmenIds, ...db.gruplar.filter((g) => grupIds.has(g.id)).map((g) => g.rehberId)]);
   const v = db.veliler.find((x) => x.id === veliId)!;
   return {
     ...db,
@@ -1069,12 +1154,11 @@ export function veliVerisi(db: Db, veliId: string): Db {
     izinler: db.izinler.filter((i) => ogrIds.has(i.ogrenciId)),
     adaylar: [],
     odevler: db.moduller?.odev === false ? [] : veliOdevleri(db.odevler, kayitlar, ogrIds),
-    musaitlikler: db.musaitlikler.filter((m) => subeIds.has(m.subeId)),
-    // Başka öğrencilerin randevuları yalnızca "dolu saat" olarak görünür
-    randevular: db.randevular
-      .filter((r) => subeIds.has(r.subeId))
-      .map((r) => (r.ogrenciIds.some((x) => ogrIds.has(x)) ? { ...r, ogrenciIds: r.ogrenciIds.filter((x) => ogrIds.has(x)) } : { ...r, ogrenciIds: [], link: "", paketId: null })),
-    paketler: db.paketler.filter((p) => ogrIds.has(p.ogrenciId)),
+    // Başka öğrencilerin randevuları ve öğretmenin grup dersleri yalnızca "dolu saat" olarak görünür (Bölüm 09)
+    musaitlikler: etut.musaitlikler,
+    randevular: etut.randevular,
+    paketler: etut.paketler,
+    doluSaatler: etut.doluSaatler,
     olaylar: [],
     gonderimler: db.gonderimler.filter((g) => g.veliId === veliId && g.olay !== "otp"),
     duyurular: db.duyurular

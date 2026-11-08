@@ -48,7 +48,10 @@ export function otomasyonlariCalistir(db: Db): Db {
       const kalan = dakika(r.bas) - dakika(SIMDI);
       if (kalan <= 0 || kalan > 60) continue;
       birKez(`etut:${r.id}`, () => {
+        // SMS izni kapalı veliye SMS gitmez (Bölüm 09)
+        const n = x.gonderimler.length;
         for (const o of r.ogrenciIds) bildirimEkle(x, "etutHatirlatma", o, { tarih: "bugün", saat: r.bas, ogretmen: personelAdi(x, r.ogretmenId) }, simdi, true);
+        for (const g of x.gonderimler.slice(n)) smsIzniUygula(g, x.veliler);
       });
     }
 

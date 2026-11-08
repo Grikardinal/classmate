@@ -12,7 +12,9 @@ import {
   SIMDI,
   SURUM,
   aktifKayit,
+  bildirimEkle,
   islemYaz,
+  personelAdi,
   ornekVeriUret,
   simdiZaman,
   tamAd,
@@ -28,7 +30,7 @@ import {
   type Veli,
 } from "../src/data/model";
 import { farkBos, farkHesapla, farkUygula, type Degisiklik } from "../src/data/fark";
-import { dakika, haftaGunu, telefonNormalize } from "../src/lib/kurallar";
+import { telefonNormalize } from "../src/lib/kurallar";
 import * as m from "../src/data/mock";
 import { ayniEposta, bolumYetkisi, epostaNormalize, parolaDegisimDogrula, parolaSifirlamaEngeli } from "../src/bolumler/02-kullanicilar/kurallar";
 import {
@@ -46,6 +48,8 @@ import {
   tumOturumlariKapat,
 } from "./kimlik";
 import { izinEngeli } from "../src/bolumler/07-yoklama/kurallar";
+import { smsIzniUygula } from "../src/bolumler/08-odevler/kurallar";
+import { SLOT_DOLU, veliIptalEngeli, veliIptalSonucu, veliRandevuPlani } from "../src/bolumler/09-etut/kurallar";
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
@@ -494,43 +498,54 @@ export async function uygulamaOlustur(s: Secenekler) {
     return c.json({ tamam: true });
   });
 
+  // Bölüm 09: kurallar yazma kuyruğunun içinde değerlendirilir; aynı anda gelen iki istekten ikincisi dolu görür
   app.post("/api/veli/randevu", veliGerekli, async (c) => {
     const v = c.get("veli");
     const { ogrenciId, ogretmenId, tarih, bas } = await c.req.json<{ ogrenciId: string; ogretmenId: string; tarih: string; bas: string }>();
-    const d = durum.db;
-    if (!d.moduller.etut) return hata(c, "Etüt modülü kapalı.", 403);
+    if (!durum.db.moduller.etut) return hata(c, "Etüt modülü kapalı.", 403);
     if (!cocukMu(v.id, ogrenciId)) return hata(c, "Bu öğrenci için işlem yapamazsınız.", 403);
-    const subeId = aktifKayit(d, ogrenciId)?.subeId;
-    const basDk = dakika(String(bas));
-    const m = d.musaitlikler.find((x) => x.ogretmenId === ogretmenId && x.subeId === subeId && x.gun === haftaGunu(String(tarih)) && dakika(x.bas) <= basDk && basDk + 40 <= dakika(x.bit));
-    if (!m) return hata(c, "Bu saat öğretmenin müsaitlik saatleri içinde değil.");
-    if (String(tarih) < BUGUN || (tarih === BUGUN && String(bas) <= SIMDI)) return hata(c, "Geçmiş bir saate randevu alınamaz.");
-    const bit = `${String(Math.floor((basDk + 40) / 60)).padStart(2, "0")}:${String((basDk + 40) % 60).padStart(2, "0")}`;
-    const dolu = d.randevular.some((r) => r.ogretmenId === ogretmenId && r.tarih === tarih && r.durum !== "iptal" && dakika(r.bas) < basDk + 40 && basDk < dakika(r.bit));
-    if (dolu) return hata(c, "Bu saat az önce doldu. Başka bir saat seçin.", 409);
-    const ogretmen = d.personel.find((p) => p.id === ogretmenId);
-    const paket = d.paketler.find((p) => p.ogrenciId === ogrenciId && p.ogretmenId === ogretmenId && p.kalan > 0);
+    const sonuc: { engel: string | null } = { engel: null };
     await sunucuDegisikligi((x) => {
-      x.randevular.push({
-        id: yeniId("r"), ogretmenId, subeId: subeId!, tarih, bas, bit, tur: paket ? "ozel" : "bireysel", ogrenciIds: [ogrenciId],
-        dersId: ogretmen?.dersIds[0] ?? "l2", durum: "planli", link: "", paketId: paket?.id ?? null, olusturan: "veli",
-      });
-      islemYaz(x, tamAd(v), "Etüt randevusu (veli)", `${tamAd(x.ogrenciler.find((o) => o.id === ogrenciId))} — ${tarih} ${bas}`, subeId);
+      const plan = veliRandevuPlani(x, { ogrenciId, ogretmenId, tarih, bas }, { bugun: BUGUN, simdi: SIMDI });
+      if ("hata" in plan) {
+        sonuc.engel = plan.hata;
+        return;
+      }
+      const randevu = { ...plan.randevu, id: yeniId("r") };
+      x.randevular.push(randevu);
+      // Randevu onayı: birincil veliye, randevuya bağlı; SMS izni kapalıysa SMS gitmez
+      const n = x.gonderimler.length;
+      bildirimEkle(x, "etutHatirlatma", ogrenciId, { tarih: randevu.tarih.split("-").reverse().join("."), saat: randevu.bas, ogretmen: personelAdi(x, randevu.ogretmenId) }, undefined, true);
+      for (const g of x.gonderimler.slice(n)) {
+        g.randevuId = randevu.id;
+        smsIzniUygula(g, x.veliler);
+      }
+      islemYaz(x, tamAd(v), "Etüt randevusu (veli)", `${tamAd(x.ogrenciler.find((o) => o.id === ogrenciId))} — ${randevu.tarih} ${randevu.bas}`, randevu.subeId);
     });
+    if (sonuc.engel) return hata(c, sonuc.engel, sonuc.engel === SLOT_DOLU ? 409 : 400);
+    void kuyrukCalistir();
     return c.json({ tamam: true });
   });
 
   app.post("/api/veli/randevu/:id/iptal", veliGerekli, async (c) => {
     const v = c.get("veli");
-    const r = durum.db.randevular.find((x) => x.id === c.req.param("id"));
-    if (!r || !r.ogrenciIds.some((o) => cocukMu(v.id, o))) return hata(c, "Randevu bulunamadı.", 404);
-    if (r.durum !== "planli") return hata(c, "Bu randevu iptal edilemez.");
-    const kalanSaat = (new Date(`${r.tarih}T${r.bas}`).getTime() - new Date(`${BUGUN}T${SIMDI}`).getTime()) / 36e5;
-    if (kalanSaat < durum.db.ayarlar.etutIptalSaat) return hata(c, `Randevular en geç ${durum.db.ayarlar.etutIptalSaat} saat öncesine kadar iptal edilebilir.`);
+    const id = c.req.param("id");
+    if (!durum.db.moduller.etut) return hata(c, "Etüt modülü kapalı.", 403);
+    const cocukIds = new Set(cocuklari(v.id).map((o) => o.id));
+    const sonuc: { engel: string | null; bulunamadi: boolean } = { engel: null, bulunamadi: false };
     await sunucuDegisikligi((x) => {
-      x.randevular = x.randevular.map((y) => (y.id === r.id ? { ...y, durum: "iptal" } : y));
+      const r = x.randevular.find((y) => y.id === id);
+      if (!r || !r.ogrenciIds.some((o) => cocukIds.has(o))) {
+        sonuc.bulunamadi = true;
+        return;
+      }
+      sonuc.engel = veliIptalEngeli(r, x.ayarlar.etutIptalSaat, { bugun: BUGUN, simdi: SIMDI });
+      if (sonuc.engel) return;
+      x.randevular = x.randevular.map((y) => (y.id === id ? veliIptalSonucu(y, cocukIds) : y));
       islemYaz(x, tamAd(v), "Etüt iptali (veli)", `${r.tarih} ${r.bas}`, r.subeId);
     });
+    if (sonuc.bulunamadi) return hata(c, "Randevu bulunamadı.", 404);
+    if (sonuc.engel) return hata(c, sonuc.engel);
     return c.json({ tamam: true });
   });
 

@@ -296,6 +296,8 @@ export type Gonderim = {
   subeId: string;
   kanal: "push" | "sms";
   metin: string;
+  /** Etüt onayının randevusu (sunucu yazar; tekilleştirme, Bölüm 09) */
+  randevuId?: string;
   /** Devamsızlık bildirimlerinin oturumu (sunucu yazar; düzeltme eşleşmesi, Bölüm 07) */
   oturumId?: string;
   /** Ödev bildirimlerinin ödevi (sunucu yazar; tekrar engeli, Bölüm 08) */
