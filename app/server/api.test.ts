@@ -115,12 +115,14 @@ describe("şube kapsamı (sunucuda)", () => {
 });
 
 describe("yoklama → devamsızlık bildirimi → gönderim kuyruğu", () => {
-  it("öğretmenin kaydettiği yoklama ve bildirim veritabanına yazılır, SMS/push kuyruğu işlenir", async () => {
-    const iste = await personelGiris("can@ornekkurum.com");
+  it("kaydedilen yoklama ve bildirim veritabanına yazılır, SMS/push kuyruğu işlenir", async () => {
+    // Sunucu gerçek saati kullanır: gelecek tarih reddedilir; şube müdürünün geçmiş düzeltmesiyle sınanır (Bölüm 07)
+    const iste = await personelGiris("elif@ornekkurum.com");
     const db = (await iste("/api/veri")).veri as Db;
-    const ogr = db.ogrenciler.find((o) => db.kayitlar.some((k) => k.ogrenciId === o.id && k.grupId === "g2"))!;
+    const eski = Object.values(db.yoklamalar).find((y) => y.grupId === "g2" && Object.keys(y.durumlar).length > 0)!;
+    const ogr = db.ogrenciler.find((o) => eski.durumlar[o.id])!;
     const v = db.veliler.find((x) => x.id === ogr.birincilVeliId)!;
-    const yok = { oturumId: "ps5_2030-01-07", tarih: "2030-01-07", satirId: "ps5", grupId: "g2", ogretmenId: "p5", durumlar: { [ogr.id]: "gelmedi" }, konu: "Test", kayitZamani: "2030-01-07T17:00" };
+    const yok = { ...eski, durumlar: { [ogr.id]: "gelmedi" }, konu: "Test" };
     const g = { id: "gnTEST1", zaman: "x", olay: "devamsizlik", veliId: v.id, alici: "maskeli", ogrenciId: ogr.id, subeId: "s1", kanal: "sms", metin: `${ogr.ad} bugün 16:50 Matematik dersine katılmadı.`, durum: "iletildi", maliyet: 0 };
     const r = await iste("/api/degisiklik", { koleksiyonlar: { yoklamalar: { yaz: [yok], sil: [] }, gonderimler: { yaz: [g], sil: [] } }, tekil: {} });
     expect(r.durum).toBe(200);

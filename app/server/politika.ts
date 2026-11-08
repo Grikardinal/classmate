@@ -71,8 +71,9 @@ import {
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
+import { devamsizlikYineleniyor, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { farkUygula } from "../src/data/fark";
-import type { Gider, Iade, Tahsilat, Taksit, Virman } from "../src/data/model";
+import type { Gider, Gonderim, Iade, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
 const ayni = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 import { telefonNormalize } from "../src/lib/kurallar";
@@ -201,6 +202,8 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
       if (k === "yoklamalar" || k === "odevler") l = l.filter((s) => ogrGrup.has(String(s.grupId)));
       if (k === "program") l = l.filter((s) => ogrGrup.has(String(s.grupId)) || s.ogretmenId === a.personel.id);
       if (k === "iptaller") l = l.filter((s) => db.program.some((p) => ogrGrup.has(p.grupId) && String(s.oturumId).startsWith(p.id + "_")));
+      // Veli izni (sağlık notu içerebilir) yalnızca kendi gruplarının öğrencileri için
+      if (k === "izinler") l = l.filter((s) => ogrIds.has(String(s.ogrenciId)));
       if (k === "veliler")
         l = l
           .filter((s) => db.ogrenciler.some((o) => ogrIds.has(o.id) && o.veliIds.includes(String(s.id))))
@@ -342,8 +345,8 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
         case "yoklamalar":
           if (ogrGrup) {
             if (!ogrGrup.has(String(s.grupId))) hata("Yalnızca kendi gruplarınızın yoklamasını alabilirsiniz.");
-            if (eski && eski.tarih !== zaman.slice(0, 10)) hata("Geçmiş günün yoklamasını yalnızca yönetici düzeltebilir.");
           }
+          // Ayrıntılı kurallar: yoklamaDenetle() (Bölüm 07)
           break;
         case "adaylar":
           // Ayrıntılı kurallar: onKayitDenetle() (Bölüm 03). Telefon tek biçime çevrilir; oluşturma tarihi ve not yazarı sunucudan.
@@ -428,6 +431,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   }
   tanimDenetle(onceki, sonrakiDb, temiz);
   programDenetle(onceki, sonrakiDb, temiz, a, zaman);
+  yoklamaDenetle(onceki, sonrakiDb, temiz, a, zaman);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   finansDenetle(onceki, temiz, a, zaman);
@@ -476,6 +480,48 @@ export function programDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
   for (const i of iptalYaz) {
     reddet(iptalYazmaEngeli(i, onceki.iptaller.find((x) => x.oturumId === i.oturumId), sonraki, bugun));
     i.tarih = bugun;
+  }
+}
+
+/* =========================== Bölüm 07 yoklama =========================== */
+/**
+ * Yoklama, veli izni ve devamsızlık bildirimi kuralları (ekranla ortak: src/bolumler/07-yoklama/kurallar.ts):
+ * - oturum gerçek olmalı; grup, satır, tarih oturumdan gelir; öğretmen yalnızca kendi dersi
+ * - gelecek ve başlamamış ders yok; geçmiş düzeltme yalnızca yönetici
+ * - durumlar geçerli, öğrenciler o tarihte grupta aktif (düzeltmede eski satırlar kalır)
+ * - öğretmen, konu temizliği ve kayıt zamanı sunucudan; düzeltme eski öğrencileri silemez
+ * - izinler yalnızca veli portalından yazılır (/api/veli/izin)
+ * - devamsızlık bildirimi: aynı gün aynı metin tekrar gitmez, SMS izni kapalı veliye SMS gitmez
+ * Şube kapsamı yazmaDenetle() içinde denetlenir. `temiz` yerinde güncellenir.
+ */
+export function yoklamaDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  if (K.izinler?.yaz.length) reddet("İzin bildirimi yalnızca veli portalından yapılır.");
+  const baglam = { rol: a.kullanici.rol, personelId: a.personel.id, bugun: zaman.slice(0, 10), simdi: zaman.slice(11, 16) };
+  for (const y of (K.yoklamalar?.yaz ?? []) as unknown as Yoklama[]) {
+    const eski = onceki.yoklamalar[y.oturumId];
+    reddet(yoklamaYazmaEngeli(y, eski, sonraki, baglam));
+    y.ogretmenId = sonraki.program.find((p) => p.id === y.satirId)!.ogretmenId; // hak ediş buna dayanır (Bölüm 13)
+    y.konu = y.konu.trim();
+    y.kayitZamani = zaman;
+    if (eski) y.durumlar = { ...eski.durumlar, ...y.durumlar };
+  }
+  if (K.gonderimler) {
+    const mevcut: Gonderim[] = [...onceki.gonderimler];
+    const yeniMi = (g: Gonderim) => !onceki.gonderimler.some((x) => x.id === g.id);
+    K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
+      if (g.olay !== "devamsizlik" || !yeniMi(g)) return true;
+      if (devamsizlikYineleniyor(g, mevcut)) return false;
+      mevcut.push(g);
+      if (g.kanal === "sms" && onceki.veliler.find((v) => v.id === g.veliId)?.izinSms === false) {
+        g.kanal = "push";
+        g.maliyet = 0;
+      }
+      return true;
+    }) as unknown as Satir[];
   }
 }
 

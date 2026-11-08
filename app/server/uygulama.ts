@@ -28,7 +28,7 @@ import {
   type Veli,
 } from "../src/data/model";
 import { farkBos, farkHesapla, farkUygula, type Degisiklik } from "../src/data/fark";
-import { dakika, haftaGunu, telefonNormalize, tarihEkle } from "../src/lib/kurallar";
+import { dakika, haftaGunu, telefonNormalize } from "../src/lib/kurallar";
 import * as m from "../src/data/mock";
 import { ayniEposta, bolumYetkisi, epostaNormalize, parolaDegisimDogrula, parolaSifirlamaEngeli } from "../src/bolumler/02-kullanicilar/kurallar";
 import {
@@ -45,6 +45,7 @@ import {
   rastgeleParola,
   tumOturumlariKapat,
 } from "./kimlik";
+import { izinEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
@@ -483,8 +484,10 @@ export async function uygulamaOlustur(s: Secenekler) {
     const v = c.get("veli");
     const { ogrenciId, tarih, not } = await c.req.json<{ ogrenciId: string; tarih: string; not: string }>();
     if (!cocukMu(v.id, ogrenciId)) return hata(c, "Bu öğrenci için işlem yapamazsınız.", 403);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(tarih)) || tarih < BUGUN || tarih > tarihEkle(BUGUN, 60)) return hata(c, "Geçersiz tarih.");
+    const engel = izinEngeli({ ogrenciId, tarih }, durum.db, BUGUN);
+    if (engel) return hata(c, engel);
     await sunucuDegisikligi((x) => {
+      if (izinEngeli({ ogrenciId, tarih }, x, BUGUN)) return; // eşzamanlı aynı istek
       x.izinler.push({ id: yeniId("iz"), ogrenciId, tarih, not: String(not ?? "").slice(0, 300) || "Veli bildirdi", veliId: v.id, olusturma: simdiZaman() });
       islemYaz(x, tamAd(v), "İzin bildirimi", `${tamAd(x.ogrenciler.find((o) => o.id === ogrenciId))} — ${tarih}`, aktifKayit(x, ogrenciId)?.subeId);
     });
