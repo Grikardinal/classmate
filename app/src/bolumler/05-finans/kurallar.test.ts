@@ -12,6 +12,7 @@ import {
   iptalTaksitleri,
   kullanilanTutar,
   planiYenidenDagit,
+  tahsilatKayitIptalEngeli,
   beklenenTahsil,
   ekHizmetlerEngeli,
   giderEngeli,
@@ -401,6 +402,20 @@ describe("indirim onayı ve plan yeniden dağıtımı", () => {
     const t = { ...tk, kayitId: kk.id, ogrenciId: kk.ogrenciId };
     expect(taksitYazmaEngeli({ ...t, tutar: 0 }, t, d, { finans: true, rol: "sekreter", odenenFarki: 0, beklenenTutar: 0 })).toBeNull();
     expect(taksitYazmaEngeli({ ...t, tutar: 10 }, t, d, { finans: true, rol: "sekreter", odenenFarki: 0, beklenenTutar: 0 })).toMatch(/uyuşmuyor/);
+  });
+});
+
+describe("iptal edilmiş kaydın tahsilatı", () => {
+  it("dağılımdaki taksitlerden biri iptal kayda aitse engel; aktif, dondurulmuş, mezun ve bulunamayan taksit engel değil", () => {
+    const taksitler = [{ id: "a", kayitId: "k1" }, { id: "b", kayitId: "k2" }];
+    const t = (...ids: string[]) => ({ dagilim: ids.map((taksitId) => ({ taksitId, tutar: 1 })) });
+    const kayitlar = [{ id: "k1", durum: "aktif" as const }, { id: "k2", durum: "iptal" as const }];
+    expect(tahsilatKayitIptalEngeli(t("a"), { taksitler, kayitlar })).toBeNull();
+    expect(tahsilatKayitIptalEngeli(t("b"), { taksitler, kayitlar })).toMatch(/iptal edilemez/);
+    expect(tahsilatKayitIptalEngeli(t("a", "b"), { taksitler, kayitlar })).toMatch(/iptal edilemez/); // birden çok kayıt
+    expect(tahsilatKayitIptalEngeli(t("yok"), { taksitler, kayitlar })).toBeNull();
+    for (const durum of ["dondurulmus", "mezun"] as const)
+      expect(tahsilatKayitIptalEngeli(t("b"), { taksitler, kayitlar: [{ id: "k2", durum }] })).toBeNull();
   });
 });
 

@@ -65,6 +65,7 @@ import {
   planToplamEngeli,
   tahsilatEngeli,
   tahsilatIptalEngeli,
+  tahsilatKayitIptalEngeli,
   taksitYazmaEngeli,
   virmanEngeli,
   yeniMakbuzNo,
@@ -539,6 +540,7 @@ export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: st
     const eski = onceki.tahsilatlar.find((x) => x.id === t.id);
     if (eski) {
       reddet(tahsilatIptalEngeli(eski, t, rol));
+      reddet(tahsilatKayitIptalEngeli(eski, son)); // aynı pakette iptal edilen kayıt da sayılır
       iptaller.push(eski);
       continue;
     }

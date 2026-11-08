@@ -467,6 +467,34 @@ describe("kayıt iptali: kullanılan + cayma → iade veya kalan borç", () => {
   });
 });
 
+describe("iptal edilmiş kaydın tahsilatı iptal edilemez (karar 2026-11-08)", () => {
+  const th = F.tahsilatlar.find((t) => t.subeId === "s1" && !t.iptal)!;
+  const kayitId = F.taksitler.find((t) => t.id === th.dagilim[0].taksitId)!.kayitId;
+  const tahsilatIptal = (x: Db) => {
+    x.tahsilatlar = x.tahsilatlar.map((t) => (t.id === th.id ? { ...t, iptal: { neden: "Yanlış giriş", kullanici: "", zaman: "" } } : t));
+    x.taksitler = x.taksitler.map((tk) => {
+      const dg = th.dagilim.find((z) => z.taksitId === tk.id);
+      return dg ? { ...tk, odenen: kurus(tk.odenen - dg.tutar) } : tk;
+    });
+  };
+  const iptalEt = (x: Db) => {
+    x.kayitlar = x.kayitlar.map((k) => (k.id === kayitId ? { ...k, durum: "iptal" } : k));
+    const ogrenciId = x.kayitlar.find((k) => k.id === kayitId)!.ogrenciId;
+    const durum = iptalSonrasiOgrenciDurumu(ogrenciId, x.kayitlar);
+    x.ogrenciler = x.ogrenciler.map((o) => (o.id === ogrenciId ? { ...o, durum } : o));
+  };
+  it("kayıt iptal edildiyse yönetici de tahsilatı iptal edemez; kayıt sürüyorsa edebilir", () => {
+    const v = structuredClone(F);
+    iptalEt(v);
+    reddedilir(dene(tahsilatIptal, aktor("u1", v), v), /iptal edilemez/);
+    reddedilir(dene(tahsilatIptal, aktor("u0", v), v), /iptal edilemez/);
+    expect(dene(tahsilatIptal, MUDUR_S1)).not.toThrow();
+  });
+  it("kayıt iptaliyle aynı pakette tahsilat iptal edilemez", () => {
+    reddedilir(dene((x) => { iptalEt(x); tahsilatIptal(x); }, MUDUR_S1), /iptal edilemez/);
+  });
+});
+
 describe("gider ve virman iptali (ters kayıt)", () => {
   const g = F.giderler.find((x) => x.subeId === "s1")!;
   const giderIptal = (neden = "Mükerrer giriş", p: Partial<Gider> = {}) => (x: Db) =>

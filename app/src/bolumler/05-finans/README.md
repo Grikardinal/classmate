@@ -160,11 +160,11 @@ Tümü `kurallar.ts`'te; sunucu `server/politika.ts · finansDenetle` (yazmaDene
 
 ## Testler
 `npx vitest run src/bolumler/05-finans`:
-- `kurallar.test.ts` — 37 test (12'si 2026-11-08 kararları: iptal hesabı, cayma, iade, indirim onayı, plan dağıtımı, gider / virman iptali): örnek verinin kurallara uyması, tutar / kuruş ve Türkçe tutar çözümü, kayıt ücreti (indirim, ek hizmet,
+- `kurallar.test.ts` — 38 test (13'ü 2026-11-08 kararları: iptal hesabı, cayma, iade, indirim onayı, plan dağıtımı, gider / virman iptali): örnek verinin kurallara uyması, tutar / kuruş ve Türkçe tutar çözümü, kayıt ücreti (indirim, ek hizmet,
   %100 sınırı), indirim / ek hizmet doğrulaması, yeni ve var olan kaydın ücret kuralları, plan toplamı, taksit kuralları (yeni, ödenen farkı,
   fazla tahsilat, yönetici düzenlemesi), hatırlatma uygunluğu, tahsilat ve iptal kuralları, ödeme farkları, makbuz no, kasa hareketleri
   (ters kayıt, öğrencinin şubesinin kasası), gün sonu, kasa erişimi, gider ve virman kuralları, sezon ayları.
-- `sunucu.test.ts` — 44 test (15'i 2026-11-08 kararları): modül kapalıyken yazma / okuma / maske / nakil devri; okuma kapsamı ve yetkisiz roller; tahsilat
+- `sunucu.test.ts` — 46 test (17'si 2026-11-08 kararları): modül kapalıyken yazma / okuma / maske / nakil devri; okuma kapsamı ve yetkisiz roller; tahsilat
   (kabul, makbuz çakışması, tutar, fazla tahsilat, tahsilatsız ödenen, yanlış veli / kasa / şube, öğretmen); iptal (yetki, gerekçe, geri
   alınamazlık, silinemezlik); kayıt ücreti ve plan (sihirbaz paketi, fiyat listesi, tanımsız fiyat, plan toplamı, indirim, ücretsiz kayıt,
   yönetici düzenlemesi, Bölüm 01 sezon geçişi paketi); taksit; gider ve virman.
@@ -183,8 +183,8 @@ Tümü `kurallar.ts`'te; sunucu `server/politika.ts · finansDenetle` (yazmaDene
 - ~~İndirim yetkisi~~ **Kapandı (2026-11-08):** sekreterin indirimi yönetici onayıyla geçerli olur (yukarıda).
 - **Burs** türü yok (indirim türleri ve ek hizmet fiyatları `src/data/mock.ts` içinde sabit; ayarlanabilir değil).
 - **İndirim talebi** yalnızca kayıt sırasında oluşturulur; var olan kayda sekreter talep açamaz (yönetici doğrudan değiştirir).
-- **İptal hesabından sonra tahsilat iptali (karar gerekli):** kayıt iptal hesabı yapıldıktan sonra o kaydın bir tahsilatı iptal edilirse ödenen düşer, kapanmış taksit yeniden
-  açık görünür; hesap ve varsa iade kendiliğinden güncellenmez. Engellensin mi, yoksa hesap mı düzeltilsin?
+- ~~İptal hesabından sonra tahsilat iptali~~ **Kapandı (2026-11-08):** iptal edilmiş kaydın tahsilatı iptal edilemez (`tahsilatKayitIptalEngeli`; birden çok kayda dağılmış
+  tahsilatta tek bir iptal kayıt yeter, iptal hesabı olmayan kayıt iptalleri de dahil). Yanlış tahsilat kayıt iptalinden önce düzeltilmelidir. Ekranda düğme kapalıdır ve nedeni yazar.
 - **İade iptali** yalnızca kasaya ters kayıt düşer; kaydın iptal hesabı ve kapanmış taksitler değişmez, kayıt iptali geri alınamaz.
 - **Virman iptalinde bakiye denetimi yok:** hedef kasa o sırada yetersizse ters kayıt onu eksiye düşürebilir.
 - **İptal sonrası iade makbuzu** yazdırma ekranı yok; numara kasa hareketlerinde ve cari geçmişte görünür.

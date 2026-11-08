@@ -443,6 +443,18 @@ export function finansIptalEngeli<T extends { iptal?: FinansIptal | null }>(eski
 /** Tahsilat silinmez ve değiştirilmez; yalnızca yönetici gerekçeyle iptal eder (iptal geri alınamaz). */
 export const tahsilatIptalEngeli = (eski: Tahsilat, yeni: Tahsilat, rol: Rol): Hata => finansIptalEngeli(eski, yeni, rol, "Tahsilat");
 
+/**
+ * İptal edilmiş kaydın tahsilatı iptal edilemez (karar 2026-11-08): dağılımındaki taksitlerden herhangi biri durumu "iptal" olan
+ * bir kayda aitse engel olur (birden çok kayda dağılmış tahsilat dahil). Yanlış tahsilat kayıt iptalinden önce düzeltilmelidir.
+ */
+export function tahsilatKayitIptalEngeli(t: Pick<Tahsilat, "dagilim">, d: { taksitler: Pick<Taksit, "id" | "kayitId">[]; kayitlar: Pick<Kayit, "id" | "durum">[] }): Hata {
+  const iptalli = t.dagilim.some((x) => {
+    const tk = d.taksitler.find((y) => y.id === x.taksitId);
+    return !!tk && d.kayitlar.find((k) => k.id === tk.kayitId)?.durum === "iptal";
+  });
+  return iptalli ? "İptal edilmiş kaydın tahsilatı iptal edilemez; yanlış tahsilat kayıt iptalinden önce düzeltilmelidir." : null;
+}
+
 /** Yeni tahsilatların ve iptal edilen tahsilatların taksitlere etkisi (kuruş): taksitId → ödenen farkı */
 export function odemeFarklari(yeniler: Pick<Tahsilat, "dagilim">[], iptalEdilenler: Pick<Tahsilat, "dagilim">[]): Map<string, number> {
   const m = new Map<string, number>();

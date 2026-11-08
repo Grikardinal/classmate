@@ -51,6 +51,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-08 | Dondurulan kaydın vadeleri | Taksitler **aynen sürer**, yalnızca otomatik hatırlatma durur (değişiklik yok) | — |
 | 2026-11-08 | Sekreterin indirim uygulaması | Sekreter uygulayabilir, **yönetici onayıyla** geçerli olur | Bölüm 05 ek iş ✅ |
 | 2026-11-08 | Yanlış girilen gider / virman | Yönetici **gerekçeyle iptal** eder, iptal gününe **ters kayıt** düşer | Bölüm 05 ek iş ✅ |
+| 2026-11-08 | İptal edilmiş kaydın tahsilatı | **İptal edilemez**; yanlış tahsilat kayıt iptalinden önce düzeltilir | Bölüm 05 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

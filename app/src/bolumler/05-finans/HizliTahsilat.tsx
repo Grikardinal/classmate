@@ -22,7 +22,7 @@ import {
 import { gecikmeGunu, tahsilatDagit, tl } from "@/lib/kurallar";
 import { esc, yazdir } from "@/lib/yazdir";
 import { cn } from "@/lib/utils";
-import { kalan, kurusa, tutarCoz, yeniMakbuzNo, yontemAdlari, YONTEMLER } from "./kurallar";
+import { kalan, kurusa, tahsilatKayitIptalEngeli, tutarCoz, yeniMakbuzNo, yontemAdlari, YONTEMLER } from "./kurallar";
 import { KayitDurumEtiketi, tarihTR } from "./ortak";
 
 /* ---------- Makbuz ---------- */
@@ -248,9 +248,15 @@ export function HizliTahsilat({ baslangicVeli }: { baslangicVeli: string | null 
                       ) : (
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="sm" onClick={() => makbuzYazdir(d, [t])} title="Makbuzu yazdır"><Printer /></Button>
-                          {(rol === "genel-yonetici" || rol === "sube-muduru") && (
-                            <Button variant="ghost" size="sm" onClick={() => setIptalEdilen(t)} title="İptal et"><Undo2 /></Button>
-                          )}
+                          {(rol === "genel-yonetici" || rol === "sube-muduru") && (() => {
+                            const engel = tahsilatKayitIptalEngeli(t, d);
+                            return (
+                              <>
+                                {engel && <span className="self-center text-xs text-muted-foreground">Kayıt iptal edildiği için tahsilat iptal edilemez</span>}
+                                <Button variant="ghost" size="sm" onClick={() => setIptalEdilen(t)} disabled={!!engel} title={engel ?? "İptal et"} aria-label={engel ?? "İptal et"}><Undo2 /></Button>
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                     </Td>
