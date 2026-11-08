@@ -88,6 +88,8 @@ export function HizliTahsilat({ baslangicVeli }: { baslangicVeli: string | null 
   const gecmis = d.tahsilatlar
     .filter((t) => t.dagilim.some((x) => cocukIds.has(d.taksitler.find((tk) => tk.id === x.taksitId)?.ogrenciId ?? "")))
     .sort((a, b) => b.zaman.localeCompare(a.zaman));
+  // Kayıt iptalinde yapılan iadeler (iptali Kasa sekmesinden)
+  const iadeler = (d.iadeler ?? []).filter((i) => cocukIds.has(i.ogrenciId)).sort((a, b) => b.zaman.localeCompare(a.zaman));
 
   const sayi = tutarCoz(tutar);
   const onizleme = sayi > 0 ? tahsilatDagit(sayi, acik.map((t) => ({ id: t.id, kalan: kalan(t) }))) : null;
@@ -254,7 +256,16 @@ export function HizliTahsilat({ baslangicVeli }: { baslangicVeli: string | null 
                     </Td>
                   </tr>
                 ))}
-                {gecmis.length === 0 && <tr><Td colSpan={5} className="text-center text-muted-foreground">Tahsilat yok.</Td></tr>}
+                {iadeler.map((i) => (
+                  <tr key={i.id} className={cn(i.iptal && "text-muted-foreground line-through")}>
+                    <Td className="font-mono text-xs">{i.makbuzNo}</Td>
+                    <Td className="tabular-nums">{tarihTR(i.zaman)}</Td>
+                    <Td>İade · {yontemAdlari[i.yontem]}</Td>
+                    <Td className="text-right tabular-nums text-danger">−{tl(i.tutar)}</Td>
+                    <Td className="text-right">{i.iptal ? <Badge variant="danger" className="no-underline">İptal: {i.iptal.neden}</Badge> : <span className="text-xs text-muted-foreground">Kayıt iptali</span>}</Td>
+                  </tr>
+                ))}
+                {gecmis.length === 0 && iadeler.length === 0 && <tr><Td colSpan={5} className="text-center text-muted-foreground">Tahsilat yok.</Td></tr>}
               </tbody>
             </Table>
           </Card>

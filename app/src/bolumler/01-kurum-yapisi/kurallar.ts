@@ -226,8 +226,9 @@ export function sezonGecisiPlani(
       const kod = d.subeler.find((s) => s.id === k.subeId)?.kod ?? "SUB";
       const no = sozlesmeNo(kod, yil, nolar);
       nolar.push(no);
-      const { iceAktarmaId: _ia, ...temel } = k;
-      void _ia;
+      // İçe aktarma bağı ve eski kaydın indirim onayı / iptal hesabı yeni kayda geçmez (geçerse sunucu paketi reddederdi)
+      const { iceAktarmaId: _ia, bekleyenIndirim: _b, indirimOnay: _o, iptalHesabi: _h, ...temel } = k;
+      void _ia; void _b; void _o; void _h;
       // Fiyat, indirim ve ek hizmet eski kayıttan kopyalanmaz; hedef sezonun liste fiyatı uygulanır (finans kapalıysa ücret yok)
       const seviye = gruplar.find((g) => g.id === grupId)!.seviye;
       const liste = finans ? (fiyatBul(d.fiyatListesi, hedefId, k.subeId, seviye) ?? 0) : 0;

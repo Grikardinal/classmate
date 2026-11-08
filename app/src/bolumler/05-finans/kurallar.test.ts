@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { ornekVeriUret, type Gider, type Kayit, type Rol, type Tahsilat, type Taksit, type Virman } from "@/data/model";
+import { ornekVeriUret, type Gider, type Iade, type Kayit, type Rol, type Tahsilat, type Taksit, type Virman } from "@/data/model";
 import { taksitPlani } from "@/lib/kurallar";
 import {
+  caymaBedeliEngeli,
+  caymaTutari,
+  finansIptalEngeli,
+  hizmetBaslangici,
+  iadeEngeli,
+  iptalHesabiEngeli,
+  iptalHesabiHesapla,
+  iptalTaksitleri,
+  kullanilanTutar,
+  planiYenidenDagit,
   beklenenTahsil,
   ekHizmetlerEngeli,
   giderEngeli,
@@ -276,5 +286,153 @@ describe("özet", () => {
     ]);
     expect(sezonAylari({ baslangic: "2027-07-01", bitis: "2027-08-15" })).toEqual(["2027-07", "2027-08"]);
     expect(sezonAylari(undefined)).toEqual([]);
+  });
+});
+
+/* =========================== Karar 2026-11-08 =========================== */
+const plan3 = (odenen: [number, number, number]): Taksit[] =>
+  odenen.map((o, i) => ({ id: `p${i + 1}`, kayitId: "k", ogrenciId: "o", veliId: "v", subeId: "s1", no: i + 1, vade: `2026-0${9}-0${i + 1}`, tutar: 1000, odenen: o }));
+const SEZON = { baslangic: "2026-09-01", bitis: "2026-09-30" };
+
+describe("iptal hesabı: kullanılan + cayma", () => {
+  it("kullanılan tutar takvim günü oranıyla (iptal günü dahil); başlangıç öncesi 0, bitiş sonrası tamamı", () => {
+    expect(kullanilanTutar(1000, "2026-09-01", "2026-09-10", "2026-09-05")).toBe(500);
+    expect(kullanilanTutar(1000, "2026-09-01", "2026-09-03", "2026-09-01")).toBe(333.33);
+    expect(kullanilanTutar(1000, "2026-09-01", "2026-09-10", "2026-08-20")).toBe(0);
+    expect(kullanilanTutar(1000, "2026-09-01", "2026-09-10", "2026-12-01")).toBe(1000);
+    expect(kullanilanTutar(1000, "2026-09-01", undefined, "2026-09-05")).toBe(1000); // sezon bilinmiyor: iade çıkmaz
+    expect(hizmetBaslangici("2026-08-20", SEZON)).toBe("2026-09-01");
+    expect(hizmetBaslangici("2026-09-15", SEZON)).toBe("2026-09-15");
+  });
+  it("cayma bedeli: yüzde veya sabit, plan toplamını aşmaz; ayar yoksa 0", () => {
+    expect(caymaTutari({ tur: "yuzde", deger: 10 }, 1000)).toBe(100);
+    expect(caymaTutari({ tur: "yuzde", deger: 12.5 }, 999.99)).toBe(125);
+    expect(caymaTutari({ tur: "sabit", deger: 1500 }, 1000)).toBe(1000);
+    expect(caymaTutari(undefined, 1000)).toBe(0);
+    expect(caymaTutari({ tur: "yuzde", deger: 150 }, 1000)).toBe(0); // geçersiz ayar uygulanmaz
+    expect(caymaBedeliEngeli(undefined)).toBeNull();
+    expect(caymaBedeliEngeli({ tur: "sabit", deger: 250.5 })).toBeNull();
+    expect(caymaBedeliEngeli({ tur: "yuzde", deger: 101 })).toMatch(/0–100/);
+    expect(caymaBedeliEngeli({ tur: "x", deger: 1 })).toMatch(/türü/);
+    expect(caymaBedeliEngeli({ tur: "sabit", deger: -1 })).toMatch(/negatif/);
+  });
+  it("fazla ödenmişse iade = ödenen − (kullanılan + cayma); eksikse kalan borç", () => {
+    const iade = iptalHesabiHesapla(plan3([1000, 500, 0]), { tarih: "2026-08-25" }, SEZON, { tur: "sabit", deger: 200 }, "2026-09-10");
+    expect(iade).toMatchObject({ toplam: 3000, odenen: 1500, kullanilan: 1000, cayma: 200, hak: 1200, iade: 300, kalanBorc: 0 });
+    const borc = iptalHesabiHesapla(plan3([1000, 500, 0]), { tarih: "2026-08-25" }, SEZON, { tur: "sabit", deger: 200 }, "2026-09-20");
+    expect(borc).toMatchObject({ kullanilan: 2000, hak: 2200, iade: 0, kalanBorc: 700 });
+    // yöneticinin düzeltmesi plan toplamıyla sınırlı
+    expect(iptalHesabiHesapla(plan3([0, 0, 0]), { tarih: "2026-09-01" }, SEZON, null, "2026-09-10", { kullanilan: 5000 }).hak).toBe(3000);
+    // ek kalemler hesaba girmez
+    expect(iptalHesabiHesapla([...plan3([0, 0, 0]), { ...plan3([0, 0, 0])[0], id: "ek", no: 99, odenen: 1000 }], { tarih: "2026-09-01" }, SEZON, null, "2026-09-10").odenen).toBe(0);
+  });
+  it("taksitler: kalan borç en eski vadeden kalır, geri kalanlar kapanır; iadede hepsi ödenen tutarda", () => {
+    expect([...iptalTaksitleri(plan3([1000, 500, 0]), 2200)]).toEqual([["p1", 1000], ["p2", 1000], ["p3", 200]]);
+    expect([...iptalTaksitleri(plan3([1000, 500, 0]), 1200)]).toEqual([["p1", 1000], ["p2", 500], ["p3", 0]]);
+  });
+  it("hesap denetimi: bugünün tarihi, plandan yeniden hesap, düzeltme ve iade yalnızca yönetici", () => {
+    const p = plan3([1000, 500, 0]);
+    const k = { tarih: "2026-08-25" };
+    const ayar = { tur: "sabit" as const, deger: 200 };
+    const borc = iptalHesabiHesapla(p, k, SEZON, ayar, "2026-09-20");
+    const sec = (rol: Rol, bugun = "2026-09-20") => ({ bugun, rol });
+    expect(iptalHesabiEngeli(borc, p, k, SEZON, ayar, sec("sekreter"))).toBeNull();
+    expect(iptalHesabiEngeli(borc, p, k, SEZON, ayar, sec("sekreter", "2026-09-21"))).toMatch(/bugünün/);
+    expect(iptalHesabiEngeli({ ...borc, kalanBorc: 1 }, p, k, SEZON, ayar, sec("sekreter"))).toMatch(/uyuşmuyor/);
+    const duz = iptalHesabiHesapla(p, k, SEZON, ayar, "2026-09-20", { kullanilan: 0, cayma: 0 });
+    expect(iptalHesabiEngeli(duz, p, k, SEZON, ayar, sec("sekreter"))).toMatch(/yalnızca yönetici/);
+    expect(iptalHesabiEngeli(duz, p, k, SEZON, ayar, sec("sube-muduru"))).toMatch(/gerekçe/);
+    expect(iptalHesabiEngeli({ ...duz, duzeltme: { neden: "Hiç gelmedi", kullanici: "", zaman: "" } }, p, k, SEZON, ayar, sec("sube-muduru"))).toBeNull();
+    const iade = iptalHesabiHesapla(p, k, SEZON, ayar, "2026-09-10");
+    expect(iptalHesabiEngeli(iade, p, k, SEZON, ayar, sec("sekreter", "2026-09-10"))).toMatch(/İade çıkan/);
+    expect(iptalHesabiEngeli(iade, p, k, SEZON, ayar, sec("genel-yonetici", "2026-09-10"))).toBeNull();
+  });
+  it("iade: yalnızca iptal paketinde, hesaptaki tutarda, yönetici; kaydın öğrencisi, şubesi, velisi", () => {
+    const k = d.kayitlar.find((x) => x.durum === "aktif")!;
+    const o = d.ogrenciler.find((x) => x.id === k.ogrenciId)!;
+    const i: Iade = { id: "i", makbuzNo: "MRK-I-00001", zaman: "", kayitId: k.id, ogrenciId: o.id, veliId: o.birincilVeliId, subeId: k.subeId, yontem: "havale", tutar: 300, kullanici: "", iptal: null };
+    const sec = (p: Partial<{ finans: boolean; rol: Rol; beklenenTutar: number | undefined }> = {}) => ({ finans: true, rol: "sube-muduru" as Rol, beklenenTutar: 300 as number | undefined, ...p });
+    expect(iadeEngeli(i, d, sec())).toBeNull();
+    expect(iadeEngeli(i, d, sec({ beklenenTutar: undefined }))).toMatch(/kayıt iptaliyle/);
+    expect(iadeEngeli(i, d, sec({ rol: "sekreter" }))).toMatch(/yönetici/);
+    expect(iadeEngeli(i, d, sec({ beklenenTutar: 299.99 }))).toMatch(/aşamaz/);
+    expect(iadeEngeli({ ...i, subeId: "sX" }, d, sec())).toMatch(/şubesiyle/);
+    expect(iadeEngeli({ ...i, veliId: "v-yok" }, d, sec())).toMatch(/velisine/);
+    expect(iadeEngeli(i, d, sec({ finans: false }))).toMatch(/kapalı/);
+  });
+});
+
+describe("indirim onayı ve plan yeniden dağıtımı", () => {
+  const ERKEN = [{ ad: "Erken kayıt", oran: 5 }];
+  const k = (p: Partial<Kayit> = {}): Kayit => ({
+    id: "k", ogrenciId: "o", sezonId: "z2", subeId: "s1", grupId: "g1", sozlesmeNo: "", durum: "aktif", tarih: BUGUN, grupGecmisi: [],
+    ekHizmetler: [], kvkkOnay: null, listeFiyati: 13500, indirimler: [], net: 13500, ...p,
+  });
+  const talep = { indirimler: ERKEN, isteyen: "", zaman: "" };
+  it("sekreter indirimi onaya gönderir (net indirimsiz); doğrudan uygulayamaz; yönetici doğrudan uygular", () => {
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: talep }), undefined, finansli, { rol: "sekreter" })).toBeNull();
+    expect(kayitUcretEngeli(k({ indirimler: ERKEN, net: 12825 }), undefined, finansli, { rol: "sekreter" })).toMatch(/onayıyla/);
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: talep }), undefined, finansli, { rol: "sube-muduru" })).toMatch(/doğrudan/);
+    expect(kayitUcretEngeli(k({ indirimler: ERKEN, net: 12825 }), undefined, finansli, { rol: "sube-muduru" })).toBeNull();
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: { ...talep, indirimler: [] } }), undefined, finansli, { rol: "sekreter" })).toMatch(/boş/);
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: { ...talep, indirimler: [{ ad: "Burs", oran: 100 }] } }), undefined, finansli, { rol: "sekreter" })).toMatch(/tanımlı/);
+  });
+  it("onay ve ret yalnızca yönetici; talep yalnızca kayıt sırasında", () => {
+    const eski = k({ bekleyenIndirim: talep });
+    const onay = k({ indirimler: ERKEN, net: 12825, bekleyenIndirim: null });
+    expect(kayitUcretEngeli(onay, eski, finansli, { rol: "sekreter" })).toMatch(/yalnızca yönetici/);
+    expect(kayitUcretEngeli(onay, eski, finansli, { rol: "sube-muduru" })).toBeNull();
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: null }), eski, finansli, { rol: "sekreter" })).toMatch(/yalnızca yönetici/);
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: null }), eski, finansli, { rol: "genel-yonetici" })).toBeNull();
+    expect(kayitUcretEngeli(k({ bekleyenIndirim: talep }), k(), finansli, { rol: "sekreter" })).toMatch(/kayıt sırasında/);
+  });
+  it("ödenmemiş kısım açık taksitlere orantılı dağıtılır; ödenen ve kapanmış taksit değişmez; toplam = yeni net", () => {
+    const r = planiYenidenDagit(plan3([1000, 500, 0]), 2700);
+    expect(r.hata).toBeNull();
+    expect([...r.tutarlar]).toEqual([["p1", 1000], ["p2", 900], ["p3", 800]]);
+    expect(planiYenidenDagit(plan3([1000, 500, 0]), 1000).hata).toMatch(/aşıyor/);
+    expect(planiYenidenDagit(plan3([1000, 1000, 1000]), 3100).hata).toMatch(/Açık taksit/);
+    const kusur = planiYenidenDagit(plan3([0, 0, 0]), 1000);
+    expect([...kusur.tutarlar.values()].reduce((s, x) => s + Math.round(x * 100), 0)).toBe(100000);
+  });
+  it("iptal / onay hesabındaki tutar taksitte aynen olmalı (iptalde 0'a kadar)", () => {
+    const tk = plan3([0, 0, 0])[2];
+    const kk = d.kayitlar[0];
+    const t = { ...tk, kayitId: kk.id, ogrenciId: kk.ogrenciId };
+    expect(taksitYazmaEngeli({ ...t, tutar: 0 }, t, d, { finans: true, rol: "sekreter", odenenFarki: 0, beklenenTutar: 0 })).toBeNull();
+    expect(taksitYazmaEngeli({ ...t, tutar: 10 }, t, d, { finans: true, rol: "sekreter", odenenFarki: 0, beklenenTutar: 0 })).toMatch(/uyuşmuyor/);
+  });
+});
+
+describe("gider, virman ve iade iptali: ters kayıt", () => {
+  const iptal = { neden: "Mükerrer giriş", kullanici: "Elif", zaman: "2026-11-07T10:00" };
+  it("yönetici gerekçeyle iptal eder; sekreter edemez; iptal geri alınamaz", () => {
+    const g: Gider = { id: "g", tarih: "2026-11-01", subeId: "s1", kategori: "Kira", aciklama: "x", tutar: 100, kasa: "nakit" };
+    const sec = (rol: Rol) => ({ finans: true, genel: false, bugun: BUGUN, rol });
+    expect(giderEngeli({ ...g, iptal }, g, d, sec("sube-muduru"))).toBeNull();
+    expect(giderEngeli({ ...g, iptal }, g, d, sec("sekreter"))).toMatch(/şube müdürü/);
+    expect(giderEngeli({ ...g, iptal: { ...iptal, neden: "x" } }, g, d, sec("sube-muduru"))).toMatch(/gerekçe/);
+    expect(giderEngeli(g, { ...g, iptal }, d, sec("genel-yonetici"))).toMatch(/İptal edilmiş/);
+    expect(giderEngeli({ ...g, iptal }, undefined, d, sec("genel-yonetici"))).toMatch(/iptal edilmiş olarak/);
+    const v: Virman = { id: "v", tarih: "2026-11-01", kaynak: "s1:nakit", hedef: "s1:banka", tutar: 50, aciklama: "" };
+    expect(virmanEngeli({ ...v, iptal }, v, d, { ...sec("sube-muduru"), bakiye: () => 0 })).toBeNull();
+    expect(virmanEngeli({ ...v, iptal, tutar: 1 }, v, d, { ...sec("sube-muduru"), bakiye: () => 0 })).toMatch(/değiştirilemez/);
+    expect(finansIptalEngeli({ iptal: null as Iade["iptal"] }, { iptal }, "genel-yonetici", "İade")).toBeNull();
+  });
+  it("iptalin ters kaydı iptal gününde; geçmiş günlerin bakiyesi değişmez; iade kasadan çıkış", () => {
+    const h = kasaHareketleri({
+      tahsilatlar: [{ id: "t", makbuzNo: "", zaman: "2026-11-01T10:00", veliId: "", subeId: "s1", alinanSubeId: "s1", tutar: 1000, yontem: "nakit", dagilim: [], iptal: null, kullanici: "" }],
+      giderler: [{ id: "g", tarih: "2026-11-02", subeId: "s1", kategori: "Kira", aciklama: "", tutar: 100, kasa: "nakit", iptal }],
+      virmanlar: [{ id: "v", tarih: "2026-11-03", kaynak: "s1:nakit", hedef: "s1:banka", tutar: 50, aciklama: "", iptal }],
+      iadeler: [
+        { id: "i1", makbuzNo: "", zaman: "2026-11-04T10:00", kayitId: "", ogrenciId: "", veliId: "", subeId: "s1", yontem: "nakit", tutar: 200, kullanici: "", iptal: null },
+        { id: "i2", makbuzNo: "", zaman: "2026-11-04T11:00", kayitId: "", ogrenciId: "", veliId: "", subeId: "s1", yontem: "nakit", tutar: 30, kullanici: "", iptal },
+      ],
+    });
+    expect(kasaBakiyesi(h, "s1:nakit", "2026-11-06")).toBe(1000 - 100 - 50 - 200 - 30);
+    expect(kasaBakiyesi(h, "s1:nakit")).toBe(1000 - 200);
+    expect(kasaBakiyesi(h, "s1:banka", "2026-11-06")).toBe(50);
+    expect(kasaBakiyesi(h, "s1:banka")).toBe(0);
+    expect(gunSonuOzeti(h, "s1:nakit", "2026-11-07")).toEqual({ acilis: 620, giris: 180, cikis: 0, kapanis: 800 });
   });
 });

@@ -94,6 +94,11 @@ Sunucu: `app/server/politika.ts` içinde `kayitDenetle()` (yazmaDenetle sonunda,
   yokken de çalışır. Aday başka şubedeyse (öğrenci nakledilmiş) iptal eden kullanıcı görmese de sunucu adayı pakete ekler.
 - KVKK ile anonimleştirilen öğrencinin adayı takibe açılmaz.
 
+### Kayıt iptalinde finans hesabı (Bölüm 05, karar 2026-11-08)
+Finans açıksa ve ödeme planı varsa iptal ekranı kullanılan + cayma → iade veya kalan borç hesabını önizler; yönetici gerekçeyle düzeltebilir. İade çıkan iptali yalnızca
+yönetici yapar. Yukarıdaki iptal kuralları (öğrenci durumu, adayın yeniden açılması) değişmedi. Sekreterin seçtiği indirim yönetici onayına gider.
+Ayrıntı: `../05-finans/README.md`.
+
 ### Şube kapsamı ve KVKK
 - Okuma/yazma kapsamı sunucuda (`okumaSuz`, `yazmaDenetle`): öğrenci, aktif sezon kaydının (yoksa ilk kaydının) şubesine aittir;
   kayıt şubesine; veli çocuklarının şubelerine. Başka şubenin öğrencisi görülmez/değiştirilemez; nakilde iki şube de kapsamda olmalı.

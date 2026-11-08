@@ -189,6 +189,14 @@ export function KayitlarSekmesi({ o }: { o: Ogrenci }) {
             {moduller.finans && k.net > 0 && (
               <p><span className="text-muted-foreground">Ücret:</span> {tl(k.listeFiyati)} {k.indirimler.map((i) => `− %${i.oran} ${i.ad}`).join(" ")} → <b>{tl(k.net)}</b></p>
             )}
+            {moduller.finans && k.bekleyenIndirim && (
+              <p className="text-warning">İndirim yönetici onayı bekliyor: {k.bekleyenIndirim.indirimler.map((i) => `${i.ad} %${i.oran}`).join(", ")} (onay Finans → Özet'ten verilir)</p>
+            )}
+            {moduller.finans && k.iptalHesabi && (
+              <p><span className="text-muted-foreground">İptal hesabı:</span> kullanılan {tl(k.iptalHesabi.kullanilan)} + cayma {tl(k.iptalHesabi.cayma)} · ödenen {tl(k.iptalHesabi.odenen)} →{" "}
+                <b>{k.iptalHesabi.iade > 0 ? `iade ${tl(k.iptalHesabi.iade)}` : `kalan borç ${tl(k.iptalHesabi.kalanBorc)}`}</b>
+                {k.iptalHesabi.duzeltme && ` (düzeltme: ${k.iptalHesabi.duzeltme.neden})`}</p>
+            )}
             <div>
               <p className="mb-1 text-muted-foreground">Grup geçmişi</p>
               <ol className="flex flex-wrap items-center gap-2">

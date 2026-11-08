@@ -37,7 +37,9 @@ export function KurumBilgileri() {
     e.preventDefault();
     if (hata) return;
     guncelle((x) => {
-      x.kurum = temiz;
+      // Cayma bedeli Fiyat listesi sekmesinden yönetilir (Bölüm 05); bu formun eski kopyası onu ezmez
+      x.kurum = { ...temiz, caymaBedeli: x.kurum?.caymaBedeli };
+      if (!x.kurum.caymaBedeli) delete x.kurum.caymaBedeli;
       islemYaz(x, ad, "Kurum bilgileri", "Kurum bilgileri güncellendi");
     });
     toast("Kurum bilgileri kaydedildi.");

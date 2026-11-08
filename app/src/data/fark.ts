@@ -9,7 +9,7 @@ export const KOLEKSIYONLAR = [
   "personel", "kullanicilar", "girisler", "veliler", "ogrenciler", "kayitlar",
   "program", "tatiller", "iptaller", "yoklamalar", "izinler", "adaylar", "odevler",
   "musaitlikler", "randevular", "paketler", "olaylar", "gonderimler", "duyurular",
-  "taksitler", "tahsilatlar", "giderler", "virmanlar", "islemler", "iceAktarmalar", "kvkk", "avanslar",
+  "taksitler", "tahsilatlar", "giderler", "virmanlar", "iadeler", "islemler", "iceAktarmalar", "kvkk", "avanslar",
 ] as const;
 export type Koleksiyon = (typeof KOLEKSIYONLAR)[number];
 export const TEKILLER = ["kurum", "moduller", "fiyatListesi", "rolYetkileri", "ayarlar", "hakedisDurum", "otomasyon"] as const;

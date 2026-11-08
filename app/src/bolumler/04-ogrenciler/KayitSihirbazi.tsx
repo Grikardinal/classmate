@@ -118,7 +118,11 @@ export function KayitSihirbazi() {
   const tanimliFiyat = fiyatBul(tanimlar().fiyatListesi, AKTIF_SEZON, subeId, secGrup?.seviye);
   const liste = tanimliFiyat ?? 0;
   const seciliIndirimler = indirimTurleri.filter((i) => indirimler.includes(i.ad));
-  const { oran: indirimOran, net } = kayitUcreti(liste, seciliIndirimler, hizmetler);
+  // Karar 2026-11-08: sekreterin seçtiği indirim yönetici onayına gider; onaylanana kadar net ve plan indirimsiz
+  const indirimYetkisi = rol === "genel-yonetici" || rol === "sube-muduru";
+  const uygulananIndirimler = indirimYetkisi ? seciliIndirimler : [];
+  const onayBekleyen = !indirimYetkisi && seciliIndirimler.length > 0;
+  const { oran: indirimOran, net } = kayitUcreti(liste, uygulananIndirimler, hizmetler);
   const fiyatHata = moduller.finans && secGrup && tanimliFiyat === null ? `Bu sezon için ${sube(subeId)?.ad} ${secGrup.seviye}. sınıf fiyatı tanımlı değil (Ayarlar → Fiyat listesi).` : null;
   const planHata = odemePlaniEngeli(net, plan);
   const planOnizleme = planHata ? [] : taksitPlani(net, plan.pesinat, plan.taksit, plan.ilkVade);
@@ -229,8 +233,9 @@ export function KayitSihirbazi() {
         id: kayitId, ogrenciId: ogrId, sezonId: AKTIF_SEZON, subeId, grupId, sozlesmeNo: no, durum: "aktif", tarih: BUGUN,
         grupGecmisi: [{ grupId, tarih: BUGUN }], ekHizmetler: hizmetler, kvkkOnay: { tarih: BUGUN, surum: KVKK_SURUM },
         listeFiyati: moduller.finans ? liste : 0,
-        indirimler: moduller.finans ? seciliIndirimler : [],
+        indirimler: moduller.finans ? uygulananIndirimler : [],
         net: moduller.finans ? net : 0,
+        ...(moduller.finans && onayBekleyen ? { bekleyenIndirim: { indirimler: seciliIndirimler, isteyen: oturumAd, zaman: simdiZaman() } } : {}),
       });
       if (moduller.finans)
         for (const p of planOnizleme)
@@ -464,6 +469,12 @@ export function KayitSihirbazi() {
                   />
                 ))}
               </div>
+              {onayBekleyen && (
+                <Alert icon={<AlertTriangle />}>
+                  Seçilen indirim ({seciliIndirimler.map((i) => `${i.ad} %${i.oran}`).join(", ")}) yönetici onayına gönderilir. Onaylanana kadar net tutar ve
+                  ödeme planı indirimsiz hesaplanır; onayda ödenmemiş taksitler yeni nete göre yeniden dağıtılır.
+                </Alert>
+              )}
             </>
           )}
 

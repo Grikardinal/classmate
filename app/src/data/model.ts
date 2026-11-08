@@ -51,7 +51,9 @@ export const varsayilanModuller: Record<ModulKey, boolean> = {
   mesajlasma: false,
 };
 
-export type Kurum = { ad: string; eposta: string; vergiNo: string; makbuzBasligi: string; logo?: string };
+/** Kayıt iptalinde cayma bedeli (Bölüm 05, karar 2026-11-08): yüzde (net üzerinden) veya sabit tutar; yoksa 0 */
+export type CaymaBedeli = { tur: "yuzde" | "sabit"; deger: number };
+export type Kurum = { ad: string; eposta: string; vergiNo: string; makbuzBasligi: string; logo?: string; caymaBedeli?: CaymaBedeli };
 export type { Sube, Sezon, Ders, Derslik, DersSaati, Grup, FiyatSatiri } from "./mock";
 
 /* =========================== Tipler =========================== */
@@ -142,6 +144,28 @@ export type Kayit = {
   indirimler: { ad: string; oran: number }[];
   net: number;
   iceAktarmaId?: string;
+  /** Sekreterin seçtiği, yönetici onayı bekleyen indirim (karar 2026-11-08); onaylanana kadar net indirimsizdir */
+  bekleyenIndirim?: { indirimler: { ad: string; oran: number }[]; isteyen: string; zaman: string } | null;
+  /** Son indirim onayı / reddi (kim, ne zaman; sunucu yazar) */
+  indirimOnay?: { karar: "onaylandi" | "reddedildi"; indirimler: { ad: string; oran: number }[]; kullanici: string; zaman: string } | null;
+  /** Kayıt iptalindeki finans hesabı (karar 2026-11-08) */
+  iptalHesabi?: IptalHesabi | null;
+};
+
+/** İptal tarihine göre kullanılan tutar + cayma bedeli = hak edilen; ödenenle karşılaştırılıp iade veya kalan borç bulunur */
+export type IptalHesabi = {
+  tarih: string;
+  /** ödeme planının (ek kalemler hariç) toplamı */
+  toplam: number;
+  /** takvim günü oranıyla kullanılan tutar */
+  kullanilan: number;
+  cayma: number;
+  hak: number;
+  odenen: number;
+  iade: number;
+  kalanBorc: number;
+  /** yönetici kullanılan / cayma tutarını değiştirdiyse gerekçe (kullanıcı ve zaman sunucudan) */
+  duzeltme: { neden: string; kullanici: string; zaman: string } | null;
 };
 
 export type ProgramSatiri = {
@@ -297,8 +321,24 @@ export type Tahsilat = {
   iptal: { neden: string; kullanici: string; zaman: string } | null;
   kullanici: string;
 };
-export type Gider = { id: string; tarih: string; subeId: string | "merkez"; kategori: string; aciklama: string; tutar: number; kasa: "nakit" | "pos" | "banka" };
-export type Virman = { id: string; tarih: string; kaynak: string; hedef: string; tutar: number; aciklama: string };
+/** Yönetici iptali (gerekçe + kim + ne zaman); kasada iptal gününe ters kayıt düşer (karar 2026-11-08) */
+export type FinansIptal = { neden: string; kullanici: string; zaman: string };
+export type Gider = { id: string; tarih: string; subeId: string | "merkez"; kategori: string; aciklama: string; tutar: number; kasa: "nakit" | "pos" | "banka"; iptal?: FinansIptal | null };
+export type Virman = { id: string; tarih: string; kaynak: string; hedef: string; tutar: number; aciklama: string; iptal?: FinansIptal | null };
+/** Kayıt iptalinde fazla ödenenin iadesi: kasadan çıkış, makbuz no ŞUBEKODU-I-00001 (karar 2026-11-08) */
+export type Iade = {
+  id: string;
+  makbuzNo: string;
+  zaman: string;
+  kayitId: string;
+  ogrenciId: string;
+  veliId: string;
+  subeId: string;
+  yontem: "nakit" | "havale" | "pos";
+  tutar: number;
+  kullanici: string;
+  iptal: FinansIptal | null;
+};
 
 export type IslemKaydi = { id: string; zaman: string; kullanici: string; islem: string; detay: string; subeId: string | null };
 export type IceAktarma = { id: string; zaman: string; dosya: string; ogrenciIds: string[]; veliIds: string[]; kayitIds: string[]; personelIds?: string[]; atlanan: number; geriAlindi: boolean };
@@ -356,6 +396,7 @@ export type Db = {
   tahsilatlar: Tahsilat[];
   giderler: Gider[];
   virmanlar: Virman[];
+  iadeler: Iade[];
   islemler: IslemKaydi[];
   iceAktarmalar: IceAktarma[];
   kvkk: KvkkBasvuru[];
@@ -578,6 +619,7 @@ export function ornekVeriUret(): Db {
     tahsilatlar: [],
     giderler: [],
     virmanlar: [],
+    iadeler: [],
     islemler: [],
     iceAktarmalar: [],
     kvkk: [],

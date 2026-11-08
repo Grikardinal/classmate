@@ -216,8 +216,12 @@ describe("yeni sezona geçiş", () => {
     const indirimli = x.kayitlar.find((k) => k.sezonId === "z2" && k.grupId === "g2" && k.durum === "aktif")!; // 5-A → 6-A
     indirimli.indirimler = [{ ad: "Kardeş indirimi", oran: 10 }];
     indirimli.ekHizmetler = ["Kitap seti"];
+    indirimli.bekleyenIndirim = { indirimler: [{ ad: "Erken kayıt", oran: 5 }], isteyen: "Gül Koç", zaman: "2026-10-01T10:00" };
+    indirimli.indirimOnay = { karar: "reddedildi", indirimler: [], kullanici: "Elif Yılmaz", zaman: "2026-10-02T10:00" };
     const p = sezonGecisiPlani(x, "z2", "z3", true, sahteId);
     const yeni = p.kayitlar.find((k) => k.ogrenciId === indirimli.ogrenciId)!;
+    expect(yeni.bekleyenIndirim).toBeUndefined(); // indirim onayı yeni kayda geçmez (karar 2026-11-08)
+    expect(yeni.indirimOnay).toBeUndefined();
     expect(yeni).toMatchObject({ listeFiyati: 15000.5, net: 15000.5, indirimler: [], ekHizmetler: [] });
     const s2 = p.kayitlar.find((k) => k.subeId === "s2")!;
     expect(s2.listeFiyati).toBe(12000);

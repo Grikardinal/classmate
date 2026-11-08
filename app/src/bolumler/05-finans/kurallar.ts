@@ -5,8 +5,9 @@
  *
  * Tüm tutarlar TL, kuruş hassasiyetinde: karşılaştırmalar kuruş (tam sayı) üzerinden yapılır.
  */
-import type { Db, Gider, Kayit, Rol, Tahsilat, Taksit, Virman } from "../../data/model";
+import type { CaymaBedeli, Db, FinansIptal, Gider, Iade, IptalHesabi, Kayit, Rol, Tahsilat, Taksit, Virman } from "../../data/model";
 import { ekHizmetler as EK_HIZMETLER, indirimTurleri as INDIRIM_TURLERI } from "../../data/mock";
+import { gunFarki } from "../../lib/kurallar";
 import { fiyatBul, type Hata } from "../01-kurum-yapisi/kurallar";
 
 export type { Hata };
@@ -101,7 +102,8 @@ export function kayitUcretEngeli(
 ): Hata {
   const ucretDegisti = !eski || eski.listeFiyati !== k.listeFiyati || eski.net !== k.net || !ayni(eski.indirimler, k.indirimler);
   const hizmetDegisti = !eski || !ayni(eski.ekHizmetler, k.ekHizmetler);
-  if (!ucretDegisti && !hizmetDegisti) return null;
+  const bekleyenDegisti = !ayni(eski?.bekleyenIndirim?.indirimler ?? null, k.bekleyenIndirim?.indirimler ?? null);
+  if (!ucretDegisti && !hizmetDegisti && !bekleyenDegisti) return null;
   if (hizmetDegisti) {
     const h = ekHizmetlerEngeli(k.ekHizmetler);
     if (h) return h;
@@ -109,15 +111,28 @@ export function kayitUcretEngeli(
   const finans = d.moduller?.finans === true;
   if (!finans) {
     if (!eski && (k.listeFiyati !== 0 || k.net !== 0 || (Array.isArray(k.indirimler) && k.indirimler.length))) return "Finans modülü kapalıyken kayda ücret yazılamaz.";
-    if (eski && ucretDegisti) return "Finans modülü kapalıyken kaydın ücret bilgisi değiştirilemez.";
+    if (eski && (ucretDegisti || bekleyenDegisti)) return "Finans modülü kapalıyken kaydın ücret bilgisi değiştirilemez.";
+    if (!eski && k.bekleyenIndirim) return "Finans modülü kapalıyken indirim istenemez.";
     return null;
+  }
+  const yonetici = yoneticiMi(secenek.rol);
+  // İndirim onayı (karar 2026-11-08): sekreter tanımlı indirimi seçer, kayıtta "onay bekliyor" olarak durur;
+  // onaylanana kadar net ve plan indirimsizdir. Onay / ret yalnızca yönetici.
+  if (bekleyenDegisti) {
+    if (k.bekleyenIndirim) {
+      if (eski) return "İndirim onay talebi yalnızca kayıt sırasında oluşturulur.";
+      if (yonetici) return "Yönetici indirimi doğrudan uygular; onay talebi gerekmez.";
+      if (!Array.isArray(k.bekleyenIndirim.indirimler) || !k.bekleyenIndirim.indirimler.length) return "Onaya gönderilen indirim boş olamaz.";
+      const h = indirimlerEngeli(k.bekleyenIndirim.indirimler);
+      if (h) return h;
+    } else if (!yonetici) return "İndirim talebini yalnızca yönetici onaylar veya reddeder.";
   }
   if (!ucretDegisti && !hizmetDegisti) return null;
   if (!tutarGecerli(k.listeFiyati, { sifirOlur: true }) || !tutarGecerli(k.net, { sifirOlur: true }))
     return "Ücret tutarları negatif olmayan, kuruş hassasiyetinde sayı olmalı.";
   const ind = indirimlerEngeli(k.indirimler);
   if (ind) return ind;
-  const yonetici = yoneticiMi(secenek.rol);
+  if (!eski && !yonetici && k.indirimler.length) return "Sekreterin seçtiği indirim yönetici onayıyla uygulanır (onay bekliyor olarak kaydedin).";
   if (eski && ucretDegisti && !yonetici) return "Kaydın ücretini ve indirimini yalnızca yönetici değiştirebilir.";
   const ucretsiz = k.listeFiyati === 0 && k.net === 0 && k.indirimler.length === 0;
   if (ucretsiz) {
@@ -160,7 +175,7 @@ export function taksitYazmaEngeli(
   t: Taksit,
   eski: Taksit | undefined,
   d: Pick<Db, "kayitlar" | "ogrenciler">,
-  secenek: { finans: boolean; rol: Rol; odenenFarki: number },
+  secenek: { finans: boolean; rol: Rol; odenenFarki: number; beklenenTutar?: number },
 ): Hata {
   if (!t || typeof t !== "object") return "Taksit bilgisi geçersiz.";
   const kayit = d.kayitlar.find((k) => k.id === t.kayitId);
@@ -180,7 +195,11 @@ export function taksitYazmaEngeli(
   if (t.subeId !== eski.subeId && (!kayit || t.subeId !== kayit.subeId)) return "Taksit yalnızca kaydıyla birlikte başka şubeye devredilir.";
   if (typeof t.odenen !== "number" || kurusa(t.odenen) - kurusa(eski.odenen) !== secenek.odenenFarki)
     return "Ödenen tutar yalnızca tahsilat veya tahsilat iptaliyle değişir.";
-  if (t.tutar !== eski.tutar || t.vade !== eski.vade) {
+  if (secenek.beklenenTutar !== undefined) {
+    // Kayıt iptali / indirim onayı paketi: tutar hesaplanan değere eşit olmalı (iptalde 0'a kadar kapanabilir)
+    if (typeof t.tutar !== "number" || kurusa(t.tutar) !== kurusa(secenek.beklenenTutar)) return "Taksit tutarı iptal / indirim hesabıyla uyuşmuyor.";
+    if (t.vade !== eski.vade) return "Taksit vadesi bu işlemde değiştirilemez.";
+  } else if (t.tutar !== eski.tutar || t.vade !== eski.vade) {
     if (!secenek.finans) return "Finans modülü kapalıyken taksit değiştirilemez.";
     if (!yoneticiMi(secenek.rol)) return "Taksit tutarını ve vadesini yalnızca yönetici değiştirebilir.";
     if (!tutarGecerli(t.tutar)) return "Taksit tutarı sıfırdan büyük, kuruş hassasiyetinde olmalı.";
@@ -202,13 +221,175 @@ export function otomatikHatirlatmaUygun(t: Taksit, kayitlar: Pick<Kayit, "id" | 
   return !k || k.durum === "aktif" || k.durum === "mezun";
 }
 
+/* =========================== Plan yeniden dağıtımı (indirim onayı) =========================== */
+const planSirala = <T extends Pick<Taksit, "vade" | "no">>(l: T[]) => [...l].sort((a, b) => a.vade.localeCompare(b.vade) || a.no - b.no);
+/** Kaydın ödeme planı (ek kalemler hariç) */
+export const kayitPlani = <T extends Pick<Taksit, "kayitId" | "no">>(taksitler: T[], kayitId: string) => taksitler.filter((t) => t.kayitId === kayitId && t.no < EK_KALEM_NO);
+
+/**
+ * Net tutar değişince (indirim onayı) ödenmemiş kısım açık taksitlere eski kalanlarıyla orantılı yeniden dağıtılır;
+ * ödenen tutarlar ve kapanmış taksitler değişmez, toplam kuruşu kuruşuna yeni nete eşit olur (küsurat son açık taksitte).
+ * Ödenen toplamı yeni netten büyükse dağıtım yapılmaz (önce iade gerekir).
+ */
+export function planiYenidenDagit(plan: Taksit[], yeniNet: number): { tutarlar: Map<string, number>; hata: Hata } {
+  const p = planSirala(plan.filter((t) => t.no < EK_KALEM_NO));
+  const tutarlar = new Map(p.map((t) => [t.id, t.tutar]));
+  const odenenK = p.reduce((s, t) => s + kurusa(t.odenen), 0);
+  const R = kurusa(yeniNet) - odenenK;
+  if (R < 0) return { tutarlar, hata: "Ödenen tutar yeni net tutarı aşıyor; indirim uygulanamaz (önce fazla ödenen iade edilmeli)." };
+  const acik = p.filter((t) => kurusa(t.tutar) > kurusa(t.odenen));
+  if (!acik.length) return { tutarlar, hata: R > 0 ? "Açık taksit yok; fark için ek kalem gerekir." : null };
+  const K = acik.reduce((s, t) => s + kurusa(t.tutar) - kurusa(t.odenen), 0);
+  let dagitilan = 0;
+  acik.forEach((t, i) => {
+    const pay = i === acik.length - 1 ? R - dagitilan : Math.floor((R * (kurusa(t.tutar) - kurusa(t.odenen))) / K);
+    dagitilan += pay;
+    tutarlar.set(t.id, (kurusa(t.odenen) + pay) / 100);
+  });
+  return { tutarlar, hata: null };
+}
+
+/* =========================== Kayıt iptali: kullanılan, cayma, iade (karar 2026-11-08) =========================== */
+export function caymaBedeliEngeli(c: unknown): Hata {
+  if (c === undefined || c === null) return null;
+  const x = c as Partial<CaymaBedeli>;
+  if (typeof x !== "object" || (x.tur !== "yuzde" && x.tur !== "sabit")) return "Cayma bedeli türü yüzde veya sabit tutar olmalı.";
+  if (!tutarGecerli(x.deger, { sifirOlur: true })) return "Cayma bedeli negatif olmayan, kuruş hassasiyetinde sayı olmalı.";
+  if (x.tur === "yuzde" && (x.deger as number) > 100) return "Cayma bedeli yüzdesi 0–100 arasında olmalı.";
+  return null;
+}
+
+/** Cayma bedeli: yüzde ise plan toplamı üzerinden, sabitse tutar; plan toplamını aşmaz. Ayar yoksa 0. */
+export function caymaTutari(ayar: CaymaBedeli | undefined | null, toplam: number): number {
+  if (!ayar || caymaBedeliEngeli(ayar)) return 0;
+  const k = ayar.tur === "yuzde" ? Math.round((kurusa(toplam) * ayar.deger) / 100) : kurusa(ayar.deger);
+  return Math.min(k, kurusa(toplam)) / 100;
+}
+
+/**
+ * Kullanılan (hak edilmiş) tutar — takvim günü oranı: hizmet başlangıcı (kayıt tarihi, sezon başlangıcından önceyse sezon başlangıcı)
+ * ile sezon bitişi arasındaki günlerin, iptal gününe kadar (iptal günü dahil) geçen kısmı. Başlangıçtan önce iptal 0, bitişten sonra tamamı.
+ * Sezon bilinmiyorsa tamamı kullanılmış sayılır (iade çıkmaz; yönetici gerekçeyle düzeltebilir).
+ */
+export function kullanilanTutar(toplam: number, baslangic: string, bitis: string | undefined, tarih: string): number {
+  if (!bitis || !isoTarihMi(baslangic) || !isoTarihMi(bitis) || bitis < baslangic) return kurus(toplam);
+  const gunSayisi = gunFarki(baslangic, bitis) + 1;
+  const gecen = Math.max(0, Math.min(gunSayisi, gunFarki(baslangic, tarih) + 1));
+  return Math.round((kurusa(toplam) * gecen) / gunSayisi) / 100;
+}
+
+/** Hesabın başlangıç tarihi: kayıt tarihi ile sezon başlangıcından sonra olanı */
+export const hizmetBaslangici = (kayitTarihi: string, sezon: { baslangic: string } | undefined) =>
+  sezon && sezon.baslangic > kayitTarihi ? sezon.baslangic : kayitTarihi;
+
+/**
+ * İptal hesabı: toplam = ödeme planı (ek kalemler hariç); hak = min(toplam, kullanılan + cayma);
+ * ödenen > hak ise iade = ödenen − hak, değilse kalan borç = hak − ödenen. ozel: yöneticinin düzelttiği kullanılan / cayma.
+ */
+export function iptalHesabiHesapla(
+  plan: Pick<Taksit, "tutar" | "odenen" | "no">[],
+  kayit: Pick<Kayit, "tarih">,
+  sezon: { baslangic: string; bitis: string } | undefined,
+  ayar: CaymaBedeli | undefined | null,
+  tarih: string,
+  ozel?: { kullanilan?: number; cayma?: number },
+): IptalHesabi {
+  const p = plan.filter((t) => t.no < EK_KALEM_NO);
+  const toplamK = p.reduce((s, t) => s + kurusa(t.tutar), 0);
+  const odenenK = p.reduce((s, t) => s + kurusa(t.odenen), 0);
+  const sinirla = (n: number) => Math.max(0, Math.min(kurusa(n), toplamK));
+  const kullanilanK = sinirla(ozel?.kullanilan ?? kullanilanTutar(toplamK / 100, hizmetBaslangici(kayit.tarih, sezon), sezon?.bitis, tarih));
+  const caymaK = sinirla(ozel?.cayma ?? caymaTutari(ayar, toplamK / 100));
+  const hakK = Math.min(toplamK, kullanilanK + caymaK);
+  return {
+    tarih,
+    toplam: toplamK / 100,
+    kullanilan: kullanilanK / 100,
+    cayma: caymaK / 100,
+    hak: hakK / 100,
+    odenen: odenenK / 100,
+    iade: Math.max(0, odenenK - hakK) / 100,
+    kalanBorc: Math.max(0, hakK - odenenK) / 100,
+    duzeltme: null,
+  };
+}
+
+/**
+ * İptalde taksitlerin yeni tutarları: kalan borç (hak − ödenen) en eski vadeden başlayarak açık taksitlerde kalır,
+ * geri kalan taksitler kapatılır (tutar = ödenen, ödenmemişse 0). İade varsa tüm taksitler ödenen tutarda kapanır.
+ */
+export function iptalTaksitleri(plan: Taksit[], hak: number): Map<string, number> {
+  const p = planSirala(plan.filter((t) => t.no < EK_KALEM_NO));
+  let kalanK = Math.max(0, kurusa(hak) - p.reduce((s, t) => s + kurusa(t.odenen), 0));
+  const m = new Map<string, number>();
+  for (const t of p) {
+    const ek = Math.min(Math.max(0, kurusa(t.tutar) - kurusa(t.odenen)), kalanK);
+    kalanK -= ek;
+    m.set(t.id, (kurusa(t.odenen) + ek) / 100);
+  }
+  return m;
+}
+
+const HESAP_ALANLARI = ["toplam", "kullanilan", "cayma", "hak", "odenen", "iade", "kalanBorc"] as const;
+
+/**
+ * İptal hesabının denetimi: tarih bugündür, tutarlar plandan yeniden hesaplanır (yalnızca kullanılan / cayma yöneticice değişebilir).
+ * Varsayılandan farklı kullanılan / cayma: yönetici + en az 3 karakter gerekçe. İade çıkan iptal yalnızca yönetici (iade yetkisi).
+ */
+export function iptalHesabiEngeli(
+  h: unknown,
+  plan: Taksit[],
+  kayit: Pick<Kayit, "tarih">,
+  sezon: { baslangic: string; bitis: string } | undefined,
+  ayar: CaymaBedeli | undefined | null,
+  secenek: { bugun: string; rol: Rol },
+): Hata {
+  const x = h as Partial<IptalHesabi>;
+  if (!x || typeof x !== "object") return "İptal hesabı geçersiz.";
+  if (x.tarih !== secenek.bugun) return "İptal hesabı bugünün tarihiyle yapılmalı.";
+  if (HESAP_ALANLARI.some((a) => !tutarGecerli(x[a], { sifirOlur: true }))) return "İptal hesabındaki tutarlar negatif olmayan, kuruş hassasiyetinde olmalı.";
+  const varsayilan = iptalHesabiHesapla(plan, kayit, sezon, ayar, secenek.bugun);
+  if (kurusa(x.kullanilan!) > kurusa(varsayilan.toplam) || kurusa(x.cayma!) > kurusa(varsayilan.toplam)) return "Kullanılan tutar ve cayma bedeli plan toplamını aşamaz.";
+  const beklenen = iptalHesabiHesapla(plan, kayit, sezon, ayar, secenek.bugun, { kullanilan: x.kullanilan, cayma: x.cayma });
+  if (HESAP_ALANLARI.some((a) => kurusa(x[a]!) !== kurusa(beklenen[a]))) return "İptal hesabı ödeme planıyla uyuşmuyor; hesap yeniden yapılmalı.";
+  const duzeltildi = kurusa(x.kullanilan!) !== kurusa(varsayilan.kullanilan) || kurusa(x.cayma!) !== kurusa(varsayilan.cayma);
+  const yonetici = yoneticiMi(secenek.rol);
+  if (duzeltildi) {
+    if (!yonetici) return "Kullanılan tutarı ve cayma bedelini yalnızca yönetici düzeltebilir.";
+    if (typeof x.duzeltme?.neden !== "string" || x.duzeltme.neden.trim().length < 3) return "Düzeltme gerekçesi en az 3 karakter olmalı.";
+  }
+  if (beklenen.iade > 0 && !yonetici) return "İade çıkan iptali yalnızca yönetici (genel yönetici, şube müdürü) yapabilir.";
+  return null;
+}
+
+/** İade: yalnızca kayıt iptali paketinde, iptal hesabındaki tutarda, yönetici tarafından; kasadan çıkış */
+export function iadeEngeli(
+  i: Iade,
+  d: Pick<Db, "kayitlar" | "ogrenciler">,
+  secenek: { finans: boolean; rol: Rol; beklenenTutar: number | undefined },
+): Hata {
+  if (!secenek.finans) return "Finans modülü kapalı; iade yapılamaz.";
+  if (!i || typeof i !== "object") return "İade bilgisi geçersiz.";
+  if (secenek.beklenenTutar === undefined) return "İade yalnızca kayıt iptaliyle birlikte, iptal hesabına göre oluşturulur.";
+  if (!yoneticiMi(secenek.rol)) return "İadeyi yalnızca genel yönetici veya şube müdürü yapabilir.";
+  if (i.iptal) return "Yeni iade iptal edilmiş olarak girilemez.";
+  if (!(YONTEMLER as readonly string[]).includes(i.yontem)) return "İade yöntemi geçersiz.";
+  if (!tutarGecerli(i.tutar)) return "İade tutarı sıfırdan büyük, kuruş hassasiyetinde olmalı.";
+  if (kurusa(i.tutar) !== kurusa(secenek.beklenenTutar)) return "İade tutarı iptal hesabındaki iade tutarıyla aynı olmalı (ödeneni aşamaz).";
+  const k = d.kayitlar.find((x) => x.id === i.kayitId);
+  if (!k || k.ogrenciId !== i.ogrenciId || k.subeId !== i.subeId) return "İade kaydın öğrencisi ve şubesiyle uyumlu olmalı.";
+  if (!d.ogrenciler.find((o) => o.id === i.ogrenciId)?.veliIds.includes(i.veliId)) return "İade öğrencinin velisine yapılır.";
+  if (typeof i.makbuzNo !== "string" || !i.makbuzNo.trim()) return "İade makbuz numarası eksik.";
+  return null;
+}
+
 /* =========================== Tahsilat =========================== */
 export const YONTEMLER = ["nakit", "havale", "pos"] as const;
 export const yontemAdlari: Record<Tahsilat["yontem"], string> = { nakit: "Nakit", havale: "Havale/EFT", pos: "Kredi kartı (POS)" };
 
-/** Şubenin sıradaki makbuz numarası: KOD-M-00001 (sayaç şube kodu başına, var olan en büyük numaradan devam) */
-export function yeniMakbuzNo(kod: string, nolar: string[]): string {
-  const onek = `${kod}-M-`;
+/** Şubenin sıradaki makbuz numarası: tahsilat KOD-M-00001, iade KOD-I-00001 (sayaç şube kodu başına, var olan en büyük numaradan devam) */
+export function yeniMakbuzNo(kod: string, nolar: string[], tip: "M" | "I" = "M"): string {
+  const onek = `${kod}-${tip}-`;
   const enBuyuk = nolar.filter((n) => typeof n === "string" && n.startsWith(onek)).reduce((m, n) => Math.max(m, Number(n.slice(onek.length)) || 0), 0);
   return `${onek}${String(enBuyuk + 1).padStart(5, "0")}`;
 }
@@ -246,15 +427,21 @@ export function tahsilatEngeli(
   return null;
 }
 
-/** Tahsilat silinmez ve değiştirilmez; yalnızca yönetici gerekçeyle iptal eder (iptal geri alınamaz). */
-export function tahsilatIptalEngeli(eski: Tahsilat, yeni: Tahsilat, rol: Rol): Hata {
-  if (eski.iptal) return "İptal edilmiş tahsilat değiştirilemez.";
+/**
+ * Finans kaydının iptali (tahsilat, iade, gider, virman — aynı desen): kayıt silinmez ve değiştirilmez; yalnızca yönetici
+ * (genel yönetici, şube müdürü) en az 3 karakter gerekçeyle iptal eder; iptal geri alınamaz. Kasada iptal gününe ters kayıt düşer.
+ */
+export function finansIptalEngeli<T extends { iptal?: FinansIptal | null }>(eski: T, yeni: T, rol: Rol, ad: string): Hata {
+  if (eski.iptal) return `İptal edilmiş ${ad.toLocaleLowerCase("tr-TR")} kaydı değiştirilemez.`;
   const sadeceIptal = !!yeni.iptal && ayni({ ...eski, iptal: null }, { ...yeni, iptal: null });
-  if (!sadeceIptal) return "Tahsilat değiştirilemez; yalnızca yönetici iptal edebilir.";
-  if (!yoneticiMi(rol)) return "Tahsilatı yalnızca genel yönetici veya şube müdürü iptal edebilir.";
+  if (!sadeceIptal) return `${ad} değiştirilemez; yalnızca yönetici iptal edebilir.`;
+  if (!yoneticiMi(rol)) return `${ad} kaydını yalnızca genel yönetici veya şube müdürü iptal edebilir.`;
   if (typeof yeni.iptal?.neden !== "string" || yeni.iptal.neden.trim().length < 3) return "İptal gerekçesi en az 3 karakter olmalı.";
   return null;
 }
+
+/** Tahsilat silinmez ve değiştirilmez; yalnızca yönetici gerekçeyle iptal eder (iptal geri alınamaz). */
+export const tahsilatIptalEngeli = (eski: Tahsilat, yeni: Tahsilat, rol: Rol): Hata => finansIptalEngeli(eski, yeni, rol, "Tahsilat");
 
 /** Yeni tahsilatların ve iptal edilen tahsilatların taksitlere etkisi (kuruş): taksitId → ödenen farkı */
 export function odemeFarklari(yeniler: Pick<Tahsilat, "dagilim">[], iptalEdilenler: Pick<Tahsilat, "dagilim">[]): Map<string, number> {
@@ -289,28 +476,45 @@ export type KasaHareketi = {
   /** ISO tarih veya tarih-saat */
   tarih: string;
   kasa: string;
-  tur: "tahsilat" | "tahsilatIptali" | "gider" | "virmanCikis" | "virmanGiris";
-  /** tahsilat / gider / virman kimliği */
+  tur:
+    | "tahsilat" | "tahsilatIptali" | "iade" | "iadeIptali" | "gider" | "giderIptali"
+    | "virmanCikis" | "virmanGiris" | "virmanIptalCikis" | "virmanIptalGiris";
+  /** tahsilat / iade / gider / virman kimliği */
   ref: string;
   giris: number;
   cikis: number;
 };
 
 /**
- * Kasa hareketleri. Geçmiş değiştirilmez: iptal edilen tahsilatın girişi kendi tarihinde kalır, iptal tarihinde
- * aynı tutarda ters (çıkış) hareket yazılır. Böylece geçmiş günlerin gün sonu bakiyesi iptalle değişmez.
+ * Kasa hareketleri. Geçmiş değiştirilmez: iptal edilen tahsilat / iade / gider / virmanın hareketi kendi tarihinde kalır,
+ * iptal tarihinde aynı tutarda ters hareket yazılır. Böylece geçmiş günlerin gün sonu bakiyesi iptalle değişmez.
+ * Eski veride iade koleksiyonu ve iptal alanı yoksa yok sayılır.
  */
-export function kasaHareketleri(d: Pick<Db, "tahsilatlar" | "giderler" | "virmanlar">): KasaHareketi[] {
+export function kasaHareketleri(d: Pick<Db, "tahsilatlar" | "giderler" | "virmanlar"> & { iadeler?: Iade[] }): KasaHareketi[] {
   const h: KasaHareketi[] = [];
   for (const t of d.tahsilatlar) {
     const kasa = kasaKimligi(t.subeId, yontemKasa(t.yontem));
     h.push({ id: t.id, tarih: t.zaman, kasa, tur: "tahsilat", ref: t.id, giris: t.tutar, cikis: 0 });
     if (t.iptal) h.push({ id: t.id + "-iptal", tarih: t.iptal.zaman || t.zaman, kasa, tur: "tahsilatIptali", ref: t.id, giris: 0, cikis: t.tutar });
   }
-  for (const g of d.giderler) h.push({ id: g.id, tarih: g.tarih, kasa: kasaKimligi(g.subeId, g.kasa), tur: "gider", ref: g.id, giris: 0, cikis: g.tutar });
+  for (const i of d.iadeler ?? []) {
+    const kasa = kasaKimligi(i.subeId, yontemKasa(i.yontem));
+    h.push({ id: i.id, tarih: i.zaman, kasa, tur: "iade", ref: i.id, giris: 0, cikis: i.tutar });
+    if (i.iptal) h.push({ id: i.id + "-iptal", tarih: i.iptal.zaman || i.zaman, kasa, tur: "iadeIptali", ref: i.id, giris: i.tutar, cikis: 0 });
+  }
+  for (const g of d.giderler) {
+    const kasa = kasaKimligi(g.subeId, g.kasa);
+    h.push({ id: g.id, tarih: g.tarih, kasa, tur: "gider", ref: g.id, giris: 0, cikis: g.tutar });
+    if (g.iptal) h.push({ id: g.id + "-iptal", tarih: g.iptal.zaman || g.tarih, kasa, tur: "giderIptali", ref: g.id, giris: g.tutar, cikis: 0 });
+  }
   for (const v of d.virmanlar) {
     h.push({ id: v.id + "c", tarih: v.tarih, kasa: v.kaynak, tur: "virmanCikis", ref: v.id, giris: 0, cikis: v.tutar });
     h.push({ id: v.id + "g", tarih: v.tarih, kasa: v.hedef, tur: "virmanGiris", ref: v.id, giris: v.tutar, cikis: 0 });
+    if (v.iptal) {
+      const z = v.iptal.zaman || v.tarih;
+      h.push({ id: v.id + "c-iptal", tarih: z, kasa: v.kaynak, tur: "virmanIptalGiris", ref: v.id, giris: v.tutar, cikis: 0 });
+      h.push({ id: v.id + "g-iptal", tarih: z, kasa: v.hedef, tur: "virmanIptalCikis", ref: v.id, giris: 0, cikis: v.tutar });
+    }
   }
   return h.sort((a, b) => b.tarih.localeCompare(a.tarih) || a.id.localeCompare(b.id));
 }
@@ -340,12 +544,19 @@ export const GIDER_KATEGORILERI = ["Kira", "Fatura", "Maaş", "Kırtasiye", "Yaz
 
 /**
  * Gider: finans açık; tutar; tarih bugünden sonra olamaz; kasa türü; kategori ve açıklama dolu;
- * Genel Merkez (ortak) gideri yalnızca genel yönetici. Girilen gider değiştirilemez / silinemez.
+ * Genel Merkez (ortak) gideri yalnızca genel yönetici. Girilen gider değiştirilemez / silinemez; yalnızca yönetici
+ * gerekçeyle iptal eder (karar 2026-11-08, finansIptalEngeli).
  */
-export function giderEngeli(g: Gider, eski: Gider | undefined, d: Pick<Db, "subeler">, secenek: { finans: boolean; genel: boolean; bugun: string }): Hata {
-  if (eski) return "Gider kaydı değiştirilemez.";
-  if (!secenek.finans) return "Finans modülü kapalıyken gider girilemez.";
+export function giderEngeli(
+  g: Gider,
+  eski: Gider | undefined,
+  d: Pick<Db, "subeler">,
+  secenek: { finans: boolean; genel: boolean; bugun: string; rol?: Rol },
+): Hata {
+  if (!secenek.finans) return "Finans modülü kapalıyken gider girilemez veya iptal edilemez.";
+  if (eski) return finansIptalEngeli(eski, g, secenek.rol ?? "sekreter", "Gider");
   if (!g || typeof g !== "object") return "Gider bilgisi geçersiz.";
+  if (g.iptal) return "Yeni gider iptal edilmiş olarak girilemez.";
   if (!tutarGecerli(g.tutar)) return "Gider tutarı sıfırdan büyük, kuruş hassasiyetinde olmalı.";
   if (!isoTarihMi(g.tarih)) return "Gider tarihi geçersiz.";
   if (g.tarih > secenek.bugun) return "Gider tarihi bugünden sonra olamaz.";
@@ -365,11 +576,12 @@ export function virmanEngeli(
   v: Virman,
   eski: Virman | undefined,
   d: Pick<Db, "subeler">,
-  secenek: { finans: boolean; genel: boolean; bugun: string; bakiye: (kasa: string) => number },
+  secenek: { finans: boolean; genel: boolean; bugun: string; bakiye: (kasa: string) => number; rol?: Rol },
 ): Hata {
-  if (eski) return "Virman kaydı değiştirilemez.";
-  if (!secenek.finans) return "Finans modülü kapalıyken virman yapılamaz.";
+  if (!secenek.finans) return "Finans modülü kapalıyken virman yapılamaz veya iptal edilemez.";
+  if (eski) return finansIptalEngeli(eski, v, secenek.rol ?? "sekreter", "Virman");
   if (!v || typeof v !== "object") return "Virman bilgisi geçersiz.";
+  if (v.iptal) return "Yeni virman iptal edilmiş olarak girilemez.";
   if (!kasaGecerli(v.kaynak, d.subeler) || !kasaGecerli(v.hedef, d.subeler)) return "Kaynak veya hedef kasa geçersiz.";
   if (v.kaynak === v.hedef) return "Kaynak ve hedef kasa aynı olamaz.";
   if (!tutarGecerli(v.tutar)) return "Virman tutarı sıfırdan büyük, kuruş hassasiyetinde olmalı.";

@@ -15,7 +15,8 @@ için **Ayarlar → Modüller** ekranından açılır. Kapalıyken finans ekranl
 | `Ozet.tsx` | Bu ay beklenen / tahsil edilen, vadesi geçen, aktif sezonun aylık grafiği, şube karşılaştırma, bu hafta vadesi gelenler |
 | `HizliTahsilat.tsx` | Veli/öğrenci arama, kardeşlerin açık taksitleri, tahsilat + makbuz, tahsilat geçmişi, tahsilat iptali |
 | `Gecikenler.tsx` | Vadesi geçenler (veli bazında), tekil ve toplu hatırlatma |
-| `Kasa.tsx` | Kasa bakiyeleri, hareketler, gün sonu raporu, gider girişi, virman |
+| `Kasa.tsx` | Kasa bakiyeleri, hareketler, gün sonu raporu, gider girişi, virman; gider / virman / iade iptali |
+| `IndirimOnaylari.tsx` | Yönetici onayı bekleyen indirimler (Özet sekmesinde) |
 | `kurallar.ts` | **Saf iş kuralları** (ekran + sunucu ortak, yalnızca göreli içe aktarma) |
 | `kurallar.test.ts`, `sunucu.test.ts` | Testler |
 
@@ -45,6 +46,32 @@ Bölüm 01 (`kurallar.ts`, `FiyatListesi.tsx`, `Sezonlar.tsx`, `Subeler.tsx`), B
   aynı durumda hata fırlatır. Gerekçe: fiyatsız kayıt açmak sonradan fark edilmeyen ücretsiz kayıtlar doğurur; geçiş tek seferliktir
   (hedefte grup oluşunca tekrarlanamaz), bu yüzden eksik fiyatla kısmi geçiş yerine önce fiyatın girilmesi istenir.
   Öğrenci taşınmıyorsa veya finans kapalıysa fiyat aranmaz. Ödeme planı geçişte oluşturulmaz (yeni sezonda yeniden alınır).
+
+## Kullanıcı kararları (2026-11-08)
+### İade ve cayma bedeli (kayıt iptali)
+Finans açıksa ve kaydın ödeme planı varsa Bölüm 04 iptal ekranı **iptal hesabını** önizler; kayıt `iptalHesabi` alanında saklar.
+- **Plan toplamı:** ödeme planı taksitleri (ek kalemler, no ≥ 99, hesaba girmez, borç olarak kalır).
+- **Kullanılan (hak edilmiş) tutar — seçilen yöntem takvim günü oranı** (`kullanilanTutar`): hizmet başlangıcı (kayıt tarihi, sezon başlangıcından önceyse sezon başlangıcı)
+  ile sezon bitişi arasındaki günlerin iptal gününe kadar (dahil) geçen oranı × plan toplamı. Gerekçe: tek ve açık formül, ders programı veya
+  yoklama verisine bağlı değil, veliye anlatılabilir. Sezon bilinmiyorsa tamamı kullanılmış sayılır (yönetici düzeltebilir).
+- **Cayma bedeli:** `kurum.caymaBedeli` (yüzde veya sabit; yoksa 0). Ayar: Bölüm 01 → Fiyat listesi sekmesinin altı. Yüzde plan toplamı üzerindendir; bedel plan toplamını aşmaz.
+- **Hak = min(plan toplamı, kullanılan + cayma).** Ödenen hak'tan fazlaysa **iade = ödenen − hak** (iade ödeneni aşamaz); taksitler ödenen tutarda kapanır.
+  Eksikse **kalan borç = hak − ödenen**, en eski vadeli açık taksitlerde kalır; geri kalan taksitler kapatılır (tutar = ödenen, ödenmemişse 0).
+- **İade kaydı** (`iadeler`): kasadan çıkış (yönteme göre kasa), makbuz no `ŞUBEKODU-I-00001`, yapan ve zaman sunucudan.
+  Yalnızca iptal paketinde, hesaptaki tutarda oluşur; silinemez, değiştirilemez. **İade iptali** tahsilat iptaliyle aynı desen: yönetici, gerekçe, iptal gününe ters kayıt (Kasa sekmesi).
+- **Yetki:** kullanılan / cayma düzeltmesi yalnızca yönetici ve en az 3 karakter gerekçeyle. **İade çıkan iptali yalnızca yönetici yapar** (doküman: iade yetkisi yöneticide);
+  iade çıkmayan iptali sekreter de yapabilir (hesaplanan tutarlarla).
+- **Uyum:** finans kapalıysa veya kullanıcı finans göremiyorsa hesap yazılmaz, Bölüm 04 iptali eskisi gibi çalışır (aday yeniden açılması dahil). `iptalHesabi` gönderilmeyen iptal
+  (ör. KVKK anonimleştirmesi) önceki davranışı korur: borç kalır, otomatik hatırlatma gitmez.
+
+### Sekreterin indirimi yönetici onayıyla
+- Sekreter sihirbazda tanımlı indirimi seçer; kayıtta `bekleyenIndirim` olarak durur, **net ve plan indirimsiz** hesaplanır. Doğrudan uygulayamaz.
+- Yönetici (şube müdürü, genel yönetici) doğrudan uygular. Bekleyenler **Finans → Özet** ekranında listelenir (kayıt kartında da görünür).
+- **Onay:** indirim uygulanır, net yeniden hesaplanır, ödenmemiş kısım açık taksitlere eski kalanlarıyla orantılı dağıtılır (`planiYenidenDagit`, toplam = yeni net).
+  Ödenen yeni neti aşıyorsa onay verilemez. **Ret:** talep kalkar. Onay kaydı (`indirimOnay`: karar, kim, ne zaman) sunucudan yazılır; sekreter onaylayamaz.
+
+### Gider ve virman iptali
+Yönetici en az 3 karakter gerekçeyle iptal eder (Kasa sekmesi); iptal geri alınamaz; iptal gününe ters kayıt düşer, geçmiş günlerin bakiyesi değişmez. Gider ve virman yine silinemez.
 
 ## İş kuralları
 Tümü `kurallar.ts`'te; sunucu `server/politika.ts · finansDenetle` (yazmaDenetle sonunda) aynı fonksiyonlarla uygular.
@@ -90,14 +117,15 @@ Tümü `kurallar.ts`'te; sunucu `server/politika.ts · finansDenetle` (yazmaDene
 - **Başka şubenin kasası:** kullanıcı yalnızca kapsamındaki şubelerin kasalarını görür ve kullanır; Genel Merkez yalnızca genel yönetici (`kasaErisimi`).
   Başka şubede ödeme alınsa da para öğrencinin şubesinin kasasına yazılır (doküman kuralı); alındığı şube makbuzda ve kayıtta görünür.
 - **Gider:** tutar, tarih (bugünden sonra olamaz), kasa türü, kategori ve açıklama; Genel Merkez (ortak) gider yalnızca genel yönetici.
-  Girilen gider değiştirilemez / silinemez. Kasayı eksiye düşürecek gider uyarılır (engellenmez).
+  Girilen gider değiştirilemez / silinemez, yalnızca yönetici gerekçeyle iptal eder. Kasayı eksiye düşürecek gider uyarılır (engellenmez).
 - **Virman:** iki geçerli ve farklı kasa, tutar, tarih; **kaynak kasada yeterli bakiye** olmalı; Genel Merkez kasasından yalnızca genel yönetici.
-  Şube kasasından Genel Merkez'e aktarım (şube kapsamındaki kullanıcı) sunucuda serbesttir. Girilen virman değiştirilemez.
+  Şube kasasından Genel Merkez'e aktarım (şube kapsamındaki kullanıcı) sunucuda serbesttir. Girilen virman değiştirilemez, yalnızca yönetici gerekçeyle iptal eder.
 
 ### Dondurulan, iptal edilen ve nakledilen kaydın taksitleri
 - **Nakil:** kalan (ödenmemiş) taksitler yeni şubeye devredilir, ödenmiş tutarlar eski şubenin kasasında kalır. Bölüm 04'ün sunucu devri
   korunmuştur ve artık **her nakilde** (kapsam içi de) sunucuda tamamlanır: finans kapalıyken veya finans yetkisi yokken ekran taksitleri görmez.
-- **İptal / dondurma:** kalan borç **silinmez**; cari hesapta görünür ve tahsil edilebilir ("kayıt iptal" / "donduruldu" etiketi).
+- **İptal / dondurma:** dondurmada taksitler aynen sürer. İptalde finans açıksa iptal hesabı uygulanır (karar 2026-11-08, yukarıda); kalan borç
+  **silinmez**, cari hesapta görünür ve tahsil edilebilir ("kayıt iptal" / "donduruldu" etiketi).
   Bu kayıtların taksitlerine **otomatik hatırlatma ve toplu ("Hepsine hatırlat") hatırlatma gitmez** (`otomatikHatirlatmaUygun`);
   tekil hatırlatma elle gönderilebilir. Aktif ve mezun kaydın taksitleri hatırlatılır.
 
@@ -132,11 +160,11 @@ Tümü `kurallar.ts`'te; sunucu `server/politika.ts · finansDenetle` (yazmaDene
 
 ## Testler
 `npx vitest run src/bolumler/05-finans`:
-- `kurallar.test.ts` — 25 test: örnek verinin kurallara uyması, tutar / kuruş ve Türkçe tutar çözümü, kayıt ücreti (indirim, ek hizmet,
+- `kurallar.test.ts` — 37 test (12'si 2026-11-08 kararları: iptal hesabı, cayma, iade, indirim onayı, plan dağıtımı, gider / virman iptali): örnek verinin kurallara uyması, tutar / kuruş ve Türkçe tutar çözümü, kayıt ücreti (indirim, ek hizmet,
   %100 sınırı), indirim / ek hizmet doğrulaması, yeni ve var olan kaydın ücret kuralları, plan toplamı, taksit kuralları (yeni, ödenen farkı,
   fazla tahsilat, yönetici düzenlemesi), hatırlatma uygunluğu, tahsilat ve iptal kuralları, ödeme farkları, makbuz no, kasa hareketleri
   (ters kayıt, öğrencinin şubesinin kasası), gün sonu, kasa erişimi, gider ve virman kuralları, sezon ayları.
-- `sunucu.test.ts` — 29 test: modül kapalıyken yazma / okuma / maske / nakil devri; okuma kapsamı ve yetkisiz roller; tahsilat
+- `sunucu.test.ts` — 44 test (15'i 2026-11-08 kararları): modül kapalıyken yazma / okuma / maske / nakil devri; okuma kapsamı ve yetkisiz roller; tahsilat
   (kabul, makbuz çakışması, tutar, fazla tahsilat, tahsilatsız ödenen, yanlış veli / kasa / şube, öğretmen); iptal (yetki, gerekçe, geri
   alınamazlık, silinemezlik); kayıt ücreti ve plan (sihirbaz paketi, fiyat listesi, tanımsız fiyat, plan toplamı, indirim, ücretsiz kayıt,
   yönetici düzenlemesi, Bölüm 01 sezon geçişi paketi); taksit; gider ve virman.
@@ -148,19 +176,23 @@ Tümü `kurallar.ts`'te; sunucu `server/politika.ts · finansDenetle` (yazmaDene
 - Bölüm 04 testleri değişmedi.
 
 ## Bilinen sınırlar / açık sorular
-- **İptal edilen kaydın kalan borcu:** silinmiyor, otomatik hatırlatma durduruluyor. Kalan taksitlerin kapatılması / iadesi ("iade" kaydı,
-  kısmi iade, cayma bedeli) için kullanıcı kararı gerekli; şu an iade yalnızca tahsilat iptaliyle yapılabiliyor.
-- **Dondurulan kayıt:** taksitler aynen sürüyor (vadeler kaymıyor), yalnızca otomatik hatırlatma duruyor. Dondurmada vadelerin ertelenmesi istenir mi?
+- ~~İptal edilen kaydın kalan borcu~~ **Kapandı (2026-11-08):** iade ve cayma bedeli yapısı kuruldu (yukarıda).
+- ~~Dondurulan kayıt~~ **Kapandı (2026-11-08):** taksitler aynen sürer (vadeler kaymaz), yalnızca otomatik hatırlatma durur; değişiklik gerekmedi.
 - **Taksit elle düzenleme** (doküman: "tutar, tarih; değişiklik kaydı tutulur"): sunucu yöneticiye izin veriyor ama **ekranı yok**;
   değişiklik kaydı (eski/yeni değer) modeli de yok.
-- **İndirim yetkisi:** doküman "indirim yalnızca yöneticide" diyor; sekreter sihirbazda **tanımlı** indirim türlerini (kardeş, erken kayıt,
-  personel yakını) uygulayabiliyor, var olan kaydın indirimini değiştiremiyor. Tanımlı indirimleri de yalnızca yönetici mi uygulamalı?
-  **Burs** türü yok (indirim türleri ve ek hizmet fiyatları `src/data/mock.ts` içinde sabit; ayarlanabilir değil).
+- ~~İndirim yetkisi~~ **Kapandı (2026-11-08):** sekreterin indirimi yönetici onayıyla geçerli olur (yukarıda).
+- **Burs** türü yok (indirim türleri ve ek hizmet fiyatları `src/data/mock.ts` içinde sabit; ayarlanabilir değil).
+- **İndirim talebi** yalnızca kayıt sırasında oluşturulur; var olan kayda sekreter talep açamaz (yönetici doğrudan değiştirir).
+- **İptal hesabından sonra tahsilat iptali (karar gerekli):** kayıt iptal hesabı yapıldıktan sonra o kaydın bir tahsilatı iptal edilirse ödenen düşer, kapanmış taksit yeniden
+  açık görünür; hesap ve varsa iade kendiliğinden güncellenmez. Engellensin mi, yoksa hesap mı düzeltilsin?
+- **İade iptali** yalnızca kasaya ters kayıt düşer; kaydın iptal hesabı ve kapanmış taksitler değişmez, kayıt iptali geri alınamaz.
+- **Virman iptalinde bakiye denetimi yok:** hedef kasa o sırada yetersizse ters kayıt onu eksiye düşürebilir.
+- **İptal sonrası iade makbuzu** yazdırma ekranı yok; numara kasa hareketlerinde ve cari geçmişte görünür.
 - **Fazla ödeme:** toplam borçtan fazlası alınmıyor (avans / alacak bakiyesi modeli yok). Doküman "fazla ödeme sonraki taksite aktarılır"
   diyor; bu, açık taksitler içinde yapılıyor.
 - **Kasa açılış / kapanış:** gün sonu raporu hesaplanan açılış / kapanışı veriyor; fiili sayım, kasa farkı ve "gün kapatma" (kapanmış güne
   hareket girilememesi) yok. Gider tarihi geçmişe girilebildiği için geçmiş günün bakiyesi gider girişiyle değişebilir.
-- **Gider / virman düzeltme:** girilen kayıt değiştirilemiyor; hatalı gider için iptal / ters kayıt akışı yok (karar gerekli).
+- ~~Gider / virman düzeltme~~ **Kapandı (2026-11-08):** yönetici gerekçeyle iptal eder, iptal gününe ters kayıt düşer.
 - **Kasayı eksiye düşüren gider** yalnızca uyarılıyor; engellensin mi?
 - **Şube kullanıcısının Genel Merkez'e virmanı:** sunucu izin veriyor, ekran Genel Merkez kasasını yalnızca genel yöneticiye listeliyor.
 - **Makbuz** sunucu yeniden numaralarsa (eşzamanlı çakışma) yazdırılan makbuzdaki numara ekrandaki eski numara olabilir; yeniden yazdırma doğru numarayı verir.

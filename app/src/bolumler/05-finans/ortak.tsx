@@ -1,9 +1,26 @@
-import { Badge, Table, Td, Th } from "@/components/ui";
+import * as React from "react";
+import { Badge, Button, Dialog, Field, Table, Td, Textarea, Th } from "@/components/ui";
 import { sube, taksitAdi, tamAd, useDb, type Taksit } from "@/data/store";
 import { tl } from "@/lib/kurallar";
 import { MERKEZ, kalan, kasaTurAdlari, type KasaTuru } from "./kurallar";
 
 export type Sekme = "ozet" | "tahsilat" | "geciken" | "kasa";
+
+/** Finans kaydı iptali (tahsilat, iade, gider, virman): gerekçe zorunlu, geri alınamaz, kasaya ters kayıt düşer */
+export function IptalDialog({ baslik, aciklama, onIptal, onClose }: { baslik: string; aciklama: string; onIptal: (neden: string) => void; onClose: () => void }) {
+  const [neden, setNeden] = React.useState("");
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={baslik}
+      description={`${aciklama} Kayıt silinmez, iptal olarak işaretlenir; kasada bugünün tarihiyle ters kayıt görünür. İptal geri alınamaz.`}
+      footer={<><Button variant="outline" onClick={onClose}>Vazgeç</Button><Button variant="destructive" onClick={() => { onIptal(neden.trim()); onClose(); }} disabled={neden.trim().length < 3}>İptal et</Button></>}
+    >
+      <Field label="Gerekçe (en az 3 karakter)"><Textarea value={neden} onChange={(e) => setNeden(e.target.value)} /></Field>
+    </Dialog>
+  );
+}
 
 export const tarihTR = (iso: string) =>
   new Date(iso.slice(0, 10) + "T00:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" });

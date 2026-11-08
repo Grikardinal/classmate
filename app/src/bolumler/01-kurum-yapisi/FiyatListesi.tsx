@@ -2,8 +2,9 @@ import * as React from "react";
 import { Check } from "lucide-react";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, Select, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
-import { guncelle, islemYaz, useDb } from "@/data/store";
+import { guncelle, islemYaz, useDb, type CaymaBedeli } from "@/data/store";
 import { tl } from "@/lib/kurallar";
+import { caymaBedeliEngeli } from "../05-finans/kurallar";
 import { SEVIYELER, fiyatBul, fiyatListesiDogrula, sezonFiyatlariniYaz } from "./kurallar";
 import { HataMetni, useGenel } from "./ortak";
 
@@ -97,6 +98,53 @@ export function FiyatListesi() {
           </>
         )}
       </CardContent>
+      <CaymaBedeliAyari />
     </Card>
+  );
+}
+
+/** Kayıt iptalinde cayma bedeli (Bölüm 05, karar 2026-11-08): yüzde (plan toplamı üzerinden) veya sabit tutar; varsayılan 0 */
+function CaymaBedeliAyari() {
+  const d = useDb();
+  const genel = useGenel();
+  const { ad } = useOturum();
+  const [tur, setTur] = React.useState<CaymaBedeli["tur"]>(d.kurum?.caymaBedeli?.tur ?? "yuzde");
+  const [deger, setDeger] = React.useState(String(d.kurum?.caymaBedeli?.deger ?? 0));
+  const ayar: CaymaBedeli = { tur, deger: deger.trim() === "" ? NaN : Number(deger.replace(",", ".")) };
+  const hata = caymaBedeliEngeli(ayar);
+  const kaydet = () => {
+    if (hata) return;
+    guncelle((x) => {
+      x.kurum = { ...x.kurum, caymaBedeli: ayar };
+      islemYaz(x, ad, "Cayma bedeli", ayar.tur === "yuzde" ? `%${ayar.deger}` : tl(ayar.deger));
+    });
+    toast("Cayma bedeli kaydedildi.");
+  };
+  return (
+    <CardContent className="grid gap-3 border-t pt-4">
+      <div>
+        <p className="font-medium">Cayma bedeli</p>
+        <p className="text-xs text-muted-foreground">
+          Kayıt iptalinde kullanılan tutara eklenir; ödenen fazlaysa fark iade edilir. Yüzde, ödeme planı toplamı üzerinden hesaplanır. 0 = cayma bedeli yok.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Tür">
+          <Select value={tur} disabled={!genel} onChange={(e) => setTur(e.target.value as CaymaBedeli["tur"])}>
+            <option value="yuzde">Yüzde (%)</option>
+            <option value="sabit">Sabit tutar (₺)</option>
+          </Select>
+        </Field>
+        <Field label={tur === "yuzde" ? "Oran (%)" : "Tutar (₺)"}>
+          <Input type="number" min={0} step="0.01" className="w-36" disabled={!genel} value={deger} onChange={(e) => setDeger(e.target.value)} />
+        </Field>
+        {genel && (
+          <>
+            <HataMetni hata={hata} />
+            <Button variant="outline" onClick={kaydet} disabled={!!hata}><Check /> Kaydet</Button>
+          </>
+        )}
+      </div>
+    </CardContent>
   );
 }

@@ -1,8 +1,8 @@
 import * as React from "react";
-import { ArrowLeftRight, Banknote, CreditCard, Landmark, Plus, Printer } from "lucide-react";
+import { ArrowLeftRight, Banknote, CreditCard, Landmark, Plus, Printer, Undo2 } from "lucide-react";
 import { Alert, Button, Card, CardHeader, CardTitle, Dialog, Field, Input, Select, StatCard, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
-import { BUGUN, guncelle, islemYaz, sube, tamAd, useDb, yeniId, type Db, type Gider } from "@/data/store";
+import { BUGUN, guncelle, islemYaz, simdiZaman, sube, tamAd, useDb, yeniId, type Db, type Gider } from "@/data/store";
 import { tl } from "@/lib/kurallar";
 import { esc, yazdir } from "@/lib/yazdir";
 import {
@@ -21,7 +21,7 @@ import {
   virmanEngeli,
   type KasaHareketi,
 } from "./kurallar";
-import { kasaEtiket, tarihTR } from "./ortak";
+import { IptalDialog, kasaEtiket, tarihTR } from "./ortak";
 
 /** Hareketin ekrandaki açıklaması */
 function aciklama(d: Db, h: KasaHareketi): string {
@@ -30,12 +30,26 @@ function aciklama(d: Db, h: KasaHareketi): string {
     const kim = tamAd(d.veliler.find((v) => v.id === t?.veliId));
     return h.tur === "tahsilat" ? `Tahsilat ${t?.makbuzNo} · ${kim}` : `Tahsilat iptali (ters kayıt) ${t?.makbuzNo} · ${t?.iptal?.neden ?? ""}`;
   }
-  if (h.tur === "gider") {
+  if (h.tur === "iade" || h.tur === "iadeIptali") {
+    const i = (d.iadeler ?? []).find((x) => x.id === h.ref);
+    const kim = tamAd(d.veliler.find((v) => v.id === i?.veliId));
+    return h.tur === "iade" ? `İade ${i?.makbuzNo} · ${kim} (kayıt iptali)` : `İade iptali (ters kayıt) ${i?.makbuzNo} · ${i?.iptal?.neden ?? ""}`;
+  }
+  if (h.tur === "gider" || h.tur === "giderIptali") {
     const g = d.giderler.find((x) => x.id === h.ref);
-    return `${g?.kategori} · ${g?.aciklama}`;
+    return h.tur === "gider" ? `${g?.kategori} · ${g?.aciklama}` : `Gider iptali (ters kayıt) · ${g?.kategori} · ${g?.iptal?.neden ?? ""}`;
   }
   const v = d.virmanlar.find((x) => x.id === h.ref);
+  if (h.tur === "virmanIptalCikis" || h.tur === "virmanIptalGiris") return `Virman iptali (ters kayıt) · ${v?.iptal?.neden ?? ""}`;
   return h.tur === "virmanCikis" ? `Virman → ${kasaEtiket(v?.hedef ?? "")} · ${v?.aciklama}` : `Virman ← ${kasaEtiket(v?.kaynak ?? "")} · ${v?.aciklama}`;
+}
+
+/** Hareketin iptal edilebilir asıl kaydı (tahsilat iptali Hızlı tahsilat ekranından yapılır) */
+function iptalEdilebilir(d: Db, h: KasaHareketi): { tur: "gider" | "virman" | "iade"; ad: string } | null {
+  if (h.tur === "gider" && !d.giderler.find((x) => x.id === h.ref)?.iptal) return { tur: "gider", ad: "Gider" };
+  if (h.tur === "virmanCikis" && !d.virmanlar.find((x) => x.id === h.ref)?.iptal) return { tur: "virman", ad: "Virman" };
+  if (h.tur === "iade" && !(d.iadeler ?? []).find((x) => x.id === h.ref)?.iptal) return { tur: "iade", ad: "İade" };
+  return null;
 }
 
 export function Kasa() {
@@ -43,7 +57,21 @@ export function Kasa() {
   const { seciliSubeler, ad, rol, kapsam } = useOturum();
   const [giderAcik, setGiderAcik] = React.useState(false);
   const [virmanAcik, setVirmanAcik] = React.useState(false);
+  const [iptalEdilen, setIptalEdilen] = React.useState<{ h: KasaHareketi; tur: "gider" | "virman" | "iade"; ad: string } | null>(null);
   const genel = rol === "genel-yonetici";
+  const yonetici = genel || rol === "sube-muduru";
+  // Karar 2026-11-08: yanlış girilen gider / virman / iade yönetici tarafından gerekçeyle iptal edilir (silinmez, ters kayıt)
+  const iptalEt = (x: NonNullable<typeof iptalEdilen>, neden: string) => {
+    const iptal = { neden, kullanici: ad, zaman: simdiZaman() };
+    guncelle((y) => {
+      if (x.tur === "gider") y.giderler = y.giderler.map((g) => (g.id === x.h.ref ? { ...g, iptal } : g));
+      if (x.tur === "virman") y.virmanlar = y.virmanlar.map((v) => (v.id === x.h.ref ? { ...v, iptal } : v));
+      if (x.tur === "iade") y.iadeler = (y.iadeler ?? []).map((i) => (i.id === x.h.ref ? { ...i, iptal } : i));
+      const sid = kasaSubesi(x.h.kasa);
+      islemYaz(y, ad, `${x.ad} iptali`, `${aciklama(d, x.h)} — ${tl(x.h.giris || x.h.cikis)}. Neden: ${neden}`, sid === MERKEZ ? null : sid);
+    });
+    toast(`${x.ad} iptal edildi; kasaya bugünün tarihiyle ters kayıt düştü.`);
+  };
   const tum = kasaHareketleri(d);
   const erisim = { genel, kapsam };
   // Seçili şubelerin kasaları + (genel yönetici) Genel Merkez banka hesabı
@@ -82,23 +110,35 @@ export function Kasa() {
       <Card>
         <CardHeader><CardTitle className="text-base">Kasa hareketleri</CardTitle></CardHeader>
         <Table>
-          <thead><tr><Th>Tarih</Th><Th>Kasa</Th><Th>Açıklama</Th><Th className="text-right">Giriş</Th><Th className="text-right">Çıkış</Th></tr></thead>
+          <thead><tr><Th>Tarih</Th><Th>Kasa</Th><Th>Açıklama</Th><Th className="text-right">Giriş</Th><Th className="text-right">Çıkış</Th><Th /></tr></thead>
           <tbody>
-            {hareketler.slice(0, 60).map((h) => (
-              <tr key={h.id}>
-                <Td className="whitespace-nowrap tabular-nums">{tarihTR(h.tarih)}</Td>
-                <Td className="whitespace-nowrap text-xs">{kasaEtiket(h.kasa)}</Td>
-                <Td>{aciklama(d, h)}</Td>
-                <Td className="text-right tabular-nums text-success">{h.giris ? tl(h.giris) : ""}</Td>
-                <Td className="text-right tabular-nums text-danger">{h.cikis ? tl(h.cikis) : ""}</Td>
-              </tr>
-            ))}
-            {hareketler.length === 0 && <tr><Td colSpan={5} className="text-center text-muted-foreground">Hareket yok.</Td></tr>}
+            {hareketler.slice(0, 60).map((h) => {
+              const ip = yonetici ? iptalEdilebilir(d, h) : null;
+              return (
+                <tr key={h.id}>
+                  <Td className="whitespace-nowrap tabular-nums">{tarihTR(h.tarih)}</Td>
+                  <Td className="whitespace-nowrap text-xs">{kasaEtiket(h.kasa)}</Td>
+                  <Td>{aciklama(d, h)}</Td>
+                  <Td className="text-right tabular-nums text-success">{h.giris ? tl(h.giris) : ""}</Td>
+                  <Td className="text-right tabular-nums text-danger">{h.cikis ? tl(h.cikis) : ""}</Td>
+                  <Td className="text-right">{ip && <Button variant="ghost" size="sm" title={`${ip.ad} iptali`} onClick={() => setIptalEdilen({ h, ...ip })}><Undo2 /></Button>}</Td>
+                </tr>
+              );
+            })}
+            {hareketler.length === 0 && <tr><Td colSpan={6} className="text-center text-muted-foreground">Hareket yok.</Td></tr>}
           </tbody>
         </Table>
       </Card>
       {giderAcik && <GiderDialog onClose={() => setGiderAcik(false)} merkez={genel} bakiye={bakiye} />}
       {virmanAcik && <VirmanDialog onClose={() => setVirmanAcik(false)} kasalar={kasalar} bakiye={bakiye} />}
+      {iptalEdilen && (
+        <IptalDialog
+          baslik={`${iptalEdilen.ad} iptali`}
+          aciklama={`${aciklama(d, iptalEdilen.h)} · ${tl(iptalEdilen.h.giris || iptalEdilen.h.cikis)}.`}
+          onIptal={(neden) => iptalEt(iptalEdilen, neden)}
+          onClose={() => setIptalEdilen(null)}
+        />
+      )}
     </div>
   );
 }

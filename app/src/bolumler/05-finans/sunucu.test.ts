@@ -3,12 +3,13 @@
  * Veritabanı açılmaz: örnek veri + değişiklik paketi (store.guncelle ile aynı fark hesabı).
  */
 import { describe, expect, it } from "vitest";
-import { aktifKayit, ornekVeriUret, type Db, type Gider, type Kayit, type Tahsilat, type Taksit, type Virman } from "@/data/model";
+import { aktifKayit, ornekVeriUret, type Db, type Gider, type Iade, type Kayit, type Tahsilat, type Taksit, type Virman } from "@/data/model";
 import { farkHesapla, farkUygula, type Degisiklik } from "@/data/fark";
 import { tahsilatDagit, taksitPlani } from "@/lib/kurallar";
 import { YetkiHatasi, okumaSuz, yazmaDenetle, type Aktor } from "../../../server/politika";
 import { sezonGecisiPlani } from "../01-kurum-yapisi/kurallar";
-import { kalan, kayitUcreti, kurus, yeniMakbuzNo } from "./kurallar";
+import { iptalHesabiHesapla, iptalTaksitleri, kalan, kasaBakiyesi, kasaHareketleri, kayitPlani, kayitUcreti, kurus, planiYenidenDagit, yeniMakbuzNo } from "./kurallar";
+import { iptalSonrasiOgrenciDurumu } from "../04-ogrenciler/kurallar";
 
 const KAPALI = ornekVeriUret(); // varsayılan: finans modülü kapalı
 const F: Db = { ...structuredClone(KAPALI), moduller: { ...KAPALI.moduller, finans: true } };
@@ -73,7 +74,7 @@ const sihirbaz = (p: Partial<Kayit> = {}, plan?: { pesinat: number; taksit: numb
   const k: Kayit = {
     id: "k-yeni", ogrenciId: "o-yeni", sezonId: "z2", subeId: "s1", grupId: "g1", sozlesmeNo: "MRK-2026-0900", durum: "aktif", tarih: BUGUN,
     grupGecmisi: [{ grupId: "g1", tarih: BUGUN }], ekHizmetler: ["Kitap seti"], kvkkOnay: { tarih: BUGUN, surum: "v1.2" },
-    listeFiyati: 13500, indirimler: [{ ad: "Erken kayıt", oran: 5 }], net: kayitUcreti(13500, [{ ad: "Erken kayıt", oran: 5 }], ["Kitap seti"]).net, ...p,
+    listeFiyati: 13500, indirimler: [], net: kayitUcreti(13500, [], ["Kitap seti"]).net, ...p,
   };
   x.kayitlar.push(k);
   if (plan)
@@ -234,12 +235,13 @@ describe("tahsilat iptali (geri alınamaz, silinmez)", () => {
 describe("kayıt ücreti ve ödeme planı", () => {
   it("fiyat listesinden ücret + kuruşu kuruşuna plan kabul edilir", () => {
     expect(kayitUcreti(13500, [{ ad: "Erken kayıt", oran: 5 }], ["Kitap seti"]).net).toBe(14025);
-    const t = dene(sihirbaz({}, { pesinat: 1000.33, taksit: 7 }))();
+    const ind = [{ ad: "Erken kayıt", oran: 5 }];
+    const t = dene(sihirbaz({ indirimler: ind, net: 14025 }, { pesinat: 1000.33, taksit: 7 }), MUDUR_S1)();
     const plan = yaz<Taksit>(t, "taksitler");
     expect(plan.reduce((s, x) => s + Math.round(x.tutar * 100), 0)).toBe(1402500);
   });
   it("liste fiyatı listeden farklı, fiyat tanımsız veya net uyuşmazsa reddedilir", () => {
-    reddedilir(dene(sihirbaz({ listeFiyati: 10000, net: kayitUcreti(10000, [{ ad: "Erken kayıt", oran: 5 }], ["Kitap seti"]).net })), /fiyat listesi/);
+    reddedilir(dene(sihirbaz({ listeFiyati: 10000, net: kayitUcreti(10000, [], ["Kitap seti"]).net })), /fiyat listesi/);
     reddedilir(dene(sihirbaz({ net: 100 })), /Net tutar/);
     const fiyatsiz = { ...F, fiyatListesi: F.fiyatListesi.filter((f) => !(f.sezonId === "z2" && f.subeId === "s1" && f.seviye === 3)) };
     reddedilir(dene(sihirbaz(), GUL, fiyatsiz), /fiyat tanımlı değil/);
@@ -257,13 +259,19 @@ describe("kayıt ücreti ve ödeme planı", () => {
     reddedilir(dene(sihirbaz({ listeFiyati: 0, net: 0, indirimler: [], ekHizmetler: [] })), /Ücretsiz/);
     expect(dene(sihirbaz({ listeFiyati: 0, net: 0, indirimler: [], ekHizmetler: [] }), MUDUR_S1)).not.toThrow();
   });
-  it("var olan kaydın indirimini yalnızca yönetici değiştirir; net tutar tutarlı olmalı", () => {
+  it("var olan kaydın indirimini yalnızca yönetici değiştirir; net tutarlı, ödenmemiş taksitler yeniden dağıtılmış olmalı", () => {
     const k = F.kayitlar.find((x) => x.subeId === "s1" && x.durum === "aktif" && x.indirimler.length === 0)!;
     const ind = [{ ad: "Personel yakını", oran: 20 }];
-    const degistir = (net: number) => (x: Db) => void (x.kayitlar = x.kayitlar.map((y) => (y.id === k.id ? { ...y, indirimler: ind, net } : y)));
     const dogru = kayitUcreti(k.listeFiyati, ind, k.ekHizmetler).net;
+    const degistir = (net: number, dagit = true) => (x: Db) => {
+      x.kayitlar = x.kayitlar.map((y) => (y.id === k.id ? { ...y, indirimler: ind, net } : y));
+      if (!dagit) return;
+      const r = planiYenidenDagit(kayitPlani(F.taksitler, k.id), net);
+      x.taksitler = x.taksitler.map((t) => (r.tutarlar.has(t.id) && r.tutarlar.get(t.id) !== t.tutar ? { ...t, tutar: r.tutarlar.get(t.id)! } : t));
+    };
     reddedilir(dene(degistir(dogru), GUL), /yalnızca yönetici/);
     expect(dene(degistir(dogru), MUDUR_S1)).not.toThrow();
+    reddedilir(dene(degistir(dogru, false), MUDUR_S1), /aynı işlemde/);
     reddedilir(dene(degistir(dogru + 1), MUDUR_S1), /Net tutar/);
   });
   it("Bölüm 01 sezon geçişi paketi (finans açık) hedef sezon fiyatıyla kabul edilir; fiyat değiştirilirse reddedilir", () => {
@@ -333,5 +341,164 @@ describe("gider ve virman", () => {
     reddedilir(dene(virman({ hedef: "s2:banka" })), /kapsam/);
     reddedilir(dene(virman({ kaynak: "merkez:banka", hedef: "s1:banka", tutar: 1 }), MUDUR_S1), /Genel Merkez/);
     expect(dene(virman({ hedef: "merkez:banka" }), MUDUR_S1)).not.toThrow(); // şubeden merkeze aktarım
+  });
+});
+
+/* =========================== Karar 2026-11-08 =========================== */
+describe("indirim yönetici onayıyla (sekreter)", () => {
+  const ERKEN = [{ ad: "Erken kayıt", oran: 5 }];
+  const talep = sihirbaz({ bekleyenIndirim: { indirimler: ERKEN, isteyen: "sahte", zaman: "sahte" } }, { pesinat: 0, taksit: 4 });
+  it("sekreterin indirimi onay bekliyor olarak kaydedilir; net ve plan indirimsiz; isteyen ve zaman sunucudan", () => {
+    const t = dene(talep)();
+    const [k] = yaz<Kayit>(t, "kayitlar");
+    expect(k).toMatchObject({ indirimler: [], net: 14700, bekleyenIndirim: { indirimler: ERKEN, isteyen: "Gül Koç", zaman: ZAMAN } });
+    expect(yaz<Taksit>(t, "taksitler").reduce((s, x) => s + Math.round(x.tutar * 100), 0)).toBe(1470000);
+  });
+  it("sekreter indirimi doğrudan uygulayamaz; yönetici onay talebi değil doğrudan uygular", () => {
+    reddedilir(dene(sihirbaz({ indirimler: ERKEN, net: 14025 }, { pesinat: 0, taksit: 4 })), /onayıyla/);
+    reddedilir(dene(talep, MUDUR_S1), /doğrudan/);
+    expect(dene(sihirbaz({ indirimler: ERKEN, net: 14025 }, { pesinat: 0, taksit: 4 }), MUDUR_S1)).not.toThrow();
+  });
+  const v = farkUygula(F, dene(talep)());
+  const karar = (onay: boolean, dagit = true) => (x: Db) => {
+    const k = x.kayitlar.find((y) => y.id === "k-yeni")!;
+    const indirimler = onay ? ERKEN : [];
+    const net = kayitUcreti(k.listeFiyati, indirimler, k.ekHizmetler).net;
+    x.kayitlar = x.kayitlar.map((y) => (y.id === k.id ? { ...y, indirimler, net, bekleyenIndirim: null } : y));
+    if (onay && dagit) {
+      const r = planiYenidenDagit(kayitPlani(x.taksitler, k.id), net);
+      x.taksitler = x.taksitler.map((t) => (r.tutarlar.has(t.id) ? { ...t, tutar: r.tutarlar.get(t.id)! } : t));
+    }
+  };
+  it("yönetici onaylar: indirim uygulanır, ödenmemiş taksitler yeni nete göre dağıtılır, onay kaydı sunucudan", () => {
+    const t = dene(karar(true), aktor("u1", v), v)();
+    expect(yaz<Kayit>(t, "kayitlar")[0]).toMatchObject({ net: 14025, bekleyenIndirim: null, indirimOnay: { karar: "onaylandi", kullanici: "Elif Yılmaz", zaman: ZAMAN } });
+    const sonra = farkUygula(v, t);
+    expect(kayitPlani(sonra.taksitler, "k-yeni").reduce((s, x) => s + Math.round(x.tutar * 100), 0)).toBe(1402500);
+  });
+  it("sekreter onaylayamaz; taksitler dağıtılmadan onay reddedilir; yönetici reddedince indirim kalkar", () => {
+    reddedilir(dene(karar(true), aktor("u9", v), v), /yalnızca yönetici/);
+    reddedilir(dene(karar(true, false), aktor("u1", v), v), /aynı işlemde/);
+    const t = dene(karar(false), aktor("u1", v), v)();
+    expect(yaz<Kayit>(t, "kayitlar")[0]).toMatchObject({ net: 14700, indirimler: [], bekleyenIndirim: null, indirimOnay: { karar: "reddedildi" } });
+  });
+  it("finans görmeyene bekleyen indirim gitmez", () => {
+    const o = okumaSuz(v, aktor("u4", v));
+    expect(o.kayitlar.some((k) => "bekleyenIndirim" in k)).toBe(false);
+  });
+});
+
+describe("kayıt iptali: kullanılan + cayma → iade veya kalan borç", () => {
+  const IK = F.kayitlar.find((k) => k.subeId === "s1" && k.durum === "aktif" && kayitPlani(F.taksitler, k.id).length > 0 && F.kayitlar.filter((x) => x.ogrenciId === k.ogrenciId).length === 1)!;
+  const durumlu = (odenmis: boolean) => {
+    const v = structuredClone(F);
+    v.taksitler = v.taksitler.map((t) => (t.kayitId === IK.id && t.no < 99 ? { ...t, odenen: odenmis ? t.tutar : 0 } : t));
+    return v;
+  };
+  const BORCLU = durumlu(false);
+  const ODENMIS = durumlu(true);
+  type P = { ozel?: { kullanilan?: number; cayma?: number }; duzeltme?: string; hak?: number; taksit?: boolean; iade?: Partial<Iade> | false };
+  const iptalPaket = (kaynak: Db, p: P = {}) => (x: Db) => {
+    const plan = kayitPlani(kaynak.taksitler, IK.id);
+    const sezon = kaynak.sezonlar.find((z) => z.id === IK.sezonId);
+    const h = { ...iptalHesabiHesapla(plan, IK, sezon, kaynak.kurum.caymaBedeli, BUGUN, p.ozel), duzeltme: p.duzeltme ? { neden: p.duzeltme, kullanici: "", zaman: "" } : null };
+    if (p.hak !== undefined) h.hak = p.hak;
+    x.kayitlar = x.kayitlar.map((k) => (k.id === IK.id ? { ...k, durum: "iptal", iptalHesabi: h } : k));
+    const durum = iptalSonrasiOgrenciDurumu(IK.ogrenciId, x.kayitlar);
+    x.ogrenciler = x.ogrenciler.map((o) => (o.id === IK.ogrenciId ? { ...o, durum } : o));
+    if (p.taksit !== false) {
+      const m = iptalTaksitleri(plan, h.hak);
+      x.taksitler = x.taksitler.map((t) => (m.has(t.id) && m.get(t.id) !== t.tutar ? { ...t, tutar: m.get(t.id)! } : t));
+    }
+    if (h.iade > 0 && p.iade !== false)
+      x.iadeler = [...x.iadeler, { id: "ia-t", makbuzNo: "MRK-I-00001", zaman: "", kayitId: IK.id, ogrenciId: IK.ogrenciId, veliId: plan[0].veliId, subeId: IK.subeId, yontem: "nakit", tutar: h.iade, kullanici: "", iptal: null, ...(p.iade || {}) }];
+  };
+  it("ödenmemiş: sekreter iptal eder; kalan borç kullanılan kadar kalır, geri kalan taksitler kapanır", () => {
+    const t = dene(iptalPaket(BORCLU), aktor("u9", BORCLU), BORCLU)();
+    const [k] = yaz<Kayit>(t, "kayitlar");
+    expect(k.iptalHesabi!.iade).toBe(0);
+    expect(k.iptalHesabi!.kalanBorc).toBeGreaterThan(0);
+    const sonra = farkUygula(BORCLU, t);
+    const kalanToplam = kayitPlani(sonra.taksitler, IK.id).reduce((s, x) => s + Math.round(kalan(x) * 100), 0);
+    expect(kalanToplam).toBe(Math.round(k.iptalHesabi!.kalanBorc * 100));
+    expect(kayitPlani(sonra.taksitler, IK.id).some((x) => x.tutar === 0)).toBe(true);
+  });
+  it("taksitler güncellenmeden, uydurma hak tutarıyla veya sekreterin düzeltmesiyle reddedilir", () => {
+    reddedilir(dene(iptalPaket(BORCLU, { taksit: false }), aktor("u9", BORCLU), BORCLU), /aynı işlemde/);
+    reddedilir(dene(iptalPaket(BORCLU, { hak: 1 }), aktor("u9", BORCLU), BORCLU), /uyuşmuyor/);
+    reddedilir(dene(iptalPaket(BORCLU, { ozel: { kullanilan: 0 }, duzeltme: "Hiç gelmedi" }), aktor("u9", BORCLU), BORCLU), /yalnızca yönetici/);
+  });
+  it("yönetici kullanılan / cayma tutarını gerekçeyle düzeltir; gerekçesiz düzeltme reddedilir", () => {
+    reddedilir(dene(iptalPaket(BORCLU, { ozel: { kullanilan: 0 } }), aktor("u1", BORCLU), BORCLU), /gerekçe/);
+    const t = dene(iptalPaket(BORCLU, { ozel: { kullanilan: 0, cayma: 250 }, duzeltme: "Hiç derse gelmedi" }), aktor("u1", BORCLU), BORCLU)();
+    expect(yaz<Kayit>(t, "kayitlar")[0].iptalHesabi).toMatchObject({ kullanilan: 0, cayma: 250, hak: 250, kalanBorc: 250, duzeltme: { neden: "Hiç derse gelmedi", kullanici: "Elif Yılmaz", zaman: ZAMAN } });
+  });
+  it("fazla ödenmişse yönetici iadeyle iptal eder; iade makbuzu (I) ve kasa çıkışı; yapan sunucudan", () => {
+    reddedilir(dene(iptalPaket(ODENMIS), aktor("u9", ODENMIS), ODENMIS), /yalnızca yönetici/);
+    const t = dene(iptalPaket(ODENMIS), aktor("u1", ODENMIS), ODENMIS)();
+    const [i] = yaz<Iade>(t, "iadeler");
+    const [k] = yaz<Kayit>(t, "kayitlar");
+    expect(i).toMatchObject({ makbuzNo: "MRK-I-00001", kullanici: "Elif Yılmaz", zaman: ZAMAN, tutar: k.iptalHesabi!.iade });
+    expect(i.tutar).toBeLessThanOrEqual(k.iptalHesabi!.odenen);
+    const once = kasaBakiyesi(kasaHareketleri(ODENMIS), "s1:nakit");
+    expect(kasaBakiyesi(kasaHareketleri(farkUygula(ODENMIS, t)), "s1:nakit")).toBeCloseTo(once - i.tutar, 2);
+  });
+  it("iade kaydı eksik, tutarı farklı veya iptal paketi dışında reddedilir", () => {
+    reddedilir(dene(iptalPaket(ODENMIS, { iade: false }), aktor("u1", ODENMIS), ODENMIS), /iade kaydı/);
+    reddedilir(dene(iptalPaket(ODENMIS, { iade: { tutar: 1 } }), aktor("u1", ODENMIS), ODENMIS), /İade tutarı/);
+    reddedilir(
+      dene((x) => void (x.iadeler = [...x.iadeler, { id: "ia-x", makbuzNo: "MRK-I-00009", zaman: "", kayitId: IK.id, ogrenciId: IK.ogrenciId, veliId: "v", subeId: "s1", yontem: "nakit", tutar: 10, kullanici: "", iptal: null }]), MUDUR_S1),
+      /yalnızca kayıt iptaliyle/,
+    );
+  });
+  it("iade silinemez, değiştirilemez; yalnızca yönetici gerekçeyle iptal eder (ters kayıt)", () => {
+    const v = farkUygula(ODENMIS, dene(iptalPaket(ODENMIS), aktor("u1", ODENMIS), ODENMIS)());
+    const iptal = (neden: string, p: Partial<Iade> = {}) => (x: Db) => void (x.iadeler = x.iadeler.map((i) => ({ ...i, ...p, iptal: { neden, kullanici: "", zaman: "" } })));
+    expect(yaz<Iade>(dene(iptal("Yanlış hesap"), aktor("u1", v), v)(), "iadeler")[0].iptal).toMatchObject({ kullanici: "Elif Yılmaz" });
+    reddedilir(dene(iptal("Yanlış hesap"), aktor("u9", v), v), /şube müdürü/);
+    reddedilir(dene(iptal("Yanlış hesap", { tutar: 1 }), aktor("u1", v), v), /değiştirilemez/);
+    reddedilir(dene((x) => void (x.iadeler = []), aktor("u0", v), v), /silinemez/);
+  });
+  it("finans kapalıyken iptal hesabı yazılmaz; Bölüm 04 iptali aynen çalışır", () => {
+    const t = dene(iptalPaket(KAPALI, { taksit: false, iade: false }), GUL, KAPALI)();
+    const [k] = yaz<Kayit>(t, "kayitlar");
+    expect(k.durum).toBe("iptal");
+    expect(k.iptalHesabi).toBeUndefined();
+  });
+});
+
+describe("gider ve virman iptali (ters kayıt)", () => {
+  const g = F.giderler.find((x) => x.subeId === "s1")!;
+  const giderIptal = (neden = "Mükerrer giriş", p: Partial<Gider> = {}) => (x: Db) =>
+    void (x.giderler = x.giderler.map((y) => (y.id === g.id ? { ...y, ...p, iptal: { neden, kullanici: "", zaman: "" } } : y)));
+  it("yönetici gerekçeyle iptal eder; sekreter, kısa gerekçe ve başka alan değişikliği reddedilir; iptal geri alınamaz", () => {
+    expect(yaz<Gider>(dene(giderIptal(), MUDUR_S1)(), "giderler")[0].iptal).toMatchObject({ kullanici: "Elif Yılmaz", zaman: ZAMAN });
+    reddedilir(dene(giderIptal(), GUL), /şube müdürü/);
+    reddedilir(dene(giderIptal("ab"), MUDUR_S1), /gerekçe/);
+    reddedilir(dene(giderIptal(undefined, { tutar: 1 }), MUDUR_S1), /değiştirilemez/);
+    const v = structuredClone(F);
+    giderIptal()(v);
+    reddedilir(dene((x) => (x.giderler = x.giderler.map((y) => (y.id === g.id ? { ...y, iptal: null } : y))), aktor("u1", v), v), /İptal edilmiş/);
+    reddedilir(dene((x) => (x.giderler = x.giderler.filter((y) => y.id !== g.id)), YONETICI), /silinemez/);
+  });
+  it("virman iptali: iptal gününe ters kayıt, geçmiş günün bakiyesi değişmez", () => {
+    const v = structuredClone(F);
+    v.virmanlar.push({ id: "vr-x", tarih: "2026-11-01", kaynak: "s1:nakit", hedef: "s1:banka", tutar: 100, aciklama: "" });
+    const iptalEt = (x: Db) => void (x.virmanlar = x.virmanlar.map((y) => (y.id === "vr-x" ? { ...y, iptal: { neden: "Yanlış kasa", kullanici: "", zaman: "" } } : y)));
+    const t = dene(iptalEt, aktor("u1", v), v)();
+    const sonra = kasaHareketleri(farkUygula(v, t));
+    const once = kasaHareketleri(v);
+    expect(kasaBakiyesi(sonra, "s1:nakit", "2026-11-05")).toBe(kasaBakiyesi(once, "s1:nakit", "2026-11-05"));
+    expect(kasaBakiyesi(sonra, "s1:nakit")).toBeCloseTo(kasaBakiyesi(once, "s1:nakit") + 100, 2);
+    reddedilir(dene(iptalEt, aktor("u9", v), v), /şube müdürü/);
+  });
+});
+
+describe("cayma bedeli ayarı", () => {
+  it("yüzde 0–100 veya sabit tutar; yalnızca genel yönetici", () => {
+    reddedilir(dene((x) => (x.kurum = { ...x.kurum, caymaBedeli: { tur: "yuzde", deger: 150 } }), YONETICI), /yüzdesi/);
+    reddedilir(dene((x) => (x.kurum = { ...x.kurum, caymaBedeli: { tur: "sabit", deger: -1 } }), YONETICI), /negatif/);
+    expect(dene((x) => (x.kurum = { ...x.kurum, caymaBedeli: { tur: "sabit", deger: 500 } }), YONETICI)).not.toThrow();
+    reddedilir(dene((x) => (x.kurum = { ...x.kurum, caymaBedeli: { tur: "sabit", deger: 500 } }), MUDUR_S1), /genel yönetici|yetkiniz/);
   });
 });

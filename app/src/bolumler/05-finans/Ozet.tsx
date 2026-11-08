@@ -5,6 +5,7 @@ import { AKTIF_SEZON, BUGUN, sube, useDb } from "@/data/store";
 import { tarihEkle, tl } from "@/lib/kurallar";
 import { beklenenTahsil, kalan, kasaHareketleri, kurusa, sezonAylari, vadesiGecenler, yuzde } from "./kurallar";
 import { TaksitTablosu, type Sekme } from "./ortak";
+import { IndirimOnaylari } from "./IndirimOnaylari";
 
 export function Ozet({ onGit }: { onGit: (s: Sekme) => void }) {
   const d = useDb();
@@ -33,6 +34,8 @@ export function Ozet({ onGit }: { onGit: (s: Sekme) => void }) {
         <StatCard label="7 gün içinde vadesi gelen" value={yaklasan.length} icon={<BellRing />} tone="warning" hint={tl(yaklasan.reduce((s, t) => s + kurusa(kalan(t)), 0) / 100)} />
       </div>
 
+      <IndirimOnaylari />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Aylık beklenen ve tahsil edilen</CardTitle>
@@ -60,12 +63,12 @@ export function Ozet({ onGit }: { onGit: (s: Sekme) => void }) {
           </CardHeader>
           <Table>
             <thead>
-              <tr><Th>Şube</Th><Th className="text-right">Tahsilat (iptaller düşülmüş)</Th><Th className="text-right">Tahsilat oranı (vadesi gelen)</Th><Th className="text-right">Bu ay gideri</Th><Th className="text-right">Öğrenci başı gelir</Th></tr>
+              <tr><Th>Şube</Th><Th className="text-right">Tahsilat (iptal ve iadeler düşülmüş)</Th><Th className="text-right">Tahsilat oranı (vadesi gelen)</Th><Th className="text-right">Bu ay gideri</Th><Th className="text-right">Öğrenci başı gelir</Th></tr>
             </thead>
             <tbody>
               {seciliSubeler.map((sid) => {
                 const vg = beklenenTahsil(d.taksitler.filter((x) => x.subeId === sid && x.vade <= BUGUN));
-                const ciro = hareketler.filter((h) => h.kasa.startsWith(`${sid}:`) && (h.tur === "tahsilat" || h.tur === "tahsilatIptali")).reduce((s, h) => s + kurusa(h.giris) - kurusa(h.cikis), 0) / 100;
+                const ciro = hareketler.filter((h) => h.kasa.startsWith(`${sid}:`) && ["tahsilat", "tahsilatIptali", "iade", "iadeIptali"].includes(h.tur)).reduce((s, h) => s + kurusa(h.giris) - kurusa(h.cikis), 0) / 100;
                 const gider = d.giderler.filter((g) => g.subeId === sid && g.tarih.startsWith(ay)).reduce((s, g) => s + kurusa(g.tutar), 0) / 100;
                 const ogr = d.kayitlar.filter((k) => k.subeId === sid && k.durum === "aktif").length;
                 return (

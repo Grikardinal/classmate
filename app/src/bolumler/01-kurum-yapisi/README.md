@@ -78,6 +78,7 @@ Kural ihlali `YetkiHatasi` olarak döner (HTTP 403, mesaj kullanıcıya gösteri
   kaynak şubenin tüm fiyatlarını kopyalar.
 - **Sezon geçişinde fiyat (karar 2026-11-07):** taşınan kayda eski fiyat, indirim ve ek hizmet kopyalanmaz; hedef sezonun
   şube + yeni seviye fiyatı uygulanır (finans kapalıysa ücret 0). Finans açıkken fiyatı tanımsız şube/seviye varsa geçiş başlamaz.
+- **Cayma bedeli (Bölüm 05, karar 2026-11-08):** Fiyat listesi sekmesinin altında, `kurum.caymaBedeli`: yüzde (0–100) veya sabit tutar; yoksa 0. Yalnızca genel yönetici.
 - **Modüller:** değerler yalnızca `true/false`.
 
 ## Bu bölümde düzeltilen hatalar

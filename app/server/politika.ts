@@ -49,11 +49,19 @@ import {
   yeniSozlesmeNo,
 } from "../src/bolumler/04-ogrenciler/kurallar";
 import {
+  caymaBedeliEngeli,
+  finansIptalEngeli,
   giderEngeli,
+  iadeEngeli,
+  iptalHesabiEngeli,
+  iptalTaksitleri,
   kasaBakiyesi,
   kasaHareketleri,
+  kayitPlani,
   kayitUcretEngeli,
+  kurusa,
   odemeFarklari,
+  planiYenidenDagit,
   planToplamEngeli,
   tahsilatEngeli,
   tahsilatIptalEngeli,
@@ -62,7 +70,9 @@ import {
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
 import { farkUygula } from "../src/data/fark";
-import type { Gider, Tahsilat, Taksit, Virman } from "../src/data/model";
+import type { Gider, Iade, Tahsilat, Taksit, Virman } from "../src/data/model";
+
+const ayni = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 import { telefonNormalize } from "../src/lib/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
@@ -100,7 +110,7 @@ export function satirSubeleri(db: Db, k: Koleksiyon, s: Satir): string[] | null 
     case "subeler":
       return [String(s.id)];
     case "derslikler": case "dersSaatleri": case "gruplar": case "kayitlar": case "taksitler": case "tahsilatlar":
-    case "musaitlikler": case "randevular": case "adaylar": case "gonderimler": case "avanslar": case "tatiller": case "giderler": case "islemler":
+    case "musaitlikler": case "randevular": case "adaylar": case "gonderimler": case "avanslar": case "tatiller": case "giderler": case "iadeler": case "islemler":
       return tek(s.subeId);
     case "program": case "yoklamalar": case "odevler":
       return tek(grupSube(db, s.grupId));
@@ -141,7 +151,9 @@ export function subeSutunu(db: Db, k: Koleksiyon, s: Satir): string | null {
 }
 
 /* =========================== Okuma =========================== */
-const FINANS: Koleksiyon[] = ["taksitler", "tahsilatlar", "giderler", "virmanlar"];
+const FINANS: Koleksiyon[] = ["taksitler", "tahsilatlar", "giderler", "virmanlar", "iadeler"];
+/** Kaydın finans (ücret) alanları: finans görmeyene maskelenir, onun yazmasında eski değer korunur */
+const KAYIT_FINANS_ALANLARI = ["listeFiyati", "indirimler", "net", "bekleyenIndirim", "indirimOnay", "iptalHesabi"] as const;
 
 /**
  * Finans verisini kim görür (Bölüm 05): modül açık, 05 yetkisi var ve öğretmen değil.
@@ -196,7 +208,12 @@ export function okumaSuz(db: Db, a: Aktor): Db {
     if (k === "personel" && !genel && !yetki(db, a, "13"))
       l = l.map((s) => (s.id === a.personel.id ? s : { ...s, telefon: "", eposta: "", sabitUcret: 0, dersUcreti: 0 }));
     // Kayıt ücreti finans verisidir; yazarken sunucu maskeli alanları eski değerle korur (yazmaDenetle)
-    if (k === "kayitlar" && !finans) l = l.map((s) => ({ ...s, listeFiyati: 0, indirimler: [], net: 0 }));
+    if (k === "kayitlar" && !finans)
+      l = l.map((s) => {
+        const { bekleyenIndirim: _b, indirimOnay: _o, iptalHesabi: _i, ...temel } = s;
+        void _b; void _o; void _i;
+        return { ...temel, listeFiyati: 0, indirimler: [], net: 0 };
+      });
     sonuc[k] = k === "yoklamalar" ? Object.fromEntries(l.map((s) => [s.oturumId, s])) : l;
   }
   // Personel ücret bilgisi yalnızca hak ediş yetkisi olanlara
@@ -215,7 +232,7 @@ const YAZMA: Record<Koleksiyon, string[]> = {
   program: ["06"], tatiller: ["06"], iptaller: ["06"], yoklamalar: ["07"], izinler: ["07"],
   adaylar: ["03", "04", "14"], odevler: ["08"], musaitlikler: ["09"], randevular: ["09"], paketler: ["09", "04"],
   olaylar: ["10"], gonderimler: ["*"], duyurular: ["10"],
-  taksitler: ["05", "04", "09"], tahsilatlar: ["05"], giderler: ["05", "13"], virmanlar: ["05"],
+  taksitler: ["05", "04", "09"], tahsilatlar: ["05"], giderler: ["05", "13"], virmanlar: ["05"], iadeler: ["05"],
   islemler: ["*"], iceAktarmalar: ["14"], kvkk: ["14"], avanslar: ["13"],
 };
 const TEKIL_YAZMA: Record<Tekil, string[]> = {
@@ -300,6 +317,10 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           s.durum = "bekliyor";
           s.zaman = zaman;
           break;
+        case "giderler": case "virmanlar": case "iadeler":
+          // İptal eden ve zamanı sunucudan (karar 2026-11-08); ayrıntı finansDenetle()
+          if (eski && s.iptal && typeof s.iptal === "object") s.iptal = { ...(s.iptal as object), kullanici: ad, zaman };
+          break;
         case "tahsilatlar":
           // Ayrıntılı kurallar: finansDenetle() (Bölüm 05). Tahsil eden, tahsilat ve iptal zamanı sunucudan.
           if (eski) {
@@ -336,16 +357,18 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           break;
         case "kayitlar":
           // Ücret alanları finans görmeyene maskeli gider (okumaSuz); onun yazdığı kayıtta eski değerler korunur
-          if (eski && !finansGorur(onceki, a)) {
-            s.listeFiyati = eski.listeFiyati;
-            s.indirimler = eski.indirimler;
-            s.net = eski.net;
-          }
+          if (eski && !finansGorur(onceki, a))
+            for (const alan of KAYIT_FINANS_ALANLARI) {
+              if (alan in eski) s[alan] = eski[alan];
+              else delete s[alan];
+            }
           // Finans kapalıyken yeni kayıt ücretsizdir (ekran başka bir kayıttan kopyalasa da ücret yazılmaz)
           if (!eski && onceki.moduller?.finans !== true) {
             s.listeFiyati = 0;
             s.indirimler = [];
             s.net = 0;
+            delete s.bekleyenIndirim;
+            delete s.iptalHesabi;
           }
           // Kapsam dışına nakil: ekran hedef şubenin gruplarını göremez; grubu sunucu atar (aynı seviye, boş kontenjan)
           if (eski && eski.subeId !== s.subeId && !genel && !kap.has(String(s.subeId))) {
@@ -418,6 +441,9 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
  * - taksitin ödenen tutarı yalnızca aynı paketteki tahsilat / iptal kadar değişir; fazla tahsilat yok;
  *   tutar / vade değişikliği yalnızca yönetici
  * - gider ve virman değiştirilemez; Genel Merkez yalnızca genel yönetici; virmanda kaynak kasada yeterli bakiye
+ * - karar 2026-11-08: sekreterin indirimi "onay bekliyor" (net indirimsiz), onay / ret yalnızca yönetici, onayda açık taksitler
+ *   yeniden dağıtılır (planiYenidenDagit); kayıt iptalinde iptal hesabı (kullanılan + cayma → iade veya kalan borç, taksitler kapanır),
+ *   iade yalnızca bu pakette ve hesaptaki tutarda; tahsilat, iade, gider, virman yalnızca yönetici gerekçeyle iptal eder (ters kayıt)
  * Şube kapsamı yazmaDenetle() içinde denetlenir. Sistem satırları (nakil devri) da aynı kurallardan geçer. `temiz` yerinde güncellenir.
  */
 export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
@@ -430,20 +456,80 @@ export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: st
   const tahsilatYaz = (K.tahsilatlar?.yaz ?? []) as unknown as Tahsilat[];
   const giderYaz = (K.giderler?.yaz ?? []) as unknown as Gider[];
   const virmanYaz = (K.virmanlar?.yaz ?? []) as unknown as Virman[];
-  if (!kayitYaz.length && !taksitYaz.length && !tahsilatYaz.length && !giderYaz.length && !virmanYaz.length) return;
+  const iadeYaz = (K.iadeler?.yaz ?? []) as unknown as Iade[];
+  if (!kayitYaz.length && !taksitYaz.length && !tahsilatYaz.length && !giderYaz.length && !virmanYaz.length && !iadeYaz.length) return;
   const rol = a.kullanici.rol;
   const genel = rol === "genel-yonetici";
+  const ad = `${a.personel.ad} ${a.personel.soyad}`;
   const finans = onceki.moduller?.finans === true;
   const bugun = zaman.slice(0, 10);
   // Sunucunun düzelttiği satırlarla (veli birleştirme, nakil devri) son hal
   const son = farkUygula(onceki, temiz);
+  /** İptal / indirim onayı paketinde taksitlerin olması gereken tutarı */
+  const beklenenTutar = new Map<string, number>();
+  /** Kayıt iptalindeki iade tutarı (kayıt kimliği → tutar) */
+  const beklenenIade = new Map<string, number>();
 
-  // 1) Kayıt ücreti ve kayıtla birlikte oluşturulan ödeme planı
+  // 1) Kayıt ücreti, indirim onayı, kayıtla birlikte oluşturulan ödeme planı, iptal hesabı
   for (const k of kayitYaz) {
     const eski = onceki.kayitlar.find((x) => x.id === k.id);
     reddet(kayitUcretEngeli(k, eski, son, { rol }));
     if (!eski && finans) reddet(planToplamEngeli(k.net, taksitYaz.filter((t) => t.kayitId === k.id && !onceki.taksitler.some((x) => x.id === t.id))));
+    const plan = kayitPlani(onceki.taksitler, k.id);
+    // İndirim talebi / kararı: kim ve ne zaman sunucudan
+    if (k.bekleyenIndirim && !eski?.bekleyenIndirim) k.bekleyenIndirim = { indirimler: k.bekleyenIndirim.indirimler, isteyen: ad, zaman };
+    else if (k.bekleyenIndirim && eski?.bekleyenIndirim) k.bekleyenIndirim = eski.bekleyenIndirim;
+    if (eski?.bekleyenIndirim && !k.bekleyenIndirim)
+      k.indirimOnay = { karar: ayni(eski.indirimler, k.indirimler) ? "reddedildi" : "onaylandi", indirimler: eski.bekleyenIndirim.indirimler, kullanici: ad, zaman };
+    else if (eski?.indirimOnay) k.indirimOnay = eski.indirimOnay;
+    else delete k.indirimOnay;
+    // Var olan kaydın neti değişirse (indirim onayı) ödenmemiş taksitler yeni nete göre yeniden dağıtılır
+    if (eski && kurusa(eski.net) !== kurusa(k.net) && plan.length) {
+      const r = planiYenidenDagit(plan, k.net);
+      reddet(r.hata);
+      for (const [id, tutar] of r.tutarlar) beklenenTutar.set(id, tutar);
+    }
+    // Kayıt iptali: iptal hesabı (yalnızca iptal paketinde, finans açıkken)
+    const iptalOluyor = !!eski && eski.durum !== "iptal" && k.durum === "iptal";
+    if (k.iptalHesabi && !ayni(k.iptalHesabi, eski?.iptalHesabi ?? null)) {
+      if (!iptalOluyor) reddet("İptal hesabı yalnızca kayıt iptalinde yazılır.");
+      if (!finans) reddet("Finans modülü kapalı; iptal hesabı yapılamaz.");
+      const sezon = onceki.sezonlar.find((z) => z.id === k.sezonId);
+      reddet(iptalHesabiEngeli(k.iptalHesabi, plan, eski!, sezon, onceki.kurum?.caymaBedeli, { bugun, rol }));
+      const h = k.iptalHesabi;
+      k.iptalHesabi = { ...h, duzeltme: h.duzeltme ? { neden: String(h.duzeltme.neden).trim(), kullanici: ad, zaman } : null };
+      for (const [id, tutar] of iptalTaksitleri(plan, h.hak)) beklenenTutar.set(id, tutar);
+      if (h.iade > 0) beklenenIade.set(k.id, h.iade);
+    } else if (eski?.iptalHesabi) k.iptalHesabi = eski.iptalHesabi;
+    else delete k.iptalHesabi;
   }
+  // Hesaplanan taksit tutarları pakette olmalı
+  for (const [id, tutar] of beklenenTutar) {
+    const eski = onceki.taksitler.find((x) => x.id === id);
+    if (eski && kurusa(eski.tutar) !== kurusa(tutar) && !taksitYaz.some((t) => t.id === id))
+      reddet("Taksitler iptal / indirim hesabına göre aynı işlemde güncellenmeli.");
+  }
+
+  // 1b) İade: yalnızca iptal paketinde, iptal hesabındaki tutarda; iptali yönetici + gerekçe
+  const iadeNolar = (onceki.iadeler ?? []).map((i) => i.makbuzNo);
+  const iadeli = new Set<string>();
+  for (const i of iadeYaz) {
+    const eski = (onceki.iadeler ?? []).find((x) => x.id === i.id);
+    if (eski) {
+      if (!finans) reddet("Finans modülü kapalı; iade iptal edilemez.");
+      reddet(finansIptalEngeli(eski, i, rol, "İade"));
+      continue;
+    }
+    if (iadeli.has(i.kayitId)) reddet("Bir kayıt iptalinde tek iade oluşturulur.");
+    iadeli.add(i.kayitId);
+    reddet(iadeEngeli(i, son, { finans, rol, beklenenTutar: beklenenIade.get(i.kayitId) }));
+    const kod = onceki.subeler.find((s) => s.id === i.subeId)?.kod ?? "SUB";
+    if (iadeNolar.includes(i.makbuzNo) || !i.makbuzNo.startsWith(`${kod}-I-`)) i.makbuzNo = yeniMakbuzNo(kod, iadeNolar, "I");
+    iadeNolar.push(i.makbuzNo);
+    i.kullanici = ad;
+    i.zaman = zaman;
+  }
+  for (const id of beklenenIade.keys()) if (!iadeli.has(id)) reddet("İptal hesabında iade çıktı; iade kaydı aynı işlemde oluşturulmalı.");
 
   // 2) Tahsilat ve iptal
   const yeniler: Tahsilat[] = [];
@@ -468,15 +554,15 @@ export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: st
   const farklar = odemeFarklari(yeniler, iptaller);
   for (const [id, f] of farklar) if (f !== 0 && !taksitYaz.some((t) => t.id === id)) reddet("Tahsilatın dağıtıldığı taksit aynı işlemde güncellenmeli.");
   for (const t of taksitYaz)
-    reddet(taksitYazmaEngeli(t, onceki.taksitler.find((x) => x.id === t.id), son, { finans, rol, odenenFarki: farklar.get(t.id) ?? 0 }));
+    reddet(taksitYazmaEngeli(t, onceki.taksitler.find((x) => x.id === t.id), son, { finans, rol, odenenFarki: farklar.get(t.id) ?? 0, beklenenTutar: beklenenTutar.get(t.id) }));
 
-  // 4) Gider ve virman
-  for (const g of giderYaz) reddet(giderEngeli(g, onceki.giderler.find((x) => x.id === g.id), onceki, { finans, genel, bugun }));
+  // 4) Gider ve virman (iptal: yönetici + gerekçe, ters kayıt)
+  for (const g of giderYaz) reddet(giderEngeli(g, onceki.giderler.find((x) => x.id === g.id), onceki, { finans, genel, bugun, rol }));
   if (virmanYaz.length) {
     const virmanlar = [...onceki.virmanlar];
     for (const v of virmanYaz) {
       const hareketler = kasaHareketleri({ ...onceki, virmanlar });
-      reddet(virmanEngeli(v, onceki.virmanlar.find((x) => x.id === v.id), onceki, { finans, genel, bugun, bakiye: (kasa) => kasaBakiyesi(hareketler, kasa) }));
+      reddet(virmanEngeli(v, onceki.virmanlar.find((x) => x.id === v.id), onceki, { finans, genel, bugun, rol, bakiye: (kasa) => kasaBakiyesi(hareketler, kasa) }));
       virmanlar.push(v);
     }
   }
@@ -733,7 +819,10 @@ export function tanimDenetle(onceki: Db, sonraki: Db, d: Degisiklik): void {
   }
 
   const tekil = d.tekil ?? {};
-  if ("kurum" in tekil) reddet(kurumDogrula(tekil.kurum as Kurum));
+  if ("kurum" in tekil) {
+    reddet(kurumDogrula(tekil.kurum as Kurum));
+    reddet(caymaBedeliEngeli((tekil.kurum as Kurum | undefined)?.caymaBedeli)); // Bölüm 05, karar 2026-11-08
+  }
   if ("fiyatListesi" in tekil) reddet(fiyatListesiDogrula(tekil.fiyatListesi, sonraki));
   if ("moduller" in tekil) {
     const m = tekil.moduller;
@@ -798,6 +887,7 @@ export function veliVerisi(db: Db, veliId: string): Db {
     tahsilatlar: [],
     giderler: [],
     virmanlar: [],
+    iadeler: [],
     islemler: [],
     iceAktarmalar: [],
     kvkk: [],
