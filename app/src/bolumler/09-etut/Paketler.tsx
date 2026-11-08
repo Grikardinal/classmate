@@ -5,7 +5,7 @@ import { useApp, useOturum } from "@/context/AppContext";
 import { BUGUN, aktifKayit, bildirimEkle, dersAdi, guncelle, islemYaz, personelAdi, tamAd, tanimlar, useDb, yeniId, type Db } from "@/data/store";
 import { tl } from "@/lib/kurallar";
 import { cn } from "@/lib/utils";
-import { paketBilgiMetni, paketBilgisiGitti, paketYeniEngeli } from "./kurallar";
+import { paketBilgiMetni, paketBildirimiGitti, paketYeniEngeli } from "./kurallar";
 import { tarihKisa } from "./ortak";
 
 export function Paketler() {
@@ -15,12 +15,16 @@ export function Paketler() {
   const [acik, setAcik] = React.useState(false);
   const liste = d.paketler.filter((p) => subeGorunur(aktifKayit(d, p.ogrenciId)?.subeId));
   const bitiyor = liste.filter((p) => p.kalan <= 1);
-  const gidecek = (x: Db) => bitiyor.filter((p) => !paketBilgisiGitti(x.gonderimler, p.ogrenciId, paketBilgiMetni(dersAdi(p.dersId), p.kalan)));
+  const gidecek = (x: Db) => bitiyor.filter((p) => !paketBildirimiGitti(x.gonderimler, p, dersAdi(p.dersId)));
   const bilgiVer = () => {
     const sayi = gidecek(d).length;
     if (!sayi) return toast("Bu paketler için bilgi daha önce gönderildi.");
     guncelle((x) => {
-      for (const p of gidecek(x)) bildirimEkle(x, "duyuru", p.ogrenciId, { baslik: "Özel ders paketi", metin: paketBilgiMetni(dersAdi(p.dersId), p.kalan) }, undefined, true);
+      for (const p of gidecek(x)) {
+        const n = x.gonderimler.length;
+        bildirimEkle(x, "paketBitiyor", p.ogrenciId, { metin: paketBilgiMetni(dersAdi(p.dersId), p.kalan) }, undefined, true);
+        for (const g of x.gonderimler.slice(n)) g.paketId = p.id;
+      }
       islemYaz(x, ad, "Paket bildirimi", `${sayi} veliye paket bitiyor bilgisi`);
     });
     toast(`${sayi} veliye “paket bitmek üzere” bilgisi gönderildi.`);

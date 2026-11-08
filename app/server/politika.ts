@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { BUGUN, aktifKayit, bildirimEkle, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
+import { BUGUN, aktifKayit, bildirimEkle, islemYaz, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -54,6 +54,7 @@ import {
   giderEngeli,
   iadeEngeli,
   iptalHesabiEngeli,
+  iptalPaketOzeti,
   iptalTaksitleri,
   kasaBakiyesi,
   kasaHareketleri,
@@ -73,7 +74,7 @@ import {
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
 import { devamsizlikBildirimiMi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
-import { etutBildirimiMi, etutBildirimiYineleniyor, hakDuser, musaitlikEngeli, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
+import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -447,6 +448,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   finansDenetle(onceki, temiz, a, zaman);
   onKayitDenetle(onceki, sonrakiDb, temiz, a);
+  etutKayitIptali(onceki, temiz);
   return temiz;
 }
 
@@ -646,9 +648,9 @@ export function odevDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor
  * Müsaitlik, randevu ve paket kuralları (ekranla ortak: src/bolumler/09-etut/kurallar.ts):
  * - modül kapalıyken yazılamaz, silinemez; etüt bildirimi kuyruğa girmez
  * - yeni randevu müsait slotta, ileri tarihte; öğretmen, öğrenci çakışması tüm şubelerde aranır; olusturan sunucudan
- * - var olan randevuda yalnızca durum değişir; planlıdan bir kez çıkılır
- * - paket hakkını sunucu yazar (istemcinin bayat değeri çift düşüm yapamaz); paket satışı öğretmene kapalı
- * - bildirim yeni randevuya bağlanır (randevuId); SMS izni kapalı veliye SMS gitmez
+ * - var olan randevuda yalnızca sonuç değişir; planlıdan bir kez çıkılır; yanlış sonucu yalnızca yönetici gerekçeyle düzeltir (kim, ne zaman sunucudan; işlem kaydına yazılır)
+ * - paket hakkını öğrenci bazında sunucu yazar (istemcinin bayat değeri çift düşüm yapamaz); paket satışı öğretmene kapalı
+ * - onay bildirimi yeni randevuya bağlanır (randevuId); yönetim iptali ve "paket bitiyor" bildirimini sunucu üretir; SMS izni kapalı veliye SMS gitmez
  * Şube kapsamı ve "öğretmen yalnızca kendi kaydı" yazmaDenetle() içinde. `temiz` yerinde güncellenir.
  */
 export function etutDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
@@ -665,14 +667,29 @@ export function etutDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor
 
   for (const m of (K.musaitlikler?.yaz ?? []) as unknown as Musaitlik[]) reddet(musaitlikEngeli(m, sonraki));
 
+  if ("ayarlar" in (temiz.tekil ?? {}) && !kontenjanGecerli((temiz.tekil.ayarlar as { etutGrupKontenjan?: unknown } | undefined)?.etutGrupKontenjan)) reddet("Grup etüdü kontenjanı 1 ile 50 arasında olmalı.");
+
   const hakDusumu = new Map<string, number>();
   const yeniRandevular: Randevu[] = [];
+  const iptalEdilen: Randevu[] = [];
+  const ad = `${a.personel.ad} ${a.personel.soyad}`;
+  const islem = (baslik: string, metin: string, subeId: string) => {
+    const kutu = { ...onceki, islemler: [] } as Db;
+    islemYaz(kutu, ad, baslik, metin, subeId);
+    (K.islemler ??= { yaz: [], sil: [] }).yaz.push(...kutu.islemler.map((x) => ({ ...x, zaman }) as unknown as Satir));
+  };
   const gruplar = ogretmen ? ogretmenGruplari(onceki, a.personel.id, an.bugun) : null;
   for (const r of (K.randevular?.yaz ?? []) as unknown as Randevu[]) {
     const eski = onceki.randevular.find((x) => x.id === r.id);
     if (eski) {
       reddet(randevuDurumEngeli(r, eski, { ...an, rol }));
-      if (r.durum !== eski.durum && hakDuser(eski, r.durum, onceki.ayarlar.gelmeyenHakDussun)) hakDusumu.set(eski.paketId!, (hakDusumu.get(eski.paketId!) ?? 0) + 1);
+      for (const [id, f] of sonucHakFarklari(eski, r, onceki.ayarlar.gelmeyenHakDussun)) hakDusumu.set(id, (hakDusumu.get(id) ?? 0) + f);
+      if (r.durum === "iptal" && eski.durum !== "iptal") iptalEdilen.push(r);
+      if ((r.duzeltmeler?.length ?? 0) > (eski.duzeltmeler?.length ?? 0)) {
+        const son = r.duzeltmeler![r.duzeltmeler!.length - 1];
+        r.duzeltmeler![r.duzeltmeler!.length - 1] = { neden: son.neden.trim(), kullanici: ad, zaman, onceki: { durum: eski.durum, sonuclar: eski.sonuclar ?? null } };
+        islem("Etüt sonucu düzeltme", `${eski.tarih} ${eski.bas}: ${eski.durum} → ${r.durum}. Gerekçe: ${son.neden.trim()}`, eski.subeId);
+      }
     } else {
       r.olusturan = "yonetim";
       reddet(randevuYeniEngeli(r, sonraki, { ...an, ogretmenGruplari: gruplar }));
@@ -692,20 +709,40 @@ export function etutDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor
     if (ogretmen) reddet("Öğretmen paket satışı yapamaz.");
     reddet(paketYeniEngeli(p, sonraki));
     const temizPaket: Paket = { ...p, kalan: p.toplam, fiyat: finans ? p.fiyat : 0, tarih: an.bugun };
-    if (temizPaket.fiyat > 0 && !(K.taksitler?.yaz ?? []).some((t) => t.ogrenciId === p.ogrenciId && t.tutar === p.fiyat && !onceki.taksitler.some((x) => x.id === t.id))) reddet("Paket ücreti ödeme planına aynı işlemde eklenmeli.");
+    if (temizPaket.fiyat > 0) {
+      const taksit = ((K.taksitler?.yaz ?? []) as unknown as Taksit[]).find((t) => t.ogrenciId === p.ogrenciId && t.tutar === p.fiyat && !t.paketId && !onceki.taksitler.some((x) => x.id === t.id));
+      if (!taksit) reddet("Paket ücreti ödeme planına aynı işlemde eklenmeli.");
+      else taksit.paketId = p.id;
+    }
     paketYaz.push(temizPaket as unknown as Satir);
   }
   // Kalan hak: istemcinin gönderdiği değil, o anki değerden düşülmüş hali
+  const bitenPaketler: Paket[] = [];
   for (const [id, adet] of hakDusumu) {
     const eski = onceki.paketler.find((x) => x.id === id);
-    if (eski) paketYaz.push({ ...eski, kalan: Math.max(0, eski.kalan - adet) } as unknown as Satir);
+    if (!eski || !adet) continue;
+    const yeni = { ...eski, kalan: kalanHakUygula(eski, adet) };
+    paketYaz.push(yeni as unknown as Satir);
+    if (eski.kalan > 1 && yeni.kalan === 1) bitenPaketler.push(yeni);
   }
   if (paketYaz.length) K.paketler = { yaz: paketYaz, sil: K.paketler?.sil ?? [] };
+  const dersAdi = (id: string) => onceki.dersler.find((x) => x.id === id)?.ad ?? "";
+  const sonPaket = (id: unknown) => (paketYaz as unknown as Paket[]).find((p) => p.id === id) ?? onceki.paketler.find((p) => p.id === id);
 
   if (K.gonderimler) {
     const mevcut: Gonderim[] = [...onceki.gonderimler];
     K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
-      if (!etutBildirimiMi(g.olay) || onceki.gonderimler.some((x) => x.id === g.id)) return true;
+      if (onceki.gonderimler.some((x) => x.id === g.id)) return true;
+      if (g.olay === "etutIptal") return false; // yalnızca sunucu üretir
+      if (g.olay === "paketBitiyor") {
+        // "Veliye bilgi ver" düğmesi: gerçek, bitmek üzere bir pakete bağlanır; otomatik gönderimle aynı tekilleştirme
+        const p = sonPaket(g.paketId);
+        if (!modulAcik || ogretmen || !p || p.ogrenciId !== g.ogrenciId || p.kalan > 1 || paketBildirimiGitti(mevcut, p, dersAdi(p.dersId))) return false;
+        mevcut.push(g);
+        smsIzniUygula(g, onceki.veliler);
+        return true;
+      }
+      if (!etutBildirimiMi(g.olay)) return true;
       if (!modulAcik) return false;
       const r = yeniRandevular.find((x) => x.ogrenciIds.includes(String(g.ogrenciId)) && !etutBildirimiYineleniyor(g, x.id, mevcut));
       if (!r) return false;
@@ -714,6 +751,54 @@ export function etutDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor
       smsIzniUygula(g, onceki.veliler);
       return true;
     }) as unknown as Satir[];
+  }
+
+  // Sunucunun ürettiği bildirimler (kutu: bildirimEkle yalnızca buraya yazar)
+  const uret = (olay: "etutIptal" | "paketBitiyor", ogrenciId: string, degisken: Record<string, string>, subeId: string | null, bag: Partial<Gonderim>) => {
+    const kutu = { ...onceki, gonderimler: [] as Gonderim[] } as Db;
+    bildirimEkle(kutu, olay, ogrenciId, degisken, zaman, true);
+    const hedef = (K.gonderimler ??= { yaz: [], sil: [] });
+    const gidenler = [...onceki.gonderimler, ...(hedef.yaz as unknown as Gonderim[])];
+    for (const g of kutu.gonderimler) {
+      Object.assign(g, bag);
+      if (subeId) g.subeId = subeId;
+      if (olay === "etutIptal" && etutBildirimiYineleniyor(g, String(bag.randevuId), gidenler)) continue;
+      smsIzniUygula(g, onceki.veliler);
+      hedef.yaz.push(g as unknown as Satir);
+    }
+  };
+  const ogretmenAdi = (id: string) => { const p = onceki.personel.find((x) => x.id === id); return p ? `${p.ad} ${p.soyad}` : ""; };
+  for (const r of iptalEdilen)
+    for (const o of r.ogrenciIds) uret("etutIptal", o, { tarih: r.tarih.split("-").reverse().join("."), saat: r.bas, ogretmen: ogretmenAdi(r.ogretmenId) }, r.subeId, { randevuId: r.id });
+  for (const p of bitenPaketler) {
+    const hedef = [...onceki.gonderimler, ...((K.gonderimler?.yaz ?? []) as unknown as Gonderim[])];
+    if (!paketBildirimiGitti(hedef, p, dersAdi(p.dersId))) uret("paketBitiyor", p.ogrenciId, { metin: paketBilgiMetni(dersAdi(p.dersId), p.kalan) }, null, { paketId: p.id });
+  }
+}
+
+/**
+ * Kayıt iptali (karar 2026-11-08): öğrencinin başka süren kaydı yoksa planlı randevuları kapanır, grup etüdünden yalnızca o çıkar.
+ * Ekran o randevuları göremeyebilir (ve 09 yetkisi gerekmez), bu yüzden sunucu yazar.
+ * İptal hesabı yazıldıysa (finans açık) bedeli hesaba katılan paketlerin kalan hakkı sıfırlanır.
+ */
+function etutKayitIptali(onceki: Db, temiz: Degisiklik): void {
+  const K = temiz.koleksiyonlar;
+  const iptaller = ((K.kayitlar?.yaz ?? []) as unknown as Kayit[]).filter((k) => {
+    const eski = onceki.kayitlar.find((x) => x.id === k.id);
+    return !!eski && eski.durum !== "iptal" && k.durum === "iptal";
+  });
+  if (!iptaller.length) return;
+  const son = farkUygula(onceki, temiz);
+  const yerlestir = (k: "randevular" | "paketler", s: Randevu | Paket) => {
+    const hedef = (K[k] ??= { yaz: [], sil: [] });
+    hedef.yaz = [...hedef.yaz.filter((x) => x.id !== s.id), s as unknown as Satir];
+  };
+  for (const k of iptaller) {
+    if (son.kayitlar.some((x) => x.ogrenciId === k.ogrenciId && x.id !== k.id && (x.durum === "aktif" || x.durum === "dondurulmus"))) continue;
+    const ids = new Set([k.ogrenciId]);
+    for (const r of son.randevular) if (r.durum === "planli" && r.ogrenciIds.includes(k.ogrenciId)) yerlestir("randevular", ogrencileriCikar(r, ids));
+    if (!k.iptalHesabi || onceki.kayitlar.find((x) => x.id === k.id)?.iptalHesabi) continue;
+    for (const id of iptalPaketOzeti(onceki, k).paketIds) yerlestir("paketler", { ...son.paketler.find((p) => p.id === id)!, kalan: 0 });
   }
 }
 
@@ -782,10 +867,13 @@ export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: st
       if (!iptalOluyor) reddet("İptal hesabı yalnızca kayıt iptalinde yazılır.");
       if (!finans) reddet("Finans modülü kapalı; iptal hesabı yapılamaz.");
       const sezon = onceki.sezonlar.find((z) => z.id === k.sezonId);
-      reddet(iptalHesabiEngeli(k.iptalHesabi, plan, eski!, sezon, onceki.kurum?.caymaBedeli, { bugun, rol }));
+      // Kullanılmamış özel ders paketi bedeli (Bölüm 09, karar 2026-11-08)
+      const paket = iptalPaketOzeti(onceki, k);
+      reddet(iptalHesabiEngeli(k.iptalHesabi, plan, eski!, sezon, onceki.kurum?.caymaBedeli, { bugun, rol, paketIade: paket.iade }));
       const h = k.iptalHesabi;
       k.iptalHesabi = { ...h, duzeltme: h.duzeltme ? { neden: String(h.duzeltme.neden).trim(), kullanici: ad, zaman } : null };
-      for (const [id, tutar] of iptalTaksitleri(plan, h.hak)) beklenenTutar.set(id, tutar);
+      for (const [id, tutar] of iptalTaksitleri(plan, h.hak - paket.iade)) beklenenTutar.set(id, tutar);
+      for (const [id, tutar] of paket.taksitler) beklenenTutar.set(id, tutar);
       if (h.iade > 0) beklenenIade.set(k.id, h.iade);
     } else if (eski?.iptalHesabi) k.iptalHesabi = eski.iptalHesabi;
     else delete k.iptalHesabi;

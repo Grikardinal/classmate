@@ -27,6 +27,7 @@ import {
 import { telefonNormalize, tl } from "@/lib/kurallar";
 import { esc, yazdir } from "@/lib/yazdir";
 import { EN_FAZLA_VELI, YAKINLIKLAR, mukerrerOgrenci, ogrenciDogrula, telefonSahibiVeli, veliDogrula } from "./kurallar";
+import { ogrenciSonucu } from "../09-etut/kurallar";
 import { KayitDurumRozeti, bosVeli, tarihTR } from "./ortak";
 
 /** Genel bilgi: yalnızca kişisel alanlar kaydedilir (veli bağları, durum ve notlar kendi işlemleriyle değişir) */
@@ -329,7 +330,7 @@ export function EtutSekmesi({ o }: { o: Ogrenci }) {
                 <Td className="tabular-nums">{r.bas}–{r.bit}</Td>
                 <Td>{personelAdi(d, r.ogretmenId)}</Td>
                 <Td className="capitalize">{r.tur}</Td>
-                <Td><Badge variant={r.durum === "yapildi" ? "success" : r.durum === "planli" ? "default" : r.durum === "gelmedi" ? "danger" : "secondary"}>{r.durum}</Badge></Td>
+                <Td><Badge variant={ogrenciSonucu(r, o.id) === "yapildi" ? "success" : ogrenciSonucu(r, o.id) === "planli" ? "default" : ogrenciSonucu(r, o.id) === "gelmedi" ? "danger" : "secondary"}>{ogrenciSonucu(r, o.id)}</Badge></Td>
               </tr>
             ))}
           </tbody>

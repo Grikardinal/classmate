@@ -77,7 +77,7 @@ import {
   type Veli,
 } from "@/data/store";
 import { devamsizlikOzeti, gunFarki, haftaGunu, iyelik, tarihEkle, telefonNormalize, tl } from "@/lib/kurallar";
-import { bosSlotlar, etutTurAd } from "@/bolumler/09-etut";
+import { bosSlotlar, etutTurAd, ogrenciDersiCakisir, ogrenciSonucu } from "@/bolumler/09-etut";
 import { api, ApiHatasi } from "@/lib/api";
 import { Yukleniyor, useSunucuDurumu } from "@/layout/Giris";
 import { cn } from "@/lib/utils";
@@ -694,7 +694,7 @@ function PortalEtut() {
   const randevular = d.randevular.filter((r) => r.ogrenciIds.includes(cocuk.id)).sort((a, b) => b.tarih.localeCompare(a.tarih));
   // Veli varsayılan olarak çocuğunun kayıtlı olduğu şubedeki slotları görür
   const gunler = Array.from({ length: 10 }, (_, i) => tarihEkle(BUGUN, i));
-  const slotlar = gunler.flatMap((t) => bosSlotlar(d, t, undefined, k.subeId).map((s) => ({ ...s, tarih: t })));
+  const slotlar = gunler.flatMap((t) => bosSlotlar(d, t, undefined, k.subeId).filter((s) => !ogrenciDersiCakisir(d, cocuk.id, t, s.bas, s.bit)).map((s) => ({ ...s, tarih: t })));
   const iptalEdilebilir = (tarih: string, bas: string) => (new Date(`${tarih}T${bas}`).getTime() - new Date(simdiZaman()).getTime()) / 36e5 >= d.ayarlar.etutIptalSaat;
 
   const al = async () => {
@@ -714,7 +714,7 @@ function PortalEtut() {
             {r.durum === "planli" && r.tarih >= BUGUN ? (
               iptalEdilebilir(r.tarih, r.bas) ? <Button size="sm" variant="ghost" className="text-danger" onClick={() => iptal(r.id)}>İptal</Button> : <span className="text-xs text-muted-foreground">İptal süresi geçti</span>
             ) : (
-              <Badge variant={r.durum === "yapildi" ? "success" : r.durum === "iptal" ? "secondary" : r.durum === "gelmedi" ? "danger" : "default"}>{r.durum}</Badge>
+              <Badge variant={ogrenciSonucu(r, cocuk.id) === "yapildi" ? "success" : ogrenciSonucu(r, cocuk.id) === "iptal" ? "secondary" : ogrenciSonucu(r, cocuk.id) === "gelmedi" ? "danger" : "default"}>{ogrenciSonucu(r, cocuk.id)}</Badge>
             )}
           </CardContent></Card>
         ))}

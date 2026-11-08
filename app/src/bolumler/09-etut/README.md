@@ -13,6 +13,7 @@ Grup dersleri dışındaki ek destek derslerini planlamak: öğretmen müsaitli�
 | `Randevular.tsx` | Randevu listesi, sonuç işaretleme, iptal |
 | `Musaitlikler.tsx` | Müsaitlik ekleme, silme |
 | `Paketler.tsx` | Özel ders paketleri, "bitmek üzere" bilgisi |
+| `SonucDialog.tsx` | Grup etüdünde öğrenci bazında sonuç, yönetici düzeltmesi |
 | `ortak.ts` | Durum rozeti, tarih biçimi |
 | `kurallar.ts` | **Saf iş kuralları** (ekran, portal, sunucu ortak; yalnızca göreli içe aktarma) |
 | `kurallar.test.ts`, `sunucu.test.ts` | Birim testleri; `yazmaDenetle → etutDenetle`, okuma, otomasyon, veli API testleri |
@@ -31,12 +32,12 @@ Sunucu: `app/server/politika.ts · etutDenetle`, `okumaSuz`, `veliVerisi`; `app/
 **Yeni randevu** (`randevuYeniEngeli`; ekran, veli API ve `etutDenetle` aynı kuralı çalıştırır)
 - Slot müsaitlik ızgarasında, süre 40 dakika, başlangıç gelecekte.
 - Bireysel, online, özel tek öğrenci; grup etüdü bir veya daha çok öğrenci. Öğrenciler aktif ve bu şubede kayıtlı.
-- Çakışma: tatil, öğretmenin randevusu, öğretmenin grup dersi, aynı öğrencinin başka randevusu.
+- Çakışma: tatil, öğretmenin randevusu, öğretmenin grup dersi, aynı öğrencinin başka randevusu ve kendi grup dersi. Grup etüdü kontenjanı aşılamaz.
 - Online link `http(s)` ile başlar; diğer türlerde link boştur.
 - Öğretmen yalnızca kendi adına ve kendi gruplarındaki öğrenciye randevu verir. `olusturan` sunucudan gelir.
 
 **Randevu durumu** (`randevuDurumEngeli`)
-- Var olan randevuda yalnızca durum değişir. Planlıdan bir kez çıkılır; sonuçlanan değişmez.
+- Var olan randevuda yalnızca sonuç değişir. Planlıdan bir kez çıkılır; sonuçlanan randevu yalnızca gerekçeli yönetici düzeltmesiyle değişir (bkz. Kararlar 4).
 - Yapıldı / gelmedi başlangıç saatinden sonra işaretlenir. İptal her zaman yapılabilir; başlamış randevuyu öğretmen iptal edemez. Randevu silinemez.
 
 **Paket**
@@ -58,7 +59,7 @@ Sunucu: `app/server/politika.ts · etutDenetle`, `okumaSuz`, `veliVerisi`; `app/
 **Bildirim**
 - Randevu onayı `etutHatirlatma` olayıyla birincil veliye gider ve randevuya bağlanır (`Gonderim.randevuId`). Karşılığı olmayan bildirim düşer; aynı veliye ikinci onay gitmez. SMS izni kapalı veliye SMS gitmez.
 - 1 saat kala hatırlatma her randevu için bir kez üretilir, SMS iznine uyar.
-- "Veliye bilgi ver" aynı kalan hak için bir kez gider.
+- Yönetim iptali ve "paket bitiyor" bildirimleri için bkz. Kararlar 3 ve 5.
 
 ## Testler
 `npx vitest run src/bolumler/09-etut` (`app/` içinde). Kurallar ve politika testlerinde saat sabittir. Veli API testleri gömülü veritabanında çalışır; tarihi gerçek bugünden ileriye doğru hesaplar.
@@ -68,13 +69,16 @@ Sunucu: `app/server/politika.ts · etutDenetle`, `okumaSuz`, `veliVerisi`; `app/
 - Şube müdürü dışındaki personel, başka şubedeki programı görmez; ekran slotu boş gösterebilir, sunucu reddeder.
 - Paket satışının taksiti `no: 99` ile ek kalem olarak yazılır (mevcut davranış).
 
-## Açık sorular
-1. **Öğrencinin kendi grup dersiyle çakışma.** Şu an yalnızca öğretmenin grup dersi denetleniyor. Öneri: öğrencinin grup dersi saatine randevu engellensin.
-2. **Grup etüdü kontenjanı.** Modelde üst sınır yok. Öneri: `ayarlar` altına kurum geneli sınır (örn. 6) eklensin.
-3. **Yönetimin iptalinde veliye bildirim.** Şu an gitmiyor, olay tanımı da yok. Öneri: `etutIptal` olayı eklensin; öğretmene de gitsin.
-4. **Öğretmene onay ve hatırlatma.** Doküman "veli + öğretmen" diyor; personele bildirim kanalı yok, yalnızca veliye gidiyor. Öneri: Bölüm 10 / 13 personel bildirimi gelince bağlansın; o zamana kadar öğretmen takvimden izlesin.
-5. **Yanlış işaretlenen sonucun düzeltilmesi.** Sonuçlanan randevu değişmiyor. Öneri: yalnızca yöneticiye, gerekçeyle ve paket hakkı iadesiyle düzeltme.
-6. **Paket bitiyor bilgisinin otomatik gitmesi.** Doküman otomasyon sayıyor, şu an düğmeyle gönderiliyor. Öneri: kalan 1'e düşünce sunucu bir kez göndersin.
-7. **Etüdün hak edişe etkisi.** Şu an etüt hak edişe yansımıyor. Öneri: yapılan etütler için kurum ayarıyla (ders başı ücret) dahil edilsin.
-8. **Etüt yoklaması.** Doküman "07 ile aynı mantık" diyor; şu an randevu başına tek sonuç var, grup etüdünde öğrenci bazında kayıt yok. Öneri: grup etüdü için öğrenci bazında sonuç eklensin.
-9. **Öğrenci ayrılınca planlı randevular.** Kayıt iptalinde randevu ve paket otomatik kapanmıyor. Öneri: Bölüm 04 iptal akışı planlı randevuları iptal etsin, paket iadesi finans kararına bağlansın.
+## Kararlar (2026-11-08)
+**Kapandı (2026-11-08)**
+1. **Öğrencinin kendi grup dersiyle çakışma:** engellenir (`ogrenciDersiCakisir`). Tatil veya iptal günündeki ders sayılmaz. Portal bu slotları göstermez.
+2. **Grup etüdü kontenjanı:** `ayarlar.etutGrupKontenjan`, alan yoksa 6, 1–50 arası. Ayar Bölüm 14 Sistem ayarlarında; yalnızca genel yönetici değiştirir.
+3. **Yönetim iptalinde bildirim:** `etutIptal` olayını sunucu üretir, randevuya bağlar, SMS iznini uygular. İstemci bu olayı yazamaz. Veli kendi iptal edince gitmez. Eksik olay `veriyiOnar` ile eklenir.
+4. **Sonuç düzeltme:** yalnızca şube müdürü veya genel yönetici, en az 3 karakter gerekçeyle. Hak sunucuda iade edilir veya düşülür. Gerekçe, kim, ne zaman `Randevu.duzeltmeler` içinde; işlem kaydına yazılır. İptale çevrilemez.
+5. **Paket bitiyor:** kalan hak 1'e düşünce sunucu `paketBitiyor` olayını gönderir. Paket başına bir kez gider; hak iadesinden sonra tekrar 1'e düşerse gitmez. "Veliye bilgi ver" düğmesi aynı tekilleştirmeye dahildir.
+6. **Öğrenci bazında sonuç:** `Randevu.sonuclar`; en az bir öğrenci geldiyse randevu "yapıldı" sayılır. Grup etüdünde her öğrencinin paketi `Randevu.paketIds` ile ayrı işlenir (paketin dersi randevunun dersi olmalı). Alan yoksa durum tüm öğrencilere uygulanır. Veliye yalnızca kendi çocuğunun sonucu gider, düzeltme gerekçesi gitmez.
+7. **Kayıt iptali** (`etutKayitIptali`): öğrencinin başka süren (aktif, dondurulmuş) kaydı yoksa planlı randevuları sunucu kapatır; grup etüdünden yalnızca o çıkar. Finans açıksa kullanılmamış hak bedeli = ücret × kalan / toplam (`iptalPaketOzeti`). Paket taksitinde ödenen, kullanılan bedeli aşıyorsa fark `IptalHesabi.paketIade` olarak iadeye eklenir, kalan borç varsa ondan mahsup edilir. Ödenmemiş kısım taksitten silinir, paketin kalan hakkı sıfırlanır. Taksiti bulunamayan eski paketten iade çıkmaz. Finans kapalıysa veya kullanıcı iptal hesabı görmüyorsa yalnızca randevular kapanır.
+
+**Bölüm 10 / 13'e devredildi**
+- **Öğretmene onay ve hatırlatma** (Bölüm 10): personel bildirim kanalıyla birlikte değerlendirilecek. O zamana kadar öğretmen takvimden izler.
+- **Etüdün hak edişe yansıması** (Bölüm 13): kurum ayarıyla ders başı ücret.

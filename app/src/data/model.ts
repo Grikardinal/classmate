@@ -164,6 +164,8 @@ export type IptalHesabi = {
   odenen: number;
   iade: number;
   kalanBorc: number;
+  /** kullanılmamış, ödenmiş özel ders paketi bedeli (Bölüm 09, karar 2026-11-08); iade tutarına dahildir */
+  paketIade?: number;
   /** yönetici kullanılan / cayma tutarını değiştirdiyse gerekçe (kullanıcı ve zaman sunucudan) */
   duzeltme: { neden: string; kullanici: string; zaman: string } | null;
 };
@@ -256,7 +258,14 @@ export type Randevu = {
   link: string;
   paketId: string | null;
   olusturan: "yonetim" | "veli";
+  /** Grup etüdünde öğrenci bazında paket (karar 2026-11-08). Yoksa paketId tek öğrenciye aittir. */
+  paketIds?: Record<string, string>;
+  /** Öğrenci bazında sonuç (karar 2026-11-08). Yoksa durum tüm öğrencilere uygulanır. */
+  sonuclar?: Record<string, RandevuSonucu>;
+  /** Sonuç düzeltmeleri: kim ve ne zaman sunucudan (karar 2026-11-08) */
+  duzeltmeler?: { neden: string; kullanici: string; zaman: string; onceki: { durum: Randevu["durum"]; sonuclar: Record<string, RandevuSonucu> | null } }[];
 };
+export type RandevuSonucu = "yapildi" | "gelmedi";
 export type Paket = { id: string; ogrenciId: string; ogretmenId: string; dersId: string; toplam: number; kalan: number; fiyat: number; tarih: string };
 
 export type OlayKey =
@@ -270,6 +279,8 @@ export type OlayKey =
   | "odevHatirlatma"
   | "odevDuzeltme"
   | "etutHatirlatma"
+  | "etutIptal"
+  | "paketBitiyor"
   | "duyuru"
   | "taksitHatirlatma"
   | "gecikmisOdeme"
@@ -296,8 +307,10 @@ export type Gonderim = {
   subeId: string;
   kanal: "push" | "sms";
   metin: string;
-  /** Etüt onayının randevusu (sunucu yazar; tekilleştirme, Bölüm 09) */
+  /** Etüt onayı / iptalinin randevusu (sunucu yazar; tekilleştirme, Bölüm 09) */
   randevuId?: string;
+  /** "Paket bitiyor" bildiriminin paketi (sunucu yazar; tekilleştirme, Bölüm 09) */
+  paketId?: string;
   /** Devamsızlık bildirimlerinin oturumu (sunucu yazar; düzeltme eşleşmesi, Bölüm 07) */
   oturumId?: string;
   /** Ödev bildirimlerinin ödevi (sunucu yazar; tekrar engeli, Bölüm 08) */
@@ -321,7 +334,7 @@ export type Duyuru = {
   okuyanVeliIds: string[];
 };
 
-export type Taksit = { id: string; kayitId: string; ogrenciId: string; veliId: string; subeId: string; no: number; vade: string; tutar: number; odenen: number };
+export type Taksit = { id: string; kayitId: string; ogrenciId: string; veliId: string; subeId: string; no: number; vade: string; tutar: number; odenen: number; paketId?: string };
 export type Tahsilat = {
   id: string;
   makbuzNo: string;
@@ -334,6 +347,8 @@ export type Tahsilat = {
   dagilim: { taksitId: string; tutar: number }[];
   iptal: { neden: string; kullanici: string; zaman: string } | null;
   kullanici: string;
+  /** Özel ders paketi satışının taksiti (Bölüm 09; sunucu yazar) */
+  paketId?: string;
 };
 /** Yönetici iptali (gerekçe + kim + ne zaman); kasada iptal gününe ters kayıt düşer (karar 2026-11-08) */
 export type FinansIptal = { neden: string; kullanici: string; zaman: string };
@@ -366,6 +381,8 @@ export type Ayarlar = {
   subeGecisDk: number;
   yoklamaHatirlatmaDk: number;
   etutIptalSaat: number;
+  /** Grup etüdü en fazla öğrenci (kurum geneli, karar 2026-11-08); alan yoksa 6 */
+  etutGrupKontenjan?: number;
   gelmeyenHakDussun: boolean;
   hatirlatmaGunleri: number[];
   saklamaAyAday: number;
@@ -488,6 +505,8 @@ export const varsayilanOlaylar: BildirimOlayi[] = [
   { key: "odevHatirlatma", ad: "Ödev teslim hatırlatması (1 gün önce)", kanal: "push", aktif: true, sablon: "Yarın teslim: {ders} — {baslik}", modul: "odev" },
   { key: "odevDuzeltme", ad: "Ödev durumu düzeltmesi", kanal: "push", aktif: true, sablon: "{ogrenci} {ders} ödevi ({baslik}) için gönderilen “teslim etmedi” bilgisi düzeltildi.", modul: "odev" },
   { key: "etutHatirlatma", ad: "Etüt hatırlatma", kanal: "push", aktif: true, sablon: "{ogrenci} için {tarih} {saat} etüt randevusu ({ogretmen}). {sube_adi}", modul: "etut" },
+  { key: "etutIptal", ad: "Etüt iptali", kanal: "push", aktif: true, sablon: "{ogrenci} için {tarih} {saat} etüt randevusu iptal edildi ({ogretmen}). {sube_adi}", modul: "etut" },
+  { key: "paketBitiyor", ad: "Özel ders paketi bitiyor", kanal: "push", aktif: true, sablon: "{ogrenci}: {metin} {sube_adi}", modul: "etut" },
   { key: "duyuru", ad: "Duyuru", kanal: "push", aktif: true, sablon: "{baslik}: {metin}" },
   { key: "onKayitTesekkur", ad: "Ön kayıt teşekkür", kanal: "sms", aktif: true, sablon: "Bilgi talebiniz için teşekkürler, sizi en kısa sürede arayacağız. {sube_adi} {sube_telefonu}", modul: "onKayit" },
   { key: "taksitHatirlatma", ad: "Taksit hatırlatma (vade −3 gün)", kanal: "push+sms", aktif: true, sablon: "{ogrenci} için {tutar} tutarındaki taksitin vadesi {vade}. {sube_adi}", finans: true },
@@ -510,6 +529,7 @@ export const varsayilanAyarlar: Ayarlar = {
   subeGecisDk: 30,
   yoklamaHatirlatmaDk: 15,
   etutIptalSaat: 12,
+  etutGrupKontenjan: 6,
   gelmeyenHakDussun: true,
   hatirlatmaGunleri: [-3, 0, 3, 10],
   saklamaAyAday: 12,

@@ -68,6 +68,15 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-08 | Rehber öğretmenin ödev vermesi | Yalnızca **kendi dersinden** | Bölüm 08 ek iş ✅ |
 | 2026-11-08 | Ödev kontrolünü düzeltme süresi | Öğretmene **7 gün**, sonrası yönetici | Bölüm 08 ek iş ✅ |
 | 2026-11-08 | "Yapmadı" düzeltilince | Bildirim gitmişse veliye **tek düzeltme mesajı** | Bölüm 08 ek iş ✅ |
+| 2026-11-08 | Öğrencinin grup dersiyle çakışan randevu | **Engellenir** | Bölüm 09 ek iş ✅ |
+| 2026-11-08 | Grup etüdü kontenjanı | Kurum geneli ayar, **varsayılan 6** | Bölüm 09 ek iş ✅ |
+| 2026-11-08 | Yönetim randevu iptali | Veliye **bildirim gider** | Bölüm 09 ek iş ✅ |
+| 2026-11-08 | Öğretmene etüt onay/hatırlatma bildirimi | Personel bildirim kanalıyla birlikte değerlendirilir | Bölüm 10 |
+| 2026-11-08 | Yanlış işaretlenen etüt sonucu | **Yalnızca yönetici**, gerekçeyle, paket hakkı iadesiyle düzeltir | Bölüm 09 ek iş ✅ |
+| 2026-11-08 | "Paket bitiyor" bildirimi | Kalan hak 1'e düşünce sunucu **bir kez otomatik** gönderir | Bölüm 09 ek iş ✅ |
+| 2026-11-08 | Etüdün öğretmen hak edişine yansıması | Kurum ayarıyla **ders başı ücret** | Bölüm 13 |
+| 2026-11-08 | Grup etüdünde yoklama | **Öğrenci bazında** sonuç | Bölüm 09 ek iş ✅ |
+| 2026-11-08 | Kayıt iptalinde randevu ve paket | Planlı randevular iptal edilir; paket hakkı/iadesi finans açıksa iptal hesabına bağlanır | Bölüm 09 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

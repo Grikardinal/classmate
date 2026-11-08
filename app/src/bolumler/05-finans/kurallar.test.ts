@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ornekVeriUret, type Gider, type Iade, type Kayit, type Rol, type Tahsilat, type Taksit, type Virman } from "@/data/model";
+import { ornekVeriUret, type Db, type Gider, type Iade, type Kayit, type Rol, type Tahsilat, type Taksit, type Virman } from "@/data/model";
 import { taksitPlani } from "@/lib/kurallar";
 import {
   caymaBedeliEngeli,
@@ -9,6 +9,7 @@ import {
   iadeEngeli,
   iptalHesabiEngeli,
   iptalHesabiHesapla,
+  iptalPaketOzeti,
   iptalTaksitleri,
   kullanilanTutar,
   planiYenidenDagit,
@@ -449,5 +450,35 @@ describe("gider, virman ve iade iptali: ters kayıt", () => {
     expect(kasaBakiyesi(h, "s1:banka", "2026-11-06")).toBe(50);
     expect(kasaBakiyesi(h, "s1:banka")).toBe(0);
     expect(gunSonuOzeti(h, "s1:nakit", "2026-11-07")).toEqual({ acilis: 620, giris: 180, cikis: 0, kapanis: 800 });
+  });
+});
+
+describe("iptal hesabı · özel ders paketi (Bölüm 09, karar 2026-11-08)", () => {
+  const kayitlar = [{ id: "k1", ogrenciId: "o", durum: "iptal" }] as Db["kayitlar"];
+  const p = { id: "pk", ogrenciId: "o", ogretmenId: "x", dersId: "d", toplam: 8, kalan: 4, fiyat: 800, tarih: "2026-10-01" };
+  const t = { id: "t", kayitId: "k1", ogrenciId: "o", veliId: "v", subeId: "s", no: 99, vade: "2026-10-01", tutar: 800, odenen: 600 };
+  const k = { id: "k1", ogrenciId: "o" };
+  it("ödenenin kullanılanı aşan kısmı iade, ödenmeyen kısım silinir", () => {
+    const o = iptalPaketOzeti({ paketler: [p], taksitler: [t], kayitlar }, k);
+    expect(o.iade).toBe(200);
+    expect(o.taksitler.get("t")).toBe(600);
+    expect(o.paketIds).toEqual(["pk"]);
+  });
+  it("az ödendiyse iade yok, kalan borç kullanılan kadar", () => {
+    const o = iptalPaketOzeti({ paketler: [p], taksitler: [{ ...t, odenen: 100 }], kayitlar }, k);
+    expect(o.iade).toBe(0);
+    expect(o.taksitler.get("t")).toBe(400);
+  });
+  it("başka süren kayıt varsa, hak bittiyse veya taksit yoksa iade çıkmaz", () => {
+    expect(iptalPaketOzeti({ paketler: [p], taksitler: [t], kayitlar: [...kayitlar, { id: "k2", ogrenciId: "o", durum: "aktif" }] as Db["kayitlar"] }, k).paketIds).toEqual([]);
+    expect(iptalPaketOzeti({ paketler: [{ ...p, kalan: 0 }], taksitler: [t], kayitlar }, k).iade).toBe(0);
+    expect(iptalPaketOzeti({ paketler: [p], taksitler: [], kayitlar }, k)).toMatchObject({ iade: 0, paketIds: ["pk"] });
+  });
+  it("paket iadesi hesabın iadesine eklenir, kalan borçtan mahsup edilir", () => {
+    const h = iptalHesabiHesapla([{ tutar: 1000, odenen: 0, no: 1 }], { tarih: "2026-09-01" }, { baslangic: "2026-09-01", bitis: "2026-09-01" }, null, "2026-09-02", undefined, 300);
+    expect(h).toMatchObject({ hak: 1000, kalanBorc: 700, iade: 0, paketIade: 300 });
+    const y = iptalHesabiHesapla([{ tutar: 1000, odenen: 1000, no: 1 }], { tarih: "2026-09-01" }, { baslangic: "2026-09-01", bitis: "2026-09-01" }, null, "2026-09-02", undefined, 300);
+    expect(y).toMatchObject({ iade: 300, kalanBorc: 0 });
+    expect(iptalHesabiHesapla([], { tarih: "2026-09-01" }, undefined, null, "2026-09-02")).not.toHaveProperty("paketIade");
   });
 });

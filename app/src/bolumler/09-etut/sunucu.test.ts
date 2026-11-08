@@ -21,7 +21,8 @@ const ham = ornekVeriUret();
 const mu: Musaitlik = { id: "mu1", ogretmenId: "p4", subeId: "s1", gun: 2, bas: "14:00", bit: "16:00" };
 const db: Db = {
   ...ham,
-  program: ham.program.map((p) => ({ ...p, baslangic: "2026-09-01" })).filter((p) => p.ogretmenId !== "p4" || p.gun !== 2),
+  // Sınanan salı günü grup dersi yok; öğrenci / öğretmen çakışması ayrıca kurallar.test.ts'te
+  program: ham.program.map((p) => ({ ...p, baslangic: "2026-09-01" })).filter((p) => p.gun !== 2),
   tatiller: [], iptaller: [], randevular: [], paketler: [], gonderimler: [], musaitlikler: [mu],
   moduller: { ...ham.moduller, etut: true, finans: true },
 };
@@ -206,6 +207,113 @@ describe("bildirim", () => {
   });
 });
 
+describe("ek kararlar (2026-11-08)", () => {
+  const paketli = (r: Randevu, p: Paket = paket(), ek: Partial<Db> = {}): Db => ({ ...db, randevular: [r], paketler: [p], ayarlar: { ...db.ayarlar, gelmeyenHakDussun: false }, ...ek });
+  const duz = (neden: string) => [{ neden, kullanici: "sahte", zaman: "2000-01-01T00:00", onceki: { durum: "planli" as const, sonuclar: null } }];
+  const yaz = (r: Randevu, p: Partial<Randevu>, a: Aktor, k: Db) => dene((x) => (x.randevular = x.randevular.map((y) => (y.id === r.id ? { ...y, ...p } : y))), a, k);
+
+  it("yönetim iptali veliye bildirim üretir; randevuya bağlı, SMS izni uygulanır", () => {
+    const r = randevu();
+    const k: Db = { ...db, randevular: [r], veliler: db.veliler.map((v) => (v.id === VELI ? { ...v, izinSms: false, pushAcik: false } : v)), olaylar: db.olaylar.map((o) => (o.key === "etutIptal" ? { ...o, kanal: "sms" as typeof o.kanal } : o)) };
+    const g = durumYap(r, "iptal", MUDUR, k)().koleksiyonlar.gonderimler!.yaz as unknown as Gonderim[];
+    expect(g).toHaveLength(1);
+    expect(g[0]).toMatchObject({ olay: "etutIptal", randevuId: "rX", veliId: VELI, subeId: "s1", kanal: "push", maliyet: 0 });
+  });
+  it("istemci etutIptal bildirimi uyduramaz", () => {
+    expect(dene((x) => x.gonderimler.push(gonderim("g9", { olay: "etutIptal" })))().koleksiyonlar.gonderimler!.yaz).toEqual([]);
+  });
+  it("sonuç düzeltme: hak iade edilir; kim, ne zaman sunucudan; işlem kaydına yazılır", () => {
+    const r = gecmis({ paketId: "pkX", durum: "yapildi" });
+    const t = yaz(r, { durum: "gelmedi", duzeltmeler: duz(" yanlış işaret ") }, MUDUR, paketli(r))();
+    expect(t.koleksiyonlar.paketler!.yaz[0]).toMatchObject({ kalan: 3 });
+    expect((t.koleksiyonlar.randevular!.yaz[0] as unknown as Randevu).duzeltmeler![0]).toMatchObject({ neden: "yanlış işaret", kullanici: expect.not.stringContaining("sahte"), zaman: ZAMAN, onceki: { durum: "yapildi", sonuclar: null } });
+    expect(t.koleksiyonlar.islemler!.yaz[0]).toMatchObject({ zaman: ZAMAN, subeId: "s1" });
+  });
+  it("gelmedi → yapıldı düzeltmesinde hak düşer; öğretmen düzeltemez; gerekçesiz olmaz", () => {
+    const r = gecmis({ paketId: "pkX", durum: "gelmedi" });
+    expect(yaz(r, { durum: "yapildi", duzeltmeler: duz("yanlış") }, MUDUR, paketli(r))().koleksiyonlar.paketler!.yaz[0]).toMatchObject({ kalan: 1 });
+    reddedilir(yaz(r, { durum: "yapildi", duzeltmeler: duz("yanlış") }, OGRETMEN, paketli(r)), /şube müdürü/);
+    reddedilir(yaz(r, { durum: "yapildi" }, MUDUR, paketli(r)), /gerekçeli/);
+  });
+  it("grup etüdünde öğrenci bazında hak", () => {
+    const pa = paket({ id: "pa", kalan: 3 });
+    const pb = paket({ id: "pb", ogrenciId: OGR2, kalan: 3 });
+    const r = gecmis({ tur: "grup", ogrenciIds: [OGR, OGR2], paketIds: { [OGR]: "pa", [OGR2]: "pb" } });
+    const k: Db = { ...db, randevular: [r], paketler: [pa, pb], ayarlar: { ...db.ayarlar, gelmeyenHakDussun: false } };
+    const t = yaz(r, { durum: "yapildi", sonuclar: { [OGR]: "yapildi", [OGR2]: "gelmedi" } }, MUDUR, k)();
+    expect(t.koleksiyonlar.paketler!.yaz).toEqual([{ ...pa, kalan: 2 }]);
+  });
+  it("kalan 1'e düşünce bir kez otomatik bildirim; önceden gittiyse tekrar yok", () => {
+    const r = gecmis({ paketId: "pkX" });
+    const g = (k: Db) => (durumYap(r, "yapildi", MUDUR, k)().koleksiyonlar.gonderimler?.yaz ?? []) as unknown as Gonderim[];
+    expect(g(paketli(r))[0]).toMatchObject({ olay: "paketBitiyor", paketId: "pkX", veliId: VELI });
+    expect(g(paketli(r, paket(), { gonderimler: [gonderim("eski", { olay: "paketBitiyor", paketId: "pkX" })] }))).toEqual([]);
+    expect(g(paketli(r, paket({ kalan: 3 })))).toEqual([]);
+  });
+  it("düğme bildirimi tekilleşmeye dahil; gerçek pakete bağlı olmalı", () => {
+    const k = { ...db, paketler: [paket({ kalan: 1 })] };
+    const gonder = (kaynak: Db, p: Partial<Gonderim>) => dene((x) => x.gonderimler.push(gonderim("gb", { olay: "paketBitiyor", ...p })), MUDUR, kaynak)().koleksiyonlar.gonderimler!.yaz;
+    expect(gonder(k, { paketId: "pkX" })).toHaveLength(1);
+    expect(gonder(k, { paketId: "yok" })).toEqual([]);
+    expect(gonder({ ...k, gonderimler: [gonderim("eski", { olay: "paketBitiyor", paketId: "pkX" })] }, { paketId: "pkX" })).toEqual([]);
+    expect(gonder({ ...db, paketler: [paket({ kalan: 3 })] }, { paketId: "pkX" })).toEqual([]);
+  });
+  it("kontenjan ayarı geçersizse reddedilir; yalnızca genel yönetici değiştirir", () => {
+    const ayar = (n: number, a: Aktor) => dene((x) => (x.ayarlar = { ...x.ayarlar, etutGrupKontenjan: n }), a);
+    expect(ayar(8, YONETICI)).not.toThrow();
+    reddedilir(ayar(0, YONETICI), /kontenjan/);
+    reddedilir(ayar(8, MUDUR));
+  });
+
+  describe("kayıt iptali", () => {
+    const K = aktifKayit(db, OGR)!;
+    const tumIptal = (x: Db, ek: object = {}) => {
+      x.kayitlar = x.kayitlar.map((y) => (y.id === K.id ? { ...y, durum: "iptal" as const, ...ek } : y));
+      if (!x.kayitlar.some((y) => y.ogrenciId === OGR && y.durum !== "iptal")) x.ogrenciler = x.ogrenciler.map((o) => (o.id === OGR ? { ...o, durum: "ayrildi" as const } : o));
+    };
+    const tekKayit: Db = { ...db, kayitlar: db.kayitlar.filter((k) => k.ogrenciId !== OGR || k.id === K.id) };
+    const iptalEt = (k: Db) => dene((x) => tumIptal(x), YONETICI, k);
+    const yazilan = (t: ReturnType<ReturnType<typeof dene>>) => (t.koleksiyonlar.randevular?.yaz ?? []) as unknown as Randevu[];
+    it("planlı randevu iptal olur, sonuçlanan değişmez", () => {
+      const t = iptalEt({ ...tekKayit, randevular: [randevu(), gecmis({ id: "rY", durum: "yapildi" })] })();
+      expect(yazilan(t)).toHaveLength(1);
+      expect(yazilan(t)[0]).toMatchObject({ id: "rX", durum: "iptal" });
+    });
+    it("grup etüdünden yalnızca o öğrenci çıkar", () => {
+      const t = iptalEt({ ...tekKayit, randevular: [randevu({ tur: "grup", ogrenciIds: [OGR, OGR2] })] })();
+      expect(yazilan(t)[0]).toMatchObject({ durum: "planli", ogrenciIds: [OGR2] });
+    });
+    it("başka süren kaydı varsa randevu durur", () => {
+      const k: Db = { ...db, kayitlar: [...tekKayit.kayitlar, { ...K, id: "kIki", grupId: "gBaska" }], randevular: [randevu()] };
+      expect(yazilan(iptalEt(k)())).toEqual([]);
+    });
+    it("iptal hesabındaki paket iadesi sunucuda denetlenir; paket hakkı sıfırlanır", () => {
+      // 8 dersin 4'ü kullanılmadı: 800 ₺ paketin 400'ü kullanıldı; 600 ödendi → 200 iade edilebilir
+      const p = paket({ toplam: 8, kalan: 4, fiyat: 800 });
+      const t = { id: "tkP", kayitId: K.id, ogrenciId: OGR, veliId: VELI, subeId: "s1", no: 99, vade: BUGUN, tutar: 800, odenen: 600, paketId: "pkX" };
+      const k: Db = { ...tekKayit, taksitler: [t], paketler: [p], randevular: [] };
+      const hesap = { tarih: BUGUN, toplam: 0, kullanilan: 0, cayma: 0, hak: 0, odenen: 0, iade: 200, kalanBorc: 0, paketIade: 200, duzeltme: null };
+      const iade = { id: "iaX", makbuzNo: "x", zaman: "z", kayitId: K.id, ogrenciId: OGR, veliId: VELI, subeId: "s1", yontem: "nakit" as const, tutar: 200, kullanici: "k", iptal: null };
+      const paketle = (h: object, tutar = 600) =>
+        dene((x) => {
+          tumIptal(x, { iptalHesabi: h });
+          x.taksitler = [{ ...t, tutar }];
+          x.iadeler = [...(x.iadeler ?? []), iade];
+        }, YONETICI, k);
+      const son = paketle(hesap)();
+      expect(son.koleksiyonlar.paketler!.yaz[0]).toMatchObject({ id: "pkX", kalan: 0 });
+      reddedilir(paketle({ ...hesap, paketIade: 500, iade: 500 }), /paket iadesi/);
+      reddedilir(paketle(hesap, 800), /iptal \/ indirim/);
+    });
+    it("finans kapalıyken yalnızca randevular iptal olur", () => {
+      const k: Db = { ...tekKayit, moduller: { ...tekKayit.moduller, finans: false }, paketler: [paket()], randevular: [randevu()] };
+      const t = iptalEt(k)();
+      expect(yazilan(t)[0].durum).toBe("iptal");
+      expect(t.koleksiyonlar.paketler).toBeUndefined();
+    });
+  });
+});
+
 describe("görünürlük", () => {
   const veri: Db = { ...db, musaitlikler: [mu, { ...mu, id: "m7", ogretmenId: "p7" }], randevular: [randevu(), randevu({ id: "r7", ogretmenId: "p7", ogrenciIds: [OGR2] }), randevu({ id: "rB", bas: "14:40", bit: "15:20", ogrenciIds: [BASKA] })], paketler: [paket(), paket({ id: "p7k", ogretmenId: "p7" })] };
   it("öğretmen yalnızca kendi randevu, müsaitlik ve paketini görür; paket ücreti gitmez", () => {
@@ -242,7 +350,7 @@ describe("veli API", () => {
   beforeAll(async () => {
     vt = await baglan();
     app = await uygulamaOlustur({ vt, sms: new KonsolSms(), push: null, demo: true, uretim: false });
-    app.durum.db.program = app.durum.db.program.filter((p) => p.ogretmenId !== "p5");
+    app.durum.db.program = [];
     app.durum.db.tatiller = [];
   }, 60_000);
   afterAll(() => undefined);

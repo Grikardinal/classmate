@@ -49,7 +49,7 @@ import {
 } from "./kimlik";
 import { izinEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { smsIzniUygula } from "../src/bolumler/08-odevler/kurallar";
-import { SLOT_DOLU, veliIptalEngeli, veliIptalSonucu, veliRandevuPlani } from "../src/bolumler/09-etut/kurallar";
+import { SLOT_DOLU, ogrencileriCikar, veliIptalEngeli, veliRandevuPlani } from "../src/bolumler/09-etut/kurallar";
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
@@ -541,7 +541,7 @@ export async function uygulamaOlustur(s: Secenekler) {
       }
       sonuc.engel = veliIptalEngeli(r, x.ayarlar.etutIptalSaat, { bugun: BUGUN, simdi: SIMDI });
       if (sonuc.engel) return;
-      x.randevular = x.randevular.map((y) => (y.id === id ? veliIptalSonucu(y, cocukIds) : y));
+      x.randevular = x.randevular.map((y) => (y.id === id ? ogrencileriCikar(y, cocukIds) : y));
       islemYaz(x, tamAd(v), "Etüt iptali (veli)", `${r.tarih} ${r.bas}`, r.subeId);
     });
     if (sonuc.bulunamadi) return hata(c, "Randevu bulunamadı.", 404);

@@ -1021,7 +1021,7 @@ function Kvkk() {
 function SistemAyarlari() {
   const d = useDb();
   const { ad, rol } = useOturum();
-  const [f, setF] = React.useState<Ayarlar>(d.ayarlar);
+  const [f, setF] = React.useState<Ayarlar>({ etutGrupKontenjan: 6, ...d.ayarlar });
   const duzenler = rol === "genel-yonetici";
   const sayi = (k: keyof Ayarlar, etiket: string, ipucu?: string) => (
     <Field label={etiket} hint={ipucu}>
@@ -1044,6 +1044,7 @@ function SistemAyarlari() {
           {sayi("yoklamaHatirlatmaDk", "Yoklama hatırlatma (dk)", "07 · ders başlangıcından sonra")}
           {sayi("subeGecisDk", "Şubeler arası geçiş süresi (dk)", "06 · altındaysa uyarı")}
           {sayi("etutIptalSaat", "Etüt iptal süresi (saat)", "09 · veli en geç")}
+          {sayi("etutGrupKontenjan", "Grup etüdü kontenjanı", "09 · en fazla öğrenci")}
           {sayi("saklamaAyAday", "Vazgeçen aday saklama (ay)", "14 · KVKK")}
           {sayi("saklamaAyOgrenci", "Ayrılan öğrenci saklama (ay)", "14 · KVKK")}
           {sayi("oturumGun", "Veli oturum süresi (gün)", "11 · SMS kodu maliyetini düşürür")}

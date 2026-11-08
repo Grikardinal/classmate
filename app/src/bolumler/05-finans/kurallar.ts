@@ -293,6 +293,7 @@ export function iptalHesabiHesapla(
   ayar: CaymaBedeli | undefined | null,
   tarih: string,
   ozel?: { kullanilan?: number; cayma?: number },
+  paketIade = 0,
 ): IptalHesabi {
   const p = plan.filter((t) => t.no < EK_KALEM_NO);
   const toplamK = p.reduce((s, t) => s + kurusa(t.tutar), 0);
@@ -301,6 +302,7 @@ export function iptalHesabiHesapla(
   const kullanilanK = sinirla(ozel?.kullanilan ?? kullanilanTutar(toplamK / 100, hizmetBaslangici(kayit.tarih, sezon), sezon?.bitis, tarih));
   const caymaK = sinirla(ozel?.cayma ?? caymaTutari(ayar, toplamK / 100));
   const hakK = Math.min(toplamK, kullanilanK + caymaK);
+  const paketK = Math.max(0, kurusa(paketIade));
   return {
     tarih,
     toplam: toplamK / 100,
@@ -308,8 +310,9 @@ export function iptalHesabiHesapla(
     cayma: caymaK / 100,
     hak: hakK / 100,
     odenen: odenenK / 100,
-    iade: Math.max(0, odenenK - hakK) / 100,
-    kalanBorc: Math.max(0, hakK - odenenK) / 100,
+    iade: Math.max(0, odenenK + paketK - hakK) / 100,
+    kalanBorc: Math.max(0, hakK - odenenK - paketK) / 100,
+    ...(paketK > 0 ? { paketIade: paketK / 100 } : {}),
     duzeltme: null,
   };
 }
@@ -330,6 +333,31 @@ export function iptalTaksitleri(plan: Taksit[], hak: number): Map<string, number
   return m;
 }
 
+/**
+ * Kayıt iptalinde özel ders paketleri (karar 2026-11-08). Öğrencinin başka süren kaydı varsa paketler durur.
+ * Kullanılmamış hakların bedeli = ücret × kalan / toplam. Paketin taksitinde ödenen, kullanılan bedeli aşıyorsa fark iade edilebilir;
+ * ödenmemiş kısım taksitten silinir (taksit tutarı = kullanılan bedel ile ödenenin büyüğü). Taksiti bulunamayan paketten iade çıkmaz.
+ */
+export function iptalPaketOzeti(d: Pick<Db, "paketler" | "taksitler" | "kayitlar">, k: Pick<Kayit, "id" | "ogrenciId">): { iade: number; taksitler: Map<string, number>; paketIds: string[] } {
+  const sonuc = { iade: 0, taksitler: new Map<string, number>(), paketIds: [] as string[] };
+  if (d.kayitlar.some((x) => x.ogrenciId === k.ogrenciId && x.id !== k.id && (x.durum === "aktif" || x.durum === "dondurulmus"))) return sonuc;
+  let iadeK = 0;
+  for (const p of d.paketler) {
+    if (p.ogrenciId !== k.ogrenciId || p.kalan <= 0 || p.fiyat <= 0) continue;
+    sonuc.paketIds.push(p.id);
+    // Eski satışlarda bağ alanı yok: ek kalem + aynı tutar + paket tarihi eşleşir
+    const t =
+      d.taksitler.find((x) => x.paketId === p.id) ??
+      d.taksitler.find((x) => !x.paketId && x.ogrenciId === p.ogrenciId && x.no >= EK_KALEM_NO && kurusa(x.tutar) === kurusa(p.fiyat) && x.vade === p.tarih && !sonuc.taksitler.has(x.id));
+    if (!t) continue;
+    const kullanilanK = kurusa(p.fiyat) - Math.round((kurusa(p.fiyat) * Math.min(p.kalan, p.toplam)) / p.toplam);
+    iadeK += Math.max(0, kurusa(t.odenen) - kullanilanK);
+    sonuc.taksitler.set(t.id, Math.max(kurusa(t.odenen), kullanilanK) / 100);
+  }
+  sonuc.iade = iadeK / 100;
+  return sonuc;
+}
+
 const HESAP_ALANLARI = ["toplam", "kullanilan", "cayma", "hak", "odenen", "iade", "kalanBorc"] as const;
 
 /**
@@ -342,15 +370,17 @@ export function iptalHesabiEngeli(
   kayit: Pick<Kayit, "tarih">,
   sezon: { baslangic: string; bitis: string } | undefined,
   ayar: CaymaBedeli | undefined | null,
-  secenek: { bugun: string; rol: Rol },
+  secenek: { bugun: string; rol: Rol; paketIade?: number },
 ): Hata {
   const x = h as Partial<IptalHesabi>;
+  const paketIade = secenek.paketIade ?? 0;
   if (!x || typeof x !== "object") return "İptal hesabı geçersiz.";
   if (x.tarih !== secenek.bugun) return "İptal hesabı bugünün tarihiyle yapılmalı.";
   if (HESAP_ALANLARI.some((a) => !tutarGecerli(x[a], { sifirOlur: true }))) return "İptal hesabındaki tutarlar negatif olmayan, kuruş hassasiyetinde olmalı.";
-  const varsayilan = iptalHesabiHesapla(plan, kayit, sezon, ayar, secenek.bugun);
+  if (kurusa(x.paketIade ?? 0) !== kurusa(paketIade)) return "İptal hesabındaki paket iadesi uyuşmuyor; hesap yeniden yapılmalı.";
+  const varsayilan = iptalHesabiHesapla(plan, kayit, sezon, ayar, secenek.bugun, undefined, paketIade);
   if (kurusa(x.kullanilan!) > kurusa(varsayilan.toplam) || kurusa(x.cayma!) > kurusa(varsayilan.toplam)) return "Kullanılan tutar ve cayma bedeli plan toplamını aşamaz.";
-  const beklenen = iptalHesabiHesapla(plan, kayit, sezon, ayar, secenek.bugun, { kullanilan: x.kullanilan, cayma: x.cayma });
+  const beklenen = iptalHesabiHesapla(plan, kayit, sezon, ayar, secenek.bugun, { kullanilan: x.kullanilan, cayma: x.cayma }, paketIade);
   if (HESAP_ALANLARI.some((a) => kurusa(x[a]!) !== kurusa(beklenen[a]))) return "İptal hesabı ödeme planıyla uyuşmuyor; hesap yeniden yapılmalı.";
   const duzeltildi = kurusa(x.kullanilan!) !== kurusa(varsayilan.kullanilan) || kurusa(x.cayma!) !== kurusa(varsayilan.cayma);
   const yonetici = yoneticiMi(secenek.rol);

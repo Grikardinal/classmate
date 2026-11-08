@@ -4,7 +4,7 @@
  * server/uygulama.ts · /api/veli/randevu) aynı kuralları kullanır. Sunucu da içe aktardığı için yalnızca göreli içe aktarma kullanılır.
  * Hata dönen fonksiyonlar Türkçe mesaj, sorun yoksa null döndürür.
  */
-import { BUGUN, SIMDI, aktifKayit, type Db, type DoluSaat, type EtutTuru, type Gonderim, type Musaitlik, type Paket, type Randevu, type Rol } from "../../data/model";
+import { BUGUN, SIMDI, aktifKayit, type Db, type DoluSaat, type EtutTuru, type Gonderim, type Musaitlik, type Paket, type ProgramSatiri, type Randevu, type RandevuSonucu, type Rol } from "../../data/model";
 import { dakika, haftaGunu } from "../../lib/kurallar";
 import type { Hata } from "../01-kurum-yapisi/kurallar";
 import { satirGecerliMi, tarihGecerli } from "../06-ders-programi/kurallar";
@@ -30,12 +30,14 @@ export function tatilMi(d: Pick<Db, "tatiller">, tarih: string, subeId: string):
   return d.tatiller.some((t) => t.tarih === tarih && (!t.subeId || t.subeId === subeId));
 }
 
-/** Öğretmenin o tarihte gerçekten yapılan grup dersleri (tatil ve iptal hariç) ve görünmeyen şubelerdeki dolu saatleri */
-export function ogretmenDersAraliklari(d: Pick<Db, "program" | "gruplar" | "dersSaatleri" | "sezonlar" | "tatiller" | "iptaller" | "doluSaatler">, ogretmenId: string, tarih: string): { bas: number; bit: number }[] {
+type DersVerisi = Pick<Db, "program" | "gruplar" | "dersSaatleri" | "sezonlar" | "tatiller" | "iptaller">;
+
+/** O tarihte gerçekten yapılan grup dersleri (tatil, iptal, sezon dışı hariç) */
+function yapilanDersler(d: DersVerisi, tarih: string, sec: (p: ProgramSatiri) => boolean): { bas: number; bit: number }[] {
   const gun = haftaGunu(tarih);
   const sonuc: { bas: number; bit: number }[] = [];
   for (const p of d.program) {
-    if (p.ogretmenId !== ogretmenId || p.gun !== gun || !satirGecerliMi(p, tarih)) continue;
+    if (p.gun !== gun || !satirGecerliMi(p, tarih) || !sec(p)) continue;
     const g = d.gruplar.find((x) => x.id === p.grupId);
     const h = d.dersSaatleri.find((x) => x.id === p.saatId);
     if (!g || !h) continue;
@@ -44,6 +46,19 @@ export function ogretmenDersAraliklari(d: Pick<Db, "program" | "gruplar" | "ders
     if (tatilMi(d, tarih, g.subeId) || d.iptaller.some((i) => i.oturumId === `${p.id}_${tarih}`)) continue;
     sonuc.push({ bas: dakika(h.baslangic), bit: dakika(h.bitis) });
   }
+  return sonuc;
+}
+
+/** Karar 2026-11-08: öğrencinin kendi grup dersiyle çakışan randevu engellenir (tatil / iptal günündeki ders sayılmaz) */
+export function ogrenciDersiCakisir(d: DersVerisi & Pick<Db, "kayitlar">, ogrenciId: string, tarih: string, bas: string, bit: string): boolean {
+  const gruplar = new Set(d.kayitlar.filter((k) => k.ogrenciId === ogrenciId && k.durum === "aktif").map((k) => k.grupId));
+  return yapilanDersler(d, tarih, (p) => gruplar.has(p.grupId)).some((x) => ortusur(x.bas, x.bit, dakika(bas), dakika(bit)));
+}
+
+/** Öğretmenin o tarihte yapılan grup dersleri ve görünmeyen şubelerdeki dolu saatleri */
+export function ogretmenDersAraliklari(d: DersVerisi & Pick<Db, "doluSaatler">, ogretmenId: string, tarih: string): { bas: number; bit: number }[] {
+  const gun = haftaGunu(tarih);
+  const sonuc = yapilanDersler(d, tarih, (p) => p.ogretmenId === ogretmenId);
   for (const s of d.doluSaatler ?? [])
     if (s.ogretmenId === ogretmenId && s.gun === gun && satirGecerliMi(s, tarih)) sonuc.push({ bas: dakika(s.bas), bit: dakika(s.bit) });
   return sonuc;
@@ -96,19 +111,46 @@ export function musaitlikEngeli(m: Musaitlik, d: Pick<Db, "musaitlikler" | "pers
 
 /* ---------- Paket hakkı ---------- */
 
+/** Öğrenci → paket. Grup etüdünde paketIds, tek öğrencilide paketId geçerlidir. */
+export function randevuPaketleri(r: Pick<Randevu, "paketId" | "paketIds" | "ogrenciIds">): Record<string, string> {
+  if (r.paketIds) return r.paketIds;
+  return r.paketId && r.ogrenciIds.length === 1 ? { [r.ogrenciIds[0]]: r.paketId } : {};
+}
+
 /** Planlı randevulara ayrılmış haklar düşüldükten sonra kalan hak (aynı hak iki randevuya verilmesin) */
-export function kullanilabilirHak(p: Pick<Paket, "id" | "kalan">, randevular: Pick<Randevu, "id" | "paketId" | "durum">[], haricId?: string): number {
-  return p.kalan - randevular.filter((r) => r.paketId === p.id && r.durum === "planli" && r.id !== haricId).length;
+export function kullanilabilirHak(p: Pick<Paket, "id" | "kalan">, randevular: Pick<Randevu, "id" | "paketId" | "paketIds" | "ogrenciIds" | "durum">[], haricId?: string): number {
+  return p.kalan - randevular.filter((r) => r.durum === "planli" && r.id !== haricId && Object.values(randevuPaketleri(r)).includes(p.id)).length;
 }
 
 export function uygunPaket(d: Pick<Db, "paketler" | "randevular">, ogrenciId: string, ogretmenId: string): Paket | undefined {
   return d.paketler.find((p) => p.ogrenciId === ogrenciId && p.ogretmenId === ogretmenId && kullanilabilirHak(p, d.randevular) > 0);
 }
 
-/** Durum değişikliği paket hakkını düşürür mü? Yapıldı düşer; gelmedi kurum ayarına bağlı. */
-export function hakDuser(eski: Pick<Randevu, "durum" | "paketId">, yeniDurum: Randevu["durum"], gelmeyenHakDussun: boolean): boolean {
-  return !!eski.paketId && eski.durum === "planli" && (yeniDurum === "yapildi" || (yeniDurum === "gelmedi" && gelmeyenHakDussun));
+/** Öğrencinin sonucu: öğrenci bazında kayıt yoksa randevu durumu (eski kayıtlar) */
+export function ogrenciSonucu(r: Pick<Randevu, "durum" | "sonuclar">, ogrenciId: string): Randevu["durum"] {
+  return r.sonuclar?.[ogrenciId] ?? r.durum;
 }
+
+/** En az bir öğrenci geldiyse randevu yapılmıştır */
+export const sonuclardanDurum = (sonuclar: Record<string, RandevuSonucu>): RandevuSonucu => (Object.values(sonuclar).includes("yapildi") ? "yapildi" : "gelmedi");
+
+const hakTuketir = (durum: Randevu["durum"], gelmeyenHakDussun: boolean) => durum === "yapildi" || (durum === "gelmedi" && gelmeyenHakDussun);
+
+/**
+ * Durum / sonuç değişikliğinin öğrenci bazında paket etkisi: paket → düşülecek hak (eksi = iade).
+ * Yapıldı düşer; gelmedi kurum ayarına bağlı; iptal düşmez. Düzeltmede fark işlenir.
+ */
+export function sonucHakFarklari(eski: Randevu, yeni: Pick<Randevu, "durum" | "sonuclar">, gelmeyenHakDussun: boolean): Map<string, number> {
+  const fark = new Map<string, number>();
+  for (const [ogr, paketId] of Object.entries(randevuPaketleri(eski))) {
+    const f = Number(hakTuketir(ogrenciSonucu(yeni, ogr), gelmeyenHakDussun)) - Number(hakTuketir(ogrenciSonucu(eski, ogr), gelmeyenHakDussun));
+    if (f) fark.set(paketId, (fark.get(paketId) ?? 0) + f);
+  }
+  return fark;
+}
+
+/** Kalan hak sıfırın altına, toplamın üstüne çıkmaz */
+export const kalanHakUygula = (p: Pick<Paket, "kalan" | "toplam">, dusum: number) => Math.min(p.toplam, Math.max(0, p.kalan - dusum));
 
 export function paketYeniEngeli(p: Paket, d: Db): Hata {
   const o = d.ogrenciler.find((x) => x.id === p.ogrenciId);
@@ -133,6 +175,10 @@ export function paketDegisimEngeli(p: Paket, eski: Paket, hakDusumu: number): Ha
 export type RandevuBaglami = An & { ogretmenGruplari: Set<string> | null };
 const TURLER = Object.keys(etutTurAd) as EtutTuru[];
 
+/** Karar 2026-11-08: kurum geneli, alan yoksa 6 */
+export const grupKontenjani = (a: { etutGrupKontenjan?: number } | undefined) => a?.etutGrupKontenjan ?? 6;
+export const kontenjanGecerli = (n: unknown) => n === undefined || (Number.isInteger(n) && (n as number) >= 1 && (n as number) <= 50);
+
 /** Çakışmalar: tatil, öğretmenin randevusu ve grup dersi, öğrencinin başka randevusu */
 export function randevuCakismaEngeli(r: Randevu, d: Db): Hata {
   const bas = dakika(r.bas);
@@ -141,7 +187,8 @@ export function randevuCakismaEngeli(r: Randevu, d: Db): Hata {
   if (ogretmenRandevuDolu(d, r.ogretmenId, r.tarih, bas, bit, r.id)) return SLOT_DOLU;
   if (ogretmenDersAraliklari(d, r.ogretmenId, r.tarih).some((x) => ortusur(x.bas, x.bit, bas, bit))) return "Öğretmenin bu saatte grup dersi var.";
   const ogrenciDolu = d.randevular.some((x) => x.id !== r.id && x.tarih === r.tarih && x.durum !== "iptal" && x.ogrenciIds.some((o) => r.ogrenciIds.includes(o)) && ortusur(dakika(x.bas), dakika(x.bit), bas, bit));
-  return ogrenciDolu ? "Öğrencinin bu saatte başka bir randevusu var." : null;
+  if (ogrenciDolu) return "Öğrencinin bu saatte başka bir randevusu var.";
+  return r.ogrenciIds.some((o) => ogrenciDersiCakisir(d, o, r.tarih, r.bas, r.bit)) ? "Öğrencinin bu saatte grup dersi var." : null;
 }
 
 /** Müsaitlik içinde ve slot ızgarasına oturan bir başlangıç mı? */
@@ -162,6 +209,7 @@ export function randevuYeniEngeli(r: Randevu, d: Db, b: RandevuBaglami): Hata {
   if (!Array.isArray(r.ogrenciIds) || !r.ogrenciIds.length) return "Öğrenci seçilmeli.";
   if (new Set(r.ogrenciIds).size !== r.ogrenciIds.length) return "Aynı öğrenci iki kez seçilemez.";
   if (r.tur !== "grup" && r.ogrenciIds.length !== 1) return "Bu etüt türü tek öğrencilidir.";
+  if (r.tur === "grup" && r.ogrenciIds.length > grupKontenjani(d.ayarlar)) return `Grup etüdü en fazla ${grupKontenjani(d.ayarlar)} öğrencilidir.`;
   for (const id of r.ogrenciIds) {
     const k = d.ogrenciler.find((o) => o.id === id)?.durum === "aktif" ? aktifKayit(d, id) : undefined;
     if (!k || k.subeId !== r.subeId) return "Öğrencinin bu şubede aktif kaydı yok.";
@@ -169,26 +217,57 @@ export function randevuYeniEngeli(r: Randevu, d: Db, b: RandevuBaglami): Hata {
   }
   if (!d.dersler.some((x) => x.id === r.dersId)) return "Ders bulunamadı.";
   if (r.tur === "online" ? !/^https?:\/\/\S+$/.test(String(r.link)) || r.link.length > 500 : r.link !== "") return r.tur === "online" ? "Görüşme linki http(s) ile başlamalı." : "Görüşme linki yalnızca online etütte girilir.";
-  if (r.paketId) {
-    const p = d.paketler.find((x) => x.id === r.paketId);
-    if (!p || r.ogrenciIds.length !== 1 || p.ogrenciId !== r.ogrenciIds[0] || p.ogretmenId !== r.ogretmenId) return "Paket bu öğrenci ve öğretmene ait değil.";
+  if (r.paketId && r.ogrenciIds.length !== 1) return "Paket bu öğrenci ve öğretmene ait değil.";
+  if (r.paketIds && r.tur !== "grup") return "Öğrenci bazında paket yalnızca grup etüdünde kullanılır.";
+  const paketler = Object.entries(randevuPaketleri(r));
+  for (const [ogr, paketId] of paketler) {
+    const p = d.paketler.find((x) => x.id === paketId);
+    if (!p || !r.ogrenciIds.includes(ogr) || p.ogrenciId !== ogr || p.ogretmenId !== r.ogretmenId) return "Paket bu öğrenci ve öğretmene ait değil.";
     if (p.dersId !== r.dersId) return "Randevunun dersi paketin dersi olmalı.";
     if (kullanilabilirHak(p, d.randevular, r.id) < 1) return "Paketin kullanılabilir hakkı kalmadı.";
-  } else if (r.tur === "ozel") return "Özel ders için aktif paket gerekli.";
+  }
+  if (r.tur === "ozel" && !paketler.length) return "Özel ders için aktif paket gerekli.";
   return randevuCakismaEngeli(r, d);
 }
 
-const ALANLAR: (keyof Randevu)[] = ["ogretmenId", "subeId", "tarih", "bas", "bit", "tur", "ogrenciIds", "dersId", "link", "paketId", "olusturan"];
+const ALANLAR: (keyof Randevu)[] = ["ogretmenId", "subeId", "tarih", "bas", "bit", "tur", "ogrenciIds", "dersId", "link", "paketId", "paketIds", "olusturan"];
+const esit = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const SONUCLANMIS = "Sonuçlanmış randevu yalnızca gerekçeli düzeltmeyle değişir.";
+export const yoneticiDuzeltir = (rol: Rol) => rol === "genel-yonetici" || rol === "sube-muduru";
 
-/** Var olan randevuda yalnızca durum değişir; planlıdan bir kez çıkılır */
+/** Öğrenci bazında sonuçlar: tüm öğrenciler, geçerli değer, randevu durumuyla uyumlu. Yoksa durum herkese uygulanır. */
+function sonuclarEngeli(s: Randevu): Hata {
+  if (s.durum !== "yapildi" && s.durum !== "gelmedi") return "Randevu durumu hatalı.";
+  if (!s.sonuclar) return null;
+  const anahtarlar = Object.keys(s.sonuclar);
+  if (anahtarlar.length !== s.ogrenciIds.length || !s.ogrenciIds.every((o) => anahtarlar.includes(o))) return "Her öğrenci için sonuç girilmeli.";
+  if (Object.values(s.sonuclar).some((x) => x !== "yapildi" && x !== "gelmedi")) return "Öğrenci sonucu hatalı.";
+  return s.durum === sonuclardanDurum(s.sonuclar) ? null : "Randevu durumu öğrenci sonuçlarıyla uyuşmuyor.";
+}
+
+/** Var olan randevuda yalnızca sonuç değişir. Planlıdan bir kez çıkılır; yanlış sonucu yalnızca yönetici gerekçeyle düzeltir. */
 export function randevuDurumEngeli(s: Randevu, eski: Randevu, b: An & { rol: Rol }): Hata {
-  if (ALANLAR.some((a) => JSON.stringify(s[a]) !== JSON.stringify(eski[a]))) return "Randevu bilgileri değiştirilemez; iptal edip yenisini oluşturun.";
-  if (s.durum === eski.durum) return null;
-  if (eski.durum !== "planli") return "Sonuçlanmış randevu değiştirilemez.";
-  if (s.durum !== "yapildi" && s.durum !== "gelmedi" && s.durum !== "iptal") return "Randevu durumu hatalı.";
-  if (s.durum !== "iptal" && !baslamisMi(eski, b)) return "Başlamamış randevu sonuçlandırılamaz.";
-  if (s.durum === "iptal" && b.rol === "ogretmen" && baslamisMi(eski, b)) return "Başlamış randevuyu yalnızca yönetim iptal edebilir.";
-  return null;
+  if (ALANLAR.some((a) => !esit(s[a], eski[a]))) return "Randevu bilgileri değiştirilemez; iptal edip yenisini oluşturun.";
+  const duzeltmeDegisti = !esit(s.duzeltmeler ?? [], eski.duzeltmeler ?? []);
+  if (s.durum === eski.durum && esit(s.sonuclar, eski.sonuclar) && !duzeltmeDegisti) return null;
+  if (eski.durum === "yapildi" || eski.durum === "gelmedi") {
+    const onceki = eski.duzeltmeler ?? [];
+    const yeni = s.duzeltmeler ?? [];
+    if (yeni.length !== onceki.length + 1 || !esit(yeni.slice(0, -1), onceki)) return SONUCLANMIS;
+    if (!yoneticiDuzeltir(b.rol)) return "Sonucu yalnızca şube müdürü veya genel yönetici düzeltebilir.";
+    if (typeof yeni[yeni.length - 1]?.neden !== "string" || yeni[yeni.length - 1].neden.trim().length < 3) return "Düzeltme gerekçesi en az 3 karakter olmalı.";
+    if (s.durum === eski.durum && esit(s.sonuclar, eski.sonuclar)) return "Sonuç değişmedi.";
+    return sonuclarEngeli(s);
+  }
+  if (eski.durum === "iptal") return "İptal edilmiş randevu değiştirilemez.";
+  if (duzeltmeDegisti) return "Düzeltme yalnızca sonuçlanmış randevuda yapılır.";
+  if (s.durum === "iptal") {
+    if (s.sonuclar) return "İptalde öğrenci sonucu girilmez.";
+    return b.rol === "ogretmen" && baslamisMi(eski, b) ? "Başlamış randevuyu yalnızca yönetim iptal edebilir." : null;
+  }
+  const hata = sonuclarEngeli(s);
+  if (hata) return hata;
+  return baslamisMi(eski, b) ? null : "Başlamamış randevu sonuçlandırılamaz.";
 }
 
 /* ---------- Veli ---------- */
@@ -215,10 +294,13 @@ export function veliIptalEngeli(r: Pick<Randevu, "tarih" | "bas" | "durum">, ipt
   return kalan <= 0 || kalan < iptalSaat ? `Randevular en geç ${iptalSaat} saat öncesine kadar iptal edilebilir.` : null;
 }
 
-/** Grup etüdünde veli yalnızca kendi çocuğunu çıkarır; başka öğrenci kalmadıysa randevu iptal olur */
-export function veliIptalSonucu(r: Randevu, cocukIds: Set<string>): Randevu {
-  const kalan = r.ogrenciIds.filter((o) => !cocukIds.has(o));
-  return kalan.length ? { ...r, ogrenciIds: kalan } : { ...r, durum: "iptal" };
+/** Grup etüdünden yalnızca verilen öğrenciler çıkar (veli iptali, kayıt iptali); öğrenci kalmadıysa randevu iptal olur */
+export function ogrencileriCikar(r: Randevu, ids: Set<string>): Randevu {
+  const kalan = r.ogrenciIds.filter((o) => !ids.has(o));
+  if (!kalan.length) return { ...r, durum: "iptal" };
+  const y: Randevu = { ...r, ogrenciIds: kalan };
+  if (r.paketIds) y.paketIds = Object.fromEntries(Object.entries(r.paketIds).filter(([o]) => !ids.has(o)));
+  return y;
 }
 
 /**
@@ -231,8 +313,14 @@ export function veliEtutVerisi(db: Db, ogrIds: Set<string>, subeIds: Set<string>
   const slotOgretmenleri = new Set(musaitlikler.map((m) => m.ogretmenId));
   const randevular: Randevu[] = [];
   for (const r of db.randevular) {
-    if (r.ogrenciIds.some((x) => ogrIds.has(x))) randevular.push({ ...r, ogrenciIds: r.ogrenciIds.filter((x) => ogrIds.has(x)) });
-    else if (r.durum !== "iptal" && slotOgretmenleri.has(r.ogretmenId)) randevular.push({ ...r, tur: "bireysel", ogrenciIds: [], dersId: "", link: "", paketId: null, olusturan: "yonetim" });
+    const { duzeltmeler: _d, sonuclar: _s, paketIds: _p, ...temel } = r;
+    void _d;
+    if (r.ogrenciIds.some((x) => ogrIds.has(x))) {
+      // Veliye yalnızca kendi çocuğunun sonucu ve paketi; düzeltme gerekçesi personelindir
+      const benim = <T,>(m: Record<string, T> | undefined) => (m ? Object.fromEntries(Object.entries(m).filter(([o]) => ogrIds.has(o))) : undefined);
+      const sonuclar = benim(_s);
+      randevular.push({ ...temel, ogrenciIds: r.ogrenciIds.filter((x) => ogrIds.has(x)), ...(_p ? { paketIds: benim(_p) } : {}), ...(sonuclar ? { sonuclar, durum: sonuclardanDurum(sonuclar) } : {}) });
+    } else if (r.durum !== "iptal" && slotOgretmenleri.has(r.ogretmenId)) randevular.push({ ...temel, durum: "planli", tur: "bireysel", ogrenciIds: [], dersId: "", link: "", paketId: null, olusturan: "yonetim" });
   }
   const doluSaatler: DoluSaat[] = [];
   for (const p of db.program) {
@@ -254,14 +342,14 @@ export function veliEtutVerisi(db: Db, ogrIds: Set<string>, subeIds: Set<string>
 
 export const etutBildirimiMi = (olay: Gonderim["olay"]) => olay === "etutHatirlatma";
 
-/** Aynı veliye, aynı öğrenci ve randevu için onay ikinci kez gitmez */
+/** Aynı veliye, aynı öğrenci ve randevu için aynı olay ikinci kez gitmez */
 export function etutBildirimiYineleniyor(g: Pick<Gonderim, "olay" | "veliId" | "ogrenciId">, randevuId: string, mevcut: Pick<Gonderim, "olay" | "veliId" | "ogrenciId" | "randevuId">[]): boolean {
   return mevcut.some((x) => x.olay === g.olay && x.veliId === g.veliId && x.ogrenciId === g.ogrenciId && x.randevuId === randevuId);
 }
 
 export const paketBilgiMetni = (dersAd: string, kalan: number) => `${dersAd} paketinizde ${kalan} ders hakkı kaldı.`;
 
-/** "Veliye bilgi ver" aynı kalan hak için bir kez gider */
-export function paketBilgisiGitti(gonderimler: Pick<Gonderim, "olay" | "ogrenciId" | "metin">[], ogrenciId: string, metin: string): boolean {
-  return gonderimler.some((g) => g.olay === "duyuru" && g.ogrenciId === ogrenciId && g.metin.includes(metin));
+/** "Paket bitiyor" bir paket için bir kez gider (otomatik veya düğmeyle). Bağ alanından önceki düğme bildirimleri metinle eşleşir. */
+export function paketBildirimiGitti(gonderimler: Pick<Gonderim, "olay" | "ogrenciId" | "metin" | "paketId">[], p: Pick<Paket, "id" | "ogrenciId" | "kalan">, dersAd: string): boolean {
+  return gonderimler.some((g) => (g.olay === "paketBitiyor" && g.paketId === p.id) || (g.olay === "duyuru" && g.ogrenciId === p.ogrenciId && g.metin.includes(paketBilgiMetni(dersAd, p.kalan))));
 }

@@ -3,12 +3,14 @@ import { CalendarClock } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, EmptyState, Select, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
 import { BUGUN, SIMDI, dersAdi, guncelle, islemYaz, personelAdi, tamAd, useDb, type Randevu } from "@/data/store";
-import { baslamisMi, etutTurAd, hakDuser } from "./kurallar";
+import { baslamisMi, etutTurAd, kalanHakUygula, ogrenciSonucu, sonucHakFarklari, yoneticiDuzeltir } from "./kurallar";
 import { durumRozet, tarihKisa } from "./ortak";
+import { SonucDialog } from "./SonucDialog";
 
 export function Randevular() {
   const d = useDb();
-  const { subeGorunur, ogretmenMi, personel, ad } = useOturum();
+  const { subeGorunur, ogretmenMi, personel, ad, rol } = useOturum();
+  const [sonuc, setSonuc] = React.useState<{ r: Randevu; duzeltme: boolean } | null>(null);
   const [filtre, setFiltre] = React.useState<"gelecek" | "gecmis" | "all">("gelecek");
   const an = { bugun: BUGUN, simdi: SIMDI };
   const liste = d.randevular
@@ -20,7 +22,8 @@ export function Randevular() {
     guncelle((x) => {
       x.randevular = x.randevular.map((y) => (y.id === r.id ? { ...y, durum } : y));
       // Paket hakkı: yapıldıysa düşer; gelmediyse kurum ayarına göre düşer (kesin değeri sunucu yazar)
-      if (hakDuser(r, durum, x.ayarlar.gelmeyenHakDussun)) x.paketler = x.paketler.map((p) => (p.id === r.paketId ? { ...p, kalan: Math.max(0, p.kalan - 1) } : p));
+      const fark = sonucHakFarklari(r, { durum }, x.ayarlar.gelmeyenHakDussun);
+      x.paketler = x.paketler.map((p) => (fark.has(p.id) ? { ...p, kalan: kalanHakUygula(p, fark.get(p.id)!) } : p));
       islemYaz(x, ad, "Etüt", `${r.tarih} ${r.bas} randevu: ${durumRozet[durum].ad}`, r.subeId);
     });
     toast(`Randevu “${durumRozet[durum].ad}” olarak işaretlendi.`);
@@ -46,7 +49,7 @@ export function Randevular() {
               <tr key={r.id}>
                 <Td className="whitespace-nowrap tabular-nums">{tarihKisa(r.tarih)} {r.bas}</Td>
                 <Td>
-                  {r.ogrenciIds.map((id) => tamAd(d.ogrenciler.find((o) => o.id === id))).join(", ")}
+                  {r.ogrenciIds.map((id) => tamAd(d.ogrenciler.find((o) => o.id === id)) + (r.sonuclar ? ` (${durumRozet[ogrenciSonucu(r, id)].ad})` : "")).join(", ")}
                   {r.olusturan === "veli" && <Badge variant="outline" className="ml-2">Veli aldı</Badge>}
                 </Td>
                 <Td>{personelAdi(d, r.ogretmenId)} <span className="text-xs text-muted-foreground">· {dersAdi(r.dersId)}</span></Td>
@@ -55,11 +58,13 @@ export function Randevular() {
                 <Td className="text-right">
                   {r.durum === "planli" && (
                     <div className="flex justify-end gap-1">
-                      {baslamisMi(r, an) && <Button size="sm" variant="outline" onClick={() => durumDegistir(r, "yapildi")}>Yapıldı</Button>}
-                      {baslamisMi(r, an) && <Button size="sm" variant="ghost" onClick={() => durumDegistir(r, "gelmedi")}>Gelmedi</Button>}
+                      {baslamisMi(r, an) && r.ogrenciIds.length > 1 && <Button size="sm" variant="outline" onClick={() => setSonuc({ r, duzeltme: false })}>Sonuç gir</Button>}
+                      {baslamisMi(r, an) && r.ogrenciIds.length === 1 && <Button size="sm" variant="outline" onClick={() => durumDegistir(r, "yapildi")}>Yapıldı</Button>}
+                      {baslamisMi(r, an) && r.ogrenciIds.length === 1 && <Button size="sm" variant="ghost" onClick={() => durumDegistir(r, "gelmedi")}>Gelmedi</Button>}
                       {!(ogretmenMi && baslamisMi(r, an)) && <Button size="sm" variant="ghost" className="text-danger" onClick={() => durumDegistir(r, "iptal")}>İptal</Button>}
                     </div>
                   )}
+                  {(r.durum === "yapildi" || r.durum === "gelmedi") && yoneticiDuzeltir(rol) && <Button size="sm" variant="ghost" onClick={() => setSonuc({ r, duzeltme: true })}>Düzelt</Button>}
                 </Td>
               </tr>
             ))}
@@ -69,6 +74,7 @@ export function Randevular() {
       <CardContent className="pt-4 text-xs text-muted-foreground">
         Veli, randevuyu en geç {d.ayarlar.etutIptalSaat} saat öncesine kadar portaldan iptal edebilir. Gelmeyen öğrencinin özel ders hakkı {d.ayarlar.gelmeyenHakDussun ? "düşer" : "düşmez"} (kurum ayarı, Bölüm 14).
       </CardContent>
+      {sonuc && <SonucDialog r={sonuc.r} duzeltme={sonuc.duzeltme} onClose={() => setSonuc(null)} />}
     </Card>
   );
 }

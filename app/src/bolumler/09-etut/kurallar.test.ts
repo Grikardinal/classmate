@@ -5,11 +5,15 @@ import {
   baslamisMi,
   bosSlotlar,
   etutBildirimiYineleniyor,
-  hakDuser,
   kullanilabilirHak,
   musaitlikEngeli,
   ogretmenDersAraliklari,
-  paketBilgisiGitti,
+  paketBildirimiGitti,
+  grupKontenjani,
+  kalanHakUygula,
+  ogrenciDersiCakisir,
+  ogrenciSonucu,
+  sonucHakFarklari,
   paketDegisimEngeli,
   randevuDurumEngeli,
   randevuYeniEngeli,
@@ -17,7 +21,7 @@ import {
   uygunPaket,
   veliEtutVerisi,
   veliIptalEngeli,
-  veliIptalSonucu,
+  ogrencileriCikar,
   veliRandevuPlani,
 } from "./kurallar";
 
@@ -112,6 +116,30 @@ describe("yeni randevu", () => {
     const d = sezonlu({ ...db, program: [satir], dersSaatleri: db.dersSaatleri.map((x) => (x.id === h.id ? { ...x, baslangic: "14:00", bitis: "14:40" } : x)) });
     expect(randevuYeniEngeli(randevu(), d, b)).toMatch(/grup dersi/);
   });
+  it("öğrencinin grup dersiyle çakışma engellenir; tatil ve iptal günü sayılmaz", () => {
+    const k = db.kayitlar.find((x) => x.ogrenciId === A && x.durum === "aktif")!;
+    const { satir, h } = ders("p7");
+    const d = sezonlu({ ...db, program: [{ ...satir, grupId: k.grupId }], dersSaatleri: db.dersSaatleri.map((x) => (x.id === h.id ? { ...x, baslangic: "14:00", bitis: "14:40" } : x)) });
+    expect(randevuYeniEngeli(randevu(), d, b)).toMatch(/grup dersi/);
+    expect(ogrenciDersiCakisir(d, A, SALI, "14:40", "15:20")).toBe(false);
+    expect(randevuYeniEngeli(randevu(), { ...d, iptaller: [{ oturumId: `ps_${SALI}`, neden: "x", tarih: AN.bugun }] }, b)).toBeNull();
+    const subeTatili = { ...d, tatiller: [{ id: "t", tarih: SALI, ad: "x", subeId: "s2" }] };
+    expect(randevuYeniEngeli(randevu(), subeTatili, b)).toMatch(/grup dersi/);
+    expect(ogrenciDersiCakisir({ ...d, tatiller: [{ id: "t", tarih: SALI, ad: "x", subeId: null }] }, A, SALI, "14:00", "14:40")).toBe(false);
+  });
+  it("grup etüdü kontenjanı: ayar yoksa 6", () => {
+    const ayarsiz = { ...db, ayarlar: { ...db.ayarlar, etutGrupKontenjan: undefined } };
+    expect(grupKontenjani(ayarsiz.ayarlar)).toBe(6);
+    const secilen = s1.slice(0, 7);
+    expect(randevuYeniEngeli(randevu({ tur: "grup", ogrenciIds: secilen }), ayarsiz, b)).toMatch(/en fazla 6/);
+    expect(randevuYeniEngeli(randevu({ tur: "grup", ogrenciIds: secilen.slice(0, 3) }), { ...db, ayarlar: { ...db.ayarlar, etutGrupKontenjan: 2 } }, b)).toMatch(/en fazla 2/);
+  });
+  it("grup etüdünde öğrenci bazında paket denetlenir", () => {
+    const d = { ...db, paketler: [paket({ id: "pa" })] };
+    expect(randevuYeniEngeli(randevu({ tur: "grup", ogrenciIds: [A, B], paketIds: { [A]: "pa" } }), d, b)).toBeNull();
+    expect(randevuYeniEngeli(randevu({ tur: "grup", ogrenciIds: [A, B], paketIds: { [B]: "pa" } }), d, b)).toMatch(/ait değil/);
+    expect(randevuYeniEngeli(randevu({ paketIds: { [A]: "pa" } }), d, b)).toMatch(/yalnızca grup/);
+  });
   it("öğrenci sayısı türe uygun; aynı öğrenci iki kez yok", () => {
     expect(randevuYeniEngeli(randevu({ ogrenciIds: [A, B] }), db, b)).toMatch(/tek öğrenci/);
     expect(randevuYeniEngeli(randevu({ tur: "grup", ogrenciIds: [A, B] }), db, b)).toBeNull();
@@ -147,12 +175,25 @@ describe("paket hakkı", () => {
   });
   it("yapıldı düşer, gelmedi ayara bağlı, iptal düşmez, ikinci kez düşmez", () => {
     const r = randevu({ paketId: "pk" });
-    expect(hakDuser(r, "yapildi", false)).toBe(true);
-    expect(hakDuser(r, "gelmedi", false)).toBe(false);
-    expect(hakDuser(r, "gelmedi", true)).toBe(true);
-    expect(hakDuser(r, "iptal", true)).toBe(false);
-    expect(hakDuser({ ...r, durum: "yapildi" }, "yapildi", true)).toBe(false);
-    expect(hakDuser(randevu(), "yapildi", true)).toBe(false);
+    expect(sonucHakFarklari(r, { durum: "yapildi" }, false).get("pk")).toBe(1);
+    expect(sonucHakFarklari(r, { durum: "gelmedi" }, false).size).toBe(0);
+    expect(sonucHakFarklari(r, { durum: "gelmedi" }, true).get("pk")).toBe(1);
+    expect(sonucHakFarklari(r, { durum: "iptal" }, true).size).toBe(0);
+    expect(sonucHakFarklari({ ...r, durum: "yapildi" }, { durum: "yapildi" }, true).size).toBe(0);
+    expect(sonucHakFarklari(randevu(), { durum: "yapildi" }, true).size).toBe(0);
+  });
+  it("düzeltmede hak iade edilir veya düşülür; kalan toplamı aşmaz", () => {
+    const r = randevu({ paketId: "pk", durum: "yapildi" });
+    expect(sonucHakFarklari(r, { durum: "gelmedi" }, false).get("pk")).toBe(-1);
+    expect(sonucHakFarklari({ ...r, durum: "gelmedi" }, { durum: "yapildi" }, false).get("pk")).toBe(1);
+    expect(kalanHakUygula({ kalan: 4, toplam: 4 }, -1)).toBe(4);
+    expect(kalanHakUygula({ kalan: 0, toplam: 4 }, 1)).toBe(0);
+  });
+  it("grup etüdünde hak öğrenci bazında işlenir", () => {
+    const r = randevu({ tur: "grup", ogrenciIds: [A, B], paketIds: { [A]: "pa", [B]: "pb" } });
+    const f = sonucHakFarklari(r, { durum: "yapildi", sonuclar: { [A]: "yapildi", [B]: "gelmedi" } }, false);
+    expect([...f]).toEqual([["pa", 1]]);
+    expect(kullanilabilirHak({ id: "pb", kalan: 1 }, [r])).toBe(0);
   });
   it("paket tanımı değişmez, hak sonuçsuz değişmez", () => {
     expect(paketDegisimEngeli(paket({ toplam: 9 }), paket(), 0)).toMatch(/tanımı/);
@@ -175,6 +216,27 @@ describe("randevu durumu", () => {
     expect(randevuDurumEngeli({ ...baslamis, durum: "iptal" }, baslamis, { ...AN, rol: "ogretmen" })).toMatch(/yönetim/);
     expect(randevuDurumEngeli({ ...baslamis, durum: "iptal" }, baslamis, y)).toBeNull();
   });
+  const grup = randevu({ tarih: "2026-11-02", tur: "grup", ogrenciIds: [A, B] });
+  it("öğrenci bazında sonuç: tüm öğrenciler, durumla uyumlu", () => {
+    expect(randevuDurumEngeli({ ...grup, durum: "yapildi", sonuclar: { [A]: "yapildi", [B]: "gelmedi" } }, grup, y)).toBeNull();
+    expect(randevuDurumEngeli({ ...grup, durum: "yapildi", sonuclar: { [A]: "yapildi" } }, grup, y)).toMatch(/Her öğrenci/);
+    expect(randevuDurumEngeli({ ...grup, durum: "gelmedi", sonuclar: { [A]: "yapildi", [B]: "gelmedi" } }, grup, y)).toMatch(/uyuşmuyor/);
+    expect(randevuDurumEngeli({ ...grup, durum: "iptal", sonuclar: { [A]: "yapildi", [B]: "gelmedi" } }, grup, y)).toMatch(/İptalde/);
+  });
+  it("eski kayıt: sonuç yoksa durum tüm öğrencilere uygulanır", () => {
+    expect(ogrenciSonucu({ ...grup, durum: "gelmedi" }, B)).toBe("gelmedi");
+    expect(ogrenciSonucu({ ...grup, durum: "yapildi", sonuclar: { [A]: "yapildi", [B]: "gelmedi" } }, B)).toBe("gelmedi");
+  });
+  it("düzeltme: yönetici, gerekçe, gerçek değişiklik", () => {
+    const y2 = { ...baslamis, durum: "yapildi" as const };
+    const duz = (neden: string) => [{ neden, kullanici: "", zaman: "", onceki: { durum: "yapildi" as const, sonuclar: null } }];
+    expect(randevuDurumEngeli({ ...y2, durum: "gelmedi", duzeltmeler: duz("yanlış işaret") }, y2, y)).toBeNull();
+    expect(randevuDurumEngeli({ ...y2, durum: "gelmedi", duzeltmeler: duz("ab") }, y2, y)).toMatch(/3 karakter/);
+    expect(randevuDurumEngeli({ ...y2, durum: "gelmedi", duzeltmeler: duz("yanlış") }, y2, { ...AN, rol: "ogretmen" })).toMatch(/şube müdürü/);
+    expect(randevuDurumEngeli({ ...y2, duzeltmeler: duz("yanlış") }, y2, y)).toMatch(/değişmedi/);
+    expect(randevuDurumEngeli({ ...y2, durum: "iptal", duzeltmeler: duz("yanlış") }, y2, y)).toMatch(/hatalı/);
+  });
+  it("iptal edilmiş randevu değişmez", () => expect(randevuDurumEngeli({ ...baslamis, durum: "yapildi" }, { ...baslamis, durum: "iptal" }, y)).toMatch(/İptal edilmiş/));
   it("başlangıç anı dahil", () => expect(baslamisMi({ tarih: AN.bugun, bas: "15:00" }, AN)).toBe(true));
 });
 
@@ -205,8 +267,9 @@ describe("veli", () => {
   });
   it("grup etüdünde yalnızca kendi çocuğu çıkar; son öğrenciyle randevu iptal olur", () => {
     const r = randevu({ tur: "grup", ogrenciIds: [A, B] });
-    expect(veliIptalSonucu(r, new Set([A]))).toMatchObject({ durum: "planli", ogrenciIds: [B] });
-    expect(veliIptalSonucu(r, new Set([A, B])).durum).toBe("iptal");
+    expect(ogrencileriCikar(r, new Set([A]))).toMatchObject({ durum: "planli", ogrenciIds: [B] });
+    expect(ogrencileriCikar(r, new Set([A, B])).durum).toBe("iptal");
+    expect(ogrencileriCikar({ ...r, paketIds: { [A]: "pa", [B]: "pb" } }, new Set([A])).paketIds).toEqual({ [B]: "pb" });
   });
   it("başka öğrencinin randevusu kimliksiz gider; kendi randevusunda diğer öğrenci görünmez", () => {
     const d = { ...db, randevular: [randevu({ tur: "online", link: "https://gizli", ogrenciIds: [B], paketId: "x" }), randevu({ id: "r2", bas: "14:40", bit: "15:20", tur: "grup", ogrenciIds: [A, B] }), randevu({ id: "r3", durum: "iptal", ogrenciIds: [B] })] };
@@ -214,6 +277,16 @@ describe("veli", () => {
     expect(v.randevular).toHaveLength(2);
     expect(v.randevular[0]).toMatchObject({ ogrenciIds: [], link: "", paketId: null, dersId: "", tur: "bireysel" });
     expect(v.randevular[1].ogrenciIds).toEqual([A]);
+  });
+  it("veliye yalnızca kendi çocuğunun sonucu gider, düzeltme gerekçesi gitmez", () => {
+    const r = randevu({ tur: "grup", ogrenciIds: [A, B], durum: "yapildi", sonuclar: { [A]: "gelmedi", [B]: "yapildi" }, duzeltmeler: [{ neden: "gizli", kullanici: "k", zaman: "z", onceki: { durum: "gelmedi", sonuclar: null } }] });
+    const [benim] = veliEtutVerisi({ ...db, randevular: [r] }, new Set([A]), new Set(["s1"])).randevular;
+    expect(benim).toMatchObject({ durum: "gelmedi", sonuclar: { [A]: "gelmedi" } });
+    expect(benim.sonuclar).not.toHaveProperty(B);
+    expect(benim.duzeltmeler).toBeUndefined();
+    const [baskasi] = veliEtutVerisi({ ...db, randevular: [r] }, new Set(["yok"]), new Set(["s1"])).randevular;
+    expect(baskasi.sonuclar).toBeUndefined();
+    expect(baskasi.durum).toBe("planli");
   });
   it("modül kapalıyken veliye etüt verisi gitmez", () => {
     const v = veliEtutVerisi({ ...db, moduller: { ...db.moduller, etut: false }, randevular: [randevu()] }, new Set([A]), new Set(["s1"]));
@@ -234,9 +307,12 @@ describe("bildirim tekilleştirme", () => {
     expect(etutBildirimiYineleniyor(g, "r", [{ ...g, randevuId: "r" }])).toBe(true);
     expect(etutBildirimiYineleniyor(g, "r2", [{ ...g, randevuId: "r" }])).toBe(false);
   });
-  it("paket bilgisi aynı kalan için bir kez", () => {
-    const l = [{ olay: "duyuru" as const, ogrenciId: "o", metin: "Paket: Matematik paketinizde 1 ders hakkı kaldı." }];
-    expect(paketBilgisiGitti(l, "o", "Matematik paketinizde 1 ders hakkı kaldı.")).toBe(true);
-    expect(paketBilgisiGitti(l, "o", "Matematik paketinizde 0 ders hakkı kaldı.")).toBe(false);
+  it("paket bildirimi paket başına bir kez; eski düğme bildirimi de sayılır", () => {
+    const p = { id: "pk", ogrenciId: "o", kalan: 1 };
+    expect(paketBildirimiGitti([{ olay: "paketBitiyor", ogrenciId: "o", metin: "x", paketId: "pk" }], p, "Matematik")).toBe(true);
+    expect(paketBildirimiGitti([{ olay: "paketBitiyor", ogrenciId: "o", metin: "x", paketId: "pk2" }], p, "Matematik")).toBe(false);
+    const eski = [{ olay: "duyuru" as const, ogrenciId: "o", metin: "Paket: Matematik paketinizde 1 ders hakkı kaldı." }];
+    expect(paketBildirimiGitti(eski, p, "Matematik")).toBe(true);
+    expect(paketBildirimiGitti(eski, { ...p, kalan: 0 }, "Matematik")).toBe(false);
   });
 });

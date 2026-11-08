@@ -6,7 +6,7 @@ import { useApp, useOturum } from "@/context/AppContext";
 import { useNavigate } from "react-router-dom";
 import { AKTIF_SEZON, BUGUN, grupDoluluk, grupEtiket, guncelle, islemYaz, senkron, simdiZaman, sube, taksitKalan, tamAd, tanimlar, useDb, veriYukle, yeniId, type Db, type Iade, type Kayit, type Ogrenci } from "@/data/store";
 import { tl } from "@/lib/kurallar";
-import { YONTEMLER, hizmetBaslangici, iptalHesabiHesapla, iptalTaksitleri, kayitPlani, kurusa, tutarCoz, yeniMakbuzNo, yontemAdlari } from "../05-finans/kurallar";
+import { YONTEMLER, hizmetBaslangici, iptalHesabiHesapla, iptalPaketOzeti, iptalTaksitleri, kayitPlani, kurusa, tutarCoz, yeniMakbuzNo, yontemAdlari } from "../05-finans/kurallar";
 import { adayYenidenAc, bagliAday, grupDoluMu, iptalSonrasiOgrenciDurumu, kapasiteOnaylayabilir } from "./kurallar";
 
 /* ---------- Grup değişikliği / şube nakli ---------- */
@@ -144,13 +144,16 @@ export function KayitIptal({ k, o, onClose }: { k: Kayit; o: Ogrenci; onClose: (
   // Bölüm 05 (karar 2026-11-08): finans açıksa iptal hesabı — kullanılan (gün oranı) + cayma bedeli → iade veya kalan borç
   const yonetici = rol === "genel-yonetici" || rol === "sube-muduru";
   const plan = kayitPlani(d.taksitler, k.id);
-  const hesapVar = moduller.finans && plan.length > 0;
+  // Bölüm 09 (karar 2026-11-08): kullanılmamış özel ders paketi bedeli hesaba girer; planlı randevuları sunucu kapatır
+  const paketOzet = iptalPaketOzeti(d, k);
+  const hesapVar = moduller.finans && (plan.length > 0 || paketOzet.paketIds.length > 0);
   const sezon = d.sezonlar.find((z) => z.id === k.sezonId);
-  const varsayilan = iptalHesabiHesapla(plan, k, sezon, d.kurum?.caymaBedeli, BUGUN);
+  const paketIade = moduller.finans ? paketOzet.iade : 0;
+  const varsayilan = iptalHesabiHesapla(plan, k, sezon, d.kurum?.caymaBedeli, BUGUN, undefined, paketIade);
   const [duz, setDuz] = React.useState({ kullanilan: String(varsayilan.kullanilan), cayma: String(varsayilan.cayma), neden: "", yontem: "nakit" as Iade["yontem"] });
   const ozel = { kullanilan: tutarCoz(duz.kullanilan), cayma: tutarCoz(duz.cayma) };
   const duzeltildi = yonetici && (kurusa(ozel.kullanilan) !== kurusa(varsayilan.kullanilan) || kurusa(ozel.cayma) !== kurusa(varsayilan.cayma));
-  const hesap = duzeltildi ? iptalHesabiHesapla(plan, k, sezon, d.kurum?.caymaBedeli, BUGUN, ozel) : varsayilan;
+  const hesap = duzeltildi ? iptalHesabiHesapla(plan, k, sezon, d.kurum?.caymaBedeli, BUGUN, ozel, paketIade) : varsayilan;
   const hesapHata = !hesapVar
     ? null
     : duzeltildi && (Number.isNaN(ozel.kullanilan) || Number.isNaN(ozel.cayma))
@@ -160,7 +163,7 @@ export function KayitIptal({ k, o, onClose }: { k: Kayit; o: Ogrenci; onClose: (
         : hesap.iade > 0 && !yonetici
           ? `Bu iptalde ${tl(hesap.iade)} iade çıkıyor; iade gerektiren iptali yönetici (şube müdürü / genel yönetici) yapar.`
           : null;
-  const ekKalanBorc = d.taksitler.filter((t) => t.kayitId === k.id && t.no >= 99).reduce((s, t) => s + taksitKalan(t), 0);
+  const ekKalanBorc = d.taksitler.filter((t) => t.kayitId === k.id && t.no >= 99 && !paketOzet.taksitler.has(t.id)).reduce((s, t) => s + taksitKalan(t), 0);
 
   const iptal = () => {
     if (hesapHata) return;
@@ -169,7 +172,7 @@ export function KayitIptal({ k, o, onClose }: { k: Kayit; o: Ogrenci; onClose: (
       x.kayitlar = x.kayitlar.map((y) => (y.id === k.id ? { ...y, durum: "iptal", ...(iptalHesabi ? { iptalHesabi } : {}) } : y));
       if (iptalHesabi) {
         // Kalan borç kullanılan + cayma kadar kalır, geri kalan taksitler kapatılır; fazla ödenen iade edilir (kasadan çıkış)
-        const yeni = iptalTaksitleri(plan, iptalHesabi.hak);
+        const yeni = new Map([...iptalTaksitleri(plan, iptalHesabi.hak - paketIade), ...paketOzet.taksitler]);
         x.taksitler = x.taksitler.map((t) => (yeni.has(t.id) && kurusa(yeni.get(t.id)!) !== kurusa(t.tutar) ? { ...t, tutar: yeni.get(t.id)! } : t));
         if (iptalHesabi.iade > 0) {
           const kod = sube(k.subeId)?.kod ?? "SUB";
@@ -216,6 +219,7 @@ export function KayitIptal({ k, o, onClose }: { k: Kayit; o: Ogrenci; onClose: (
               <tr><td>Cayma bedeli</td><td className="text-right">{tl(hesap.cayma)}</td></tr>
               <tr><td>Hak edilen (kullanılan + cayma)</td><td className="text-right">{tl(hesap.hak)}</td></tr>
               <tr><td>Ödenen</td><td className="text-right">{tl(hesap.odenen)}</td></tr>
+              {paketIade > 0 && <tr><td>Kullanılmamış paket bedeli</td><td className="text-right">{tl(paketIade)}</td></tr>}
               <tr className="font-medium">
                 <td>{hesap.iade > 0 ? "İade edilecek" : "Kalan borç"}</td>
                 <td className="text-right">{tl(hesap.iade > 0 ? hesap.iade : hesap.kalanBorc)}</td>

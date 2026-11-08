@@ -11,7 +11,7 @@ import { Randevular } from "./Randevular";
 import { Takvim } from "./Takvim";
 
 // Veli portalı (Bölüm 11) buradan kullanır
-export { bosSlotlar, etutTurAd } from "./kurallar";
+export { bosSlotlar, etutTurAd, ogrenciDersiCakisir, ogrenciSonucu } from "./kurallar";
 
 export default function Etut() {
   const [sekme, setSekme] = React.useState<"takvim" | "randevu" | "musait" | "paket">("takvim");

@@ -82,9 +82,11 @@ function RandevuDialog({ m, tarih, bas, bit, onClose }: { m: Musaitlik; tarih: s
     .filter((o) => o.durum === "aktif" && aktifKayit(d, o.id)?.subeId === m.subeId)
     .filter((o) => !ara || tamAd(o).toLocaleLowerCase("tr").includes(ara.toLocaleLowerCase("tr")))
     .slice(0, 30);
-  const paket = secili.length === 1 ? uygunPaket(d, secili[0], m.ogretmenId) : undefined;
   const coklu = tur === "grup";
-  const taslak: Randevu = { id: "__yeni", ogretmenId: m.ogretmenId, subeId: m.subeId, tarih, bas, bit, tur, ogrenciIds: secili, dersId: paket?.dersId ?? dersId, durum: "planli", link: tur === "online" ? link.trim() : "", paketId: paket?.id ?? null, olusturan: "yonetim" };
+  const paket = secili.length === 1 ? uygunPaket(d, secili[0], m.ogretmenId) : undefined;
+  // Grup etüdünde her öğrencinin (bu derse ait) paketi ayrı işlenir
+  const grupPaketleri = coklu ? Object.fromEntries(secili.flatMap((o) => { const p = uygunPaket(d, o, m.ogretmenId); return p && p.dersId === dersId ? [[o, p.id]] : []; })) : null;
+  const taslak: Randevu = { id: "__yeni", ogretmenId: m.ogretmenId, subeId: m.subeId, tarih, bas, bit, tur, ogrenciIds: secili, dersId: !coklu && paket ? paket.dersId : dersId, durum: "planli", link: tur === "online" ? link.trim() : "", paketId: !coklu ? paket?.id ?? null : null, olusturan: "yonetim", ...(grupPaketleri && Object.keys(grupPaketleri).length ? { paketIds: grupPaketleri } : {}) };
   // Sunucu ile aynı kural; öğretmen için grup sınırını aday listesi zaten sağlar (yalnızca kendi öğrencilerini görür)
   const engel = randevuYeniEngeli(taslak, d, { bugun: BUGUN, simdi: SIMDI, ogretmenGruplari: null });
   const gecerli = !engel;
@@ -136,7 +138,7 @@ function RandevuDialog({ m, tarih, bas, bit, onClose }: { m: Musaitlik; tarih: s
         ))}
       </div>
       {secili.length > 0 && engel && !(tur === "ozel" && !paket) && <Alert tone="warning">{engel}</Alert>}
-      {paket && <Alert icon={<Package />}>Özel ders paketinden düşülecek: kalan {paket.kalan}/{paket.toplam}</Alert>}
+      {paket && !coklu && <Alert icon={<Package />}>Özel ders paketinden düşülecek: kalan {paket.kalan}/{paket.toplam}</Alert>}
       {tur === "ozel" && secili.length === 1 && !paket && <Alert tone="warning">Bu öğrencinin bu öğretmenle aktif özel ders paketi yok. “Özel ders paketleri” sekmesinden paket tanımlayın.</Alert>}
     </Dialog>
   );
