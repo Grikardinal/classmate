@@ -7,6 +7,7 @@
  * doludur; kapsam sorguları ve raporlar bu sütunla filtrelenir. Kimlik/oturum tabloları ayrıdır.
  */
 import { SURUM, type Db } from "../src/data/model";
+import { fiyatListesiNormalize } from "../src/bolumler/01-kurum-yapisi/kurallar";
 
 export type Satir = Record<string, unknown>;
 export type Sorgu = (sql: string, params?: unknown[]) => Promise<Satir[]>;
@@ -96,7 +97,17 @@ export async function hepsiniYukle(vt: Veritabani): Promise<Db | null> {
     const satirlar = (await vt.q(`select veri from ${tablo(k)} order by sira`)).map((r) => r.veri as Satir);
     db[k] = k === "yoklamalar" ? Object.fromEntries(satirlar.map((s) => [s.oturumId, s])) : satirlar;
   }
-  return db as unknown as Db;
+  return veriyiOnar(db as unknown as Db);
+}
+
+/**
+ * Eski veri ve yedeklerle uyum (yükleme ve yedekten geri yüklemede):
+ * - fiyat listesi eski biçimdeyse (şube → tek fiyat) sezon + şube + seviye satırlarına çevrilir (karar 2026-11-07, Bölüm 05)
+ */
+export function veriyiOnar(db: Db): Db {
+  const ham = (db as unknown as Record<string, unknown>).fiyatListesi;
+  const fiyatListesi = fiyatListesiNormalize(ham, { sezonlar: Array.isArray(db.sezonlar) ? db.sezonlar : [] });
+  return JSON.stringify(fiyatListesi) === JSON.stringify(ham) ? db : { ...db, fiyatListesi };
 }
 
 /** Değişiklikleri tek işlemde (transaction) yazar. subeBul: satırın şube kimliği (kapsam sütunu) */

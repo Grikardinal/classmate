@@ -52,7 +52,7 @@ export const varsayilanModuller: Record<ModulKey, boolean> = {
 };
 
 export type Kurum = { ad: string; eposta: string; vergiNo: string; makbuzBasligi: string; logo?: string };
-export type { Sube, Sezon, Ders, Derslik, DersSaati, Grup } from "./mock";
+export type { Sube, Sezon, Ders, Derslik, DersSaati, Grup, FiyatSatiri } from "./mock";
 
 /* =========================== Tipler =========================== */
 export type Rol = "genel-yonetici" | "sube-muduru" | "sekreter" | "ogretmen";
@@ -329,7 +329,8 @@ export type Db = {
   dersler: m.Ders[];
   derslikler: m.Derslik[];
   dersSaatleri: m.DersSaati[];
-  fiyatListesi: Record<string, number>;
+  /** Sezon + şube + seviye başına liste fiyatı (Bölüm 01 · Fiyat listesi; eski biçim yüklenirken çevrilir: fiyatListesiNormalize) */
+  fiyatListesi: m.FiyatSatiri[];
   gruplar: m.Grup[];
   personel: Personel[];
   kullanicilar: Kullanici[];
@@ -547,7 +548,7 @@ export function ornekVeriUret(): Db {
     dersler: m.dersler.map((x) => ({ ...x })),
     derslikler: m.derslikler.map((x) => ({ ...x })),
     dersSaatleri: m.dersSaatleri.map((x) => ({ ...x })),
-    fiyatListesi: { ...m.fiyatListesi },
+    fiyatListesi: m.fiyatListesi.map((x) => ({ ...x })),
     gruplar: m.gruplar.map((g) => ({ ...g })),
     personel: personelSeed.map((p) => ({ ...p })),
     kullanicilar: personelSeed.map((p) => ({

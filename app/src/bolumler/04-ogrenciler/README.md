@@ -102,9 +102,13 @@ Sunucu: `app/server/politika.ts` içinde `kayitDenetle()` (yazmaDenetle sonunda,
   Öğrenci notları veliye gitmez. Öğrenci/veli anonimleştirmesi yalnızca KVKK (14) yetkisiyle; anonim kart değiştirilemez.
 - "Excel'den aktar" düğmesi yalnızca 14 yetkisi olana görünür.
 
-### Ödeme planı (Bölüm 05 modeli değişmeden, bariz hatalar)
+### Ödeme planı
 - Negatif peşinat, kesirli taksit sayısı, boş ilk vade reddedilir; taksit 0 ise peşinat net tutara eşit olmalı
   (önceden kalan tutar plansız kalıyordu). İlk vade varsayılanı bugündür (önceden geçmiş bir sabit tarihti).
+- **Bölüm 05 (karar 2026-11-07):** sihirbazın liste fiyatı fiyat listesinden **sezon + şube + grubun seviyesi** ile alınır; fiyat
+  tanımsızsa Ücret adımı ilerlemez. Net tutar `kayitUcreti` ile kuruş hassasiyetinde hesaplanır (önceden TL'ye yuvarlanıyordu).
+  Ücret, indirim ve plan toplamı sunucuda `finansDenetle` ile de denetlenir. Kalan taksit devri artık **her** nakilde sunucuda
+  tamamlanır (finans kapalıyken veya finans yetkisi yokken ekran taksitleri görmez). Ayrıntı: `../05-finans/README.md`.
 
 ## Düzeltilen hatalar (özet)
 - Mükerrer kontrolü yalnızca ilk velinin telefonuna ve yalnızca görünen öğrencilere bakıyordu; başka şubede aynı öğrenci yeniden açılabiliyordu.

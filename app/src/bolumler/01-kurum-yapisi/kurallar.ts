@@ -4,7 +4,7 @@
  * aynı fonksiyonları kullanır. Bu yüzden yalnızca göreli içe aktarma ve tip içe aktarması yapılır.
  * Testler: kurallar.test.ts
  */
-import type { Db, Derslik, DersSaati, Grup, Kayit, Kurum, ProgramSatiri, Sezon, Sube, Ders } from "../../data/model";
+import type { Db, Derslik, DersSaati, FiyatSatiri, Grup, Kayit, Kurum, ProgramSatiri, Sezon, Sube, Ders } from "../../data/model";
 import { dakika, epostaGecerli, normalAd, sozlesmeNo } from "../../lib/kurallar";
 
 /** Doğrulama sonucu: null = geçerli, metin = kullanıcıya gösterilecek ilk hata */
@@ -160,8 +160,41 @@ export type SezonGecisSonucu = {
  * yeni sözleşme numarası (hedef sezonun yılı), KVKK onayı yeniden alınmak üzere boş, içe aktarma bağı yok.
  * En üst seviyedeki (8. sınıf) grupların aktif / dondurulmuş kayıtları öğrenci taşınsın taşınmasın "mezun" olur.
  */
+/** Taşınacak (aktif, 8. sınıf olmayan) kayıtların hedef sezondaki şube + seviyesi */
+function tasinacakYerler(d: Pick<Db, "gruplar" | "kayitlar">, kaynakId: string): { subeId: string; seviye: number }[] {
+  const gruplar = new Map(d.gruplar.filter((g) => g.sezonId === kaynakId && g.seviye < EN_YUKSEK_SEVIYE).map((g) => [g.id, g]));
+  const yerler = new Map<string, { subeId: string; seviye: number }>();
+  for (const k of d.kayitlar) {
+    const g = gruplar.get(k.grupId);
+    if (k.sezonId !== kaynakId || k.durum !== "aktif" || !g) continue;
+    yerler.set(`${k.subeId}|${g.seviye + 1}`, { subeId: k.subeId, seviye: g.seviye + 1 });
+  }
+  return [...yerler.values()].sort((a, b) => a.subeId.localeCompare(b.subeId) || a.seviye - b.seviye);
+}
+
+/**
+ * Sezon geçişinde fiyat (karar 2026-11-07): eski kaydın fiyatı, indirimi ve ek hizmeti kopyalanmaz, hedef sezonun
+ * fiyat listesindeki fiyat uygulanır. Finans açıkken taşınacak bir şube + seviye için hedef sezonda fiyat
+ * tanımlı değilse geçiş başlamaz (fiyatsız kayıt açılmaz); önce Fiyat listesi sekmesinden fiyat girilir.
+ */
+export function sezonGecisFiyatEksikleri(d: Pick<Db, "gruplar" | "kayitlar" | "fiyatListesi">, kaynakId: string, hedefId: string): { subeId: string; seviye: number }[] {
+  return tasinacakYerler(d, kaynakId).filter((y) => fiyatBul(d.fiyatListesi, hedefId, y.subeId, y.seviye) === null);
+}
+export function sezonGecisFiyatEngeli(
+  d: Pick<Db, "gruplar" | "kayitlar" | "fiyatListesi" | "moduller" | "subeler">,
+  kaynakId: string | undefined,
+  hedefId: string,
+  ogrenciTasi: boolean,
+): Hata {
+  if (!kaynakId || !hedefId || !ogrenciTasi || d.moduller?.finans !== true) return null;
+  const eksik = sezonGecisFiyatEksikleri(d, kaynakId, hedefId);
+  if (!eksik.length) return null;
+  const ad = (id: string) => d.subeler.find((s) => s.id === id)?.kod ?? id;
+  return `Hedef sezonda fiyatı tanımlı olmayan şube/seviye var: ${eksik.map((y) => `${ad(y.subeId)} ${y.seviye}. sınıf`).join(", ")}. Önce Fiyat listesi sekmesinden fiyat girin.`;
+}
+
 export function sezonGecisiPlani(
-  d: Pick<Db, "gruplar" | "kayitlar" | "subeler" | "sezonlar" | "personel">,
+  d: Pick<Db, "gruplar" | "kayitlar" | "subeler" | "sezonlar" | "personel" | "fiyatListesi" | "moduller">,
   kaynakId: string,
   hedefId: string,
   ogrenciTasi: boolean,
@@ -169,6 +202,8 @@ export function sezonGecisiPlani(
 ): SezonGecisSonucu {
   const hedef = d.sezonlar.find((s) => s.id === hedefId);
   if (!hedef) throw new Error("Hedef sezon bulunamadı.");
+  const finans = d.moduller?.finans === true;
+  if (ogrenciTasi && finans && sezonGecisFiyatEksikleri(d, kaynakId, hedefId).length) throw new Error("Hedef sezonda fiyatı tanımlı olmayan şube/seviye var.");
   const kaynakGruplar = d.gruplar.filter((g) => g.sezonId === kaynakId);
   const eslesme = new Map<string, string>();
   const gruplar: Grup[] = [];
@@ -193,6 +228,9 @@ export function sezonGecisiPlani(
       nolar.push(no);
       const { iceAktarmaId: _ia, ...temel } = k;
       void _ia;
+      // Fiyat, indirim ve ek hizmet eski kayıttan kopyalanmaz; hedef sezonun liste fiyatı uygulanır (finans kapalıysa ücret yok)
+      const seviye = gruplar.find((g) => g.id === grupId)!.seviye;
+      const liste = finans ? (fiyatBul(d.fiyatListesi, hedefId, k.subeId, seviye) ?? 0) : 0;
       kayitlar.push({
         ...temel,
         id: yeniId("k"),
@@ -203,6 +241,10 @@ export function sezonGecisiPlani(
         grupGecmisi: [{ grupId, tarih: hedef.baslangic }],
         kvkkOnay: null,
         sozlesmeNo: no,
+        ekHizmetler: [],
+        indirimler: [],
+        listeFiyati: liste,
+        net: liste,
       });
     }
   }
@@ -336,9 +378,66 @@ export function dersSaatleriniSirala(saatler: DersSaati[], subeId: string): Ders
   return saatler.map((h) => (sira.has(h.id) && sira.get(h.id) !== h.sira ? { ...h, sira: sira.get(h.id)! } : h));
 }
 
-/* ---------- Fiyat listesi ---------- */
-export function fiyatListesiDogrula(f: unknown): Hata {
-  if (!f || typeof f !== "object" || Array.isArray(f)) return "Fiyat listesi geçersiz.";
-  for (const v of Object.values(f as Record<string, unknown>)) if (!fiyatGecerli(v)) return "Liste fiyatı negatif olmayan bir sayı olmalı.";
+/* ---------- Fiyat listesi (karar 2026-11-07: sezon + şube + seviye) ---------- */
+const kurusMu = (n: number) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-6;
+
+/** Sezon, şube ve seviye için liste fiyatı; tanımlı değilse null */
+export function fiyatBul(liste: FiyatSatiri[] | null | undefined, sezonId: string, subeId: string, seviye: number | undefined): number | null {
+  if (!Array.isArray(liste) || seviye === undefined) return null;
+  return liste.find((x) => x.sezonId === sezonId && x.subeId === subeId && x.seviye === seviye)?.fiyat ?? null;
+}
+
+/**
+ * Fiyat listesi: satır dizisi; her satırda sezon, şube, seviye (3–8) ve negatif olmayan, kuruş hassasiyetinde fiyat.
+ * Aynı sezon + şube + seviye iki kez tanımlanamaz. d verilirse sezon ve şube var olmalı.
+ * Tanımsız hücre "fiyat yok" demektir (0 TL ücretsiz demektir).
+ */
+export function fiyatListesiDogrula(f: unknown, d?: Pick<Db, "sezonlar" | "subeler">): Hata {
+  if (!Array.isArray(f)) return "Fiyat listesi geçersiz.";
+  const gorulen = new Set<string>();
+  for (const x of f as Partial<FiyatSatiri>[]) {
+    if (!x || typeof x !== "object" || typeof x.sezonId !== "string" || typeof x.subeId !== "string") return "Fiyat listesi geçersiz.";
+    if (!(SEVIYELER as readonly number[]).includes(x.seviye as number)) return "Fiyat satırının seviyesi 3–8 arasında olmalı.";
+    if (!fiyatGecerli(x.fiyat) || !kurusMu(x.fiyat as number)) return "Liste fiyatı negatif olmayan, en fazla iki ondalıklı (kuruş) bir sayı olmalı.";
+    const a = `${x.sezonId}|${x.subeId}|${x.seviye}`;
+    if (gorulen.has(a)) return "Aynı sezon, şube ve seviye için iki fiyat tanımlanamaz.";
+    gorulen.add(a);
+    if (d && !d.sezonlar.some((s) => s.id === x.sezonId)) return "Fiyat listesindeki sezon bulunamadı.";
+    if (d && !d.subeler.some((s) => s.id === x.subeId)) return "Fiyat listesindeki şube bulunamadı.";
+  }
   return null;
+}
+
+/**
+ * Eski veri ve yedeklerle uyum: eski biçim (şube → tek fiyat) yeni biçime çevrilir.
+ * Eski fiyat o şubenin tek fiyatıydı; bu yüzden var olan her sezon ve her seviye için aynı fiyat yazılır.
+ * Sonradan eklenen sezonların fiyatı ayrıca tanımlanmalıdır. Yeni biçimde bozuk satırlar atılır.
+ */
+export function fiyatListesiNormalize(ham: unknown, d: Pick<Db, "sezonlar">): FiyatSatiri[] {
+  if (Array.isArray(ham)) {
+    const gorulen = new Set<string>();
+    return (ham as Partial<FiyatSatiri>[]).filter((x): x is FiyatSatiri => {
+      if (!x || typeof x !== "object" || typeof x.sezonId !== "string" || typeof x.subeId !== "string") return false;
+      if (!(SEVIYELER as readonly number[]).includes(x.seviye as number) || !fiyatGecerli(x.fiyat)) return false;
+      const a = `${x.sezonId}|${x.subeId}|${x.seviye}`;
+      if (gorulen.has(a)) return false;
+      gorulen.add(a);
+      return true;
+    }).map((x) => ({ sezonId: x.sezonId, subeId: x.subeId, seviye: x.seviye, fiyat: Math.round(x.fiyat * 100) / 100 }));
+  }
+  if (!ham || typeof ham !== "object") return [];
+  const satirlar: FiyatSatiri[] = [];
+  for (const [subeId, fiyat] of Object.entries(ham as Record<string, unknown>)) {
+    if (!fiyatGecerli(fiyat)) continue;
+    for (const z of d.sezonlar ?? []) for (const seviye of SEVIYELER) satirlar.push({ sezonId: z.id, subeId, seviye, fiyat: Math.round((fiyat as number) * 100) / 100 });
+  }
+  return satirlar;
+}
+
+/** Bir sezonun fiyatlarını yenileriyle değiştirir (diğer sezonlar korunur). Boş (NaN/undefined) hücre satır üretmez. */
+export function sezonFiyatlariniYaz(liste: FiyatSatiri[], sezonId: string, hucreler: { subeId: string; seviye: number; fiyat: number | undefined }[]): FiyatSatiri[] {
+  const yeni = hucreler
+    .filter((h) => h.fiyat !== undefined && !Number.isNaN(h.fiyat))
+    .map((h) => ({ sezonId, subeId: h.subeId, seviye: h.seviye, fiyat: h.fiyat as number }));
+  return [...liste.filter((x) => x.sezonId !== sezonId), ...yeni];
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ornekVeriUret, type DersSaati, type Grup, type Kayit } from "@/data/model";
+import { ornekVeriUret, type DersSaati, type FiyatSatiri, type Grup, type Kayit } from "@/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -9,7 +9,11 @@ import {
   dersSaatleriniSirala,
   derslikDogrula,
   derslikSilmeEngeli,
+  fiyatBul,
   fiyatListesiDogrula,
+  fiyatListesiNormalize,
+  sezonFiyatlariniYaz,
+  sezonGecisFiyatEngeli,
   grupAdiGecisi,
   grupDogrula,
   kapasiteDuzelt,
@@ -42,7 +46,7 @@ describe("örnek veri bölüm 01 kurallarına uyuyor", () => {
     for (const h of d.dersSaatleri) expect(dersSaatiDogrula(h, d.dersSaatleri), h.id).toBeNull();
     for (const g of d.gruplar) expect(grupDogrula(g, d), g.ad).toBeNull();
     expect(kurumDogrula(d.kurum)).toBeNull();
-    expect(fiyatListesiDogrula(d.fiyatListesi)).toBeNull();
+    expect(fiyatListesiDogrula(d.fiyatListesi, d)).toBeNull();
   });
 });
 
@@ -58,12 +62,47 @@ describe("kapasite ve fiyat", () => {
     expect(kapasiteDuzelt("9999")).toBe(500);
     expect(kapasiteDuzelt("abc")).toBe(1);
   });
-  it("fiyat listesi negatif veya sayı olmayan değer içeremez", () => {
-    expect(fiyatListesiDogrula({ s1: 0, s2: 12000.5 })).toBeNull();
-    expect(fiyatListesiDogrula({ s1: -1 })).not.toBeNull();
-    expect(fiyatListesiDogrula({ s1: NaN })).not.toBeNull();
-    expect(fiyatListesiDogrula({ s1: "100" })).not.toBeNull();
+  // Karar 2026-11-07 (Bölüm 05): fiyat sezon + şube + seviye bazında
+  const satir = (p: Partial<FiyatSatiri> = {}): FiyatSatiri => ({ sezonId: "z2", subeId: "s1", seviye: 5, fiyat: 13500, ...p });
+  it("fiyat listesi satırları: negatif / sayı olmayan / kuruştan küçük fiyat, geçersiz seviye reddedilir", () => {
+    expect(fiyatListesiDogrula([satir({ fiyat: 0 }), satir({ subeId: "s2", fiyat: 12000.5 })])).toBeNull();
+    expect(fiyatListesiDogrula([satir({ fiyat: -1 })])).not.toBeNull();
+    expect(fiyatListesiDogrula([satir({ fiyat: NaN })])).not.toBeNull();
+    expect(fiyatListesiDogrula([satir({ fiyat: "100" as unknown as number })])).not.toBeNull();
+    expect(fiyatListesiDogrula([satir({ fiyat: 100.123 })])).toMatch(/kuruş/);
+    expect(fiyatListesiDogrula([satir({ seviye: 9 })])).toMatch(/seviye/);
     expect(fiyatListesiDogrula(null)).not.toBeNull();
+    expect(fiyatListesiDogrula({ s1: 100 })).not.toBeNull(); // eski biçim yazılamaz (yalnızca yüklenirken çevrilir)
+  });
+  it("aynı sezon + şube + seviye iki kez tanımlanamaz; sezon ve şube var olmalı", () => {
+    expect(fiyatListesiDogrula([satir(), satir({ fiyat: 1 })])).toMatch(/iki fiyat/);
+    expect(fiyatListesiDogrula([satir({ sezonId: "zYok" })], d)).toMatch(/sezon/);
+    expect(fiyatListesiDogrula([satir({ subeId: "sYok" })], d)).toMatch(/şube/);
+  });
+  it("fiyat sezon, şube ve seviyeye göre bulunur; tanımsızsa null", () => {
+    expect(fiyatBul(d.fiyatListesi, "z2", "s1", 5)).toBe(13500);
+    expect(fiyatBul(d.fiyatListesi, "z2", "s2", 5)).toBe(12000);
+    expect(fiyatBul(d.fiyatListesi, "z1", "s1", 5)).toBeNull();
+    expect(fiyatBul([satir({ seviye: 6, fiyat: 15000 })], "z2", "s1", 5)).toBeNull();
+    expect(fiyatBul(d.fiyatListesi, "z2", "s1", undefined)).toBeNull();
+  });
+  it("eski biçim (şube → tek fiyat) her sezon ve seviyeye çevrilir; yeni biçimde bozuk satır atılır", () => {
+    const n = fiyatListesiNormalize({ s1: 13500, s2: 12000.555, s3: -1 }, d);
+    expect(n).toHaveLength(2 * d.sezonlar.length * 6);
+    expect(fiyatBul(n, "z1", "s1", 3)).toBe(13500);
+    expect(fiyatBul(n, "z3", "s2", 8)).toBe(12000.56);
+    expect(fiyatBul(n, "z2", "s3", 5)).toBeNull();
+    expect(fiyatListesiDogrula(n, d)).toBeNull();
+    expect(fiyatListesiNormalize([satir(), satir({ fiyat: 1 }), { sezonId: "z2" }, satir({ seviye: 2 })], d)).toEqual([satir()]);
+    expect(fiyatListesiNormalize(undefined, d)).toEqual([]);
+  });
+  it("bir sezonun fiyatları yazılırken diğer sezonlar korunur, boş hücre fiyat üretmez", () => {
+    const l = sezonFiyatlariniYaz([satir(), satir({ sezonId: "z3" })], "z2", [
+      { subeId: "s1", seviye: 5, fiyat: 14000 },
+      { subeId: "s1", seviye: 6, fiyat: undefined },
+      { subeId: "s2", seviye: 5, fiyat: NaN },
+    ]);
+    expect(l).toEqual([satir({ sezonId: "z3" }), satir({ fiyat: 14000 })]);
   });
 });
 
@@ -162,6 +201,38 @@ describe("yeni sezona geçiş", () => {
       expect(k.sozlesmeNo).toMatch(/^(MRK|KZY)-2027-\d{4}$/);
       expect(p.gruplar.some((g) => g.id === k.grupId)).toBe(true);
     }
+  });
+  // Karar 2026-11-07: eski fiyat, indirim ve ek hizmet kopyalanmaz; hedef sezonun fiyatı uygulanır
+  it("finans kapalıyken taşınan kayıt ücretsizdir; eski indirim ve ek hizmet kopyalanmaz", () => {
+    const x = ornekVeriUret();
+    const p = sezonGecisiPlani(x, "z2", "z3", true, sahteId);
+    expect(p.kayitlar.length).toBeGreaterThan(0);
+    for (const k of p.kayitlar) expect(k).toMatchObject({ listeFiyati: 0, net: 0, indirimler: [], ekHizmetler: [] });
+  });
+  it("finans açıkken taşınan kayda hedef sezonun şube + yeni seviye fiyatı uygulanır", () => {
+    const x = ornekVeriUret();
+    x.moduller = { ...x.moduller, finans: true };
+    x.fiyatListesi = x.fiyatListesi.map((f) => (f.sezonId === "z3" && f.subeId === "s1" && f.seviye === 6 ? { ...f, fiyat: 15000.5 } : f));
+    const indirimli = x.kayitlar.find((k) => k.sezonId === "z2" && k.grupId === "g2" && k.durum === "aktif")!; // 5-A → 6-A
+    indirimli.indirimler = [{ ad: "Kardeş indirimi", oran: 10 }];
+    indirimli.ekHizmetler = ["Kitap seti"];
+    const p = sezonGecisiPlani(x, "z2", "z3", true, sahteId);
+    const yeni = p.kayitlar.find((k) => k.ogrenciId === indirimli.ogrenciId)!;
+    expect(yeni).toMatchObject({ listeFiyati: 15000.5, net: 15000.5, indirimler: [], ekHizmetler: [] });
+    const s2 = p.kayitlar.find((k) => k.subeId === "s2")!;
+    expect(s2.listeFiyati).toBe(12000);
+    expect(sezonGecisFiyatEngeli(x, "z2", "z3", true)).toBeNull();
+  });
+  it("finans açıkken hedef sezonda fiyat tanımsızsa geçiş uyarıyla durur", () => {
+    const x = ornekVeriUret();
+    x.moduller = { ...x.moduller, finans: true };
+    x.fiyatListesi = x.fiyatListesi.filter((f) => !(f.sezonId === "z3" && f.subeId === "s1" && f.seviye === 6));
+    expect(sezonGecisFiyatEngeli(x, "z2", "z3", true)).toMatch(/MRK 6\. sınıf/);
+    expect(() => sezonGecisiPlani(x, "z2", "z3", true, sahteId)).toThrow(/fiyat/);
+    // Öğrenci taşınmıyorsa veya finans kapalıysa fiyat aranmaz
+    expect(sezonGecisFiyatEngeli(x, "z2", "z3", false)).toBeNull();
+    expect(() => sezonGecisiPlani(x, "z2", "z3", false, sahteId)).not.toThrow();
+    expect(sezonGecisFiyatEngeli({ ...x, moduller: { ...x.moduller, finans: false } }, "z2", "z3", true)).toBeNull();
   });
   it("pasif veya şubeden çıkmış rehber öğretmen yeni gruba taşınmaz", () => {
     const x = ornekVeriUret();

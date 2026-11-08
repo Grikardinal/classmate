@@ -20,7 +20,7 @@ Kayıt, yoklama, ders programı, finans gibi bölümler bu tanımları okur.
 | `Dersler.tsx` | Ders listesi, renk, aktif/pasif, yeni ders |
 | `Derslikler.tsx` | Şubeye özel derslikler, kapasite, pasife/aktife alma, silme |
 | `DersSaatleri.tsx` | Şubeye özel hafta içi / hafta sonu dilimleri, pasife/aktife alma, silme |
-| `FiyatListesi.tsx` | Şube bazında liste fiyatı (yalnızca Finans modülü açıkken) |
+| `FiyatListesi.tsx` | Sezon seçilerek şube × seviye liste fiyatı tablosu (yalnızca Finans modülü açıkken) |
 | `Moduller.tsx` | Modül aç/kapat |
 | `kurallar.test.ts` | Saf kuralların birim testleri |
 | `sunucu.test.ts` | Sunucu tarafı denetimin (`server/politika.ts`) testleri |
@@ -73,7 +73,11 @@ Kural ihlali `YetkiHatasi` olarak döner (HTTP 403, mesaj kullanıcıya gösteri
     düzenlenince yeni satır açıldığından (`programDegistir`), pasif dilimdeki dersin değişikliği için önce aktif dilime taşınması gerekir.
   - Ders programı ızgarasında pasif dilim yalnızca o hafta görüntülenen bir dersi varsa "(pasif)" ekiyle satır olarak görünür;
     boş hücresine ders eklenemez, ders sürüklenemez.
-- **Fiyat listesi:** her değer sonlu ve negatif olmayan sayı.
+- **Fiyat listesi (karar 2026-11-07):** sezon + şube + seviye (3–8) başına bir satır; fiyat negatif olmayan, kuruş hassasiyetinde;
+  aynı üçlü iki kez tanımlanamaz; sezon ve şube var olmalı. Boş hücre "fiyat tanımlı değil" (0 = ücretsiz). Yeni şube sihirbazı
+  kaynak şubenin tüm fiyatlarını kopyalar.
+- **Sezon geçişinde fiyat (karar 2026-11-07):** taşınan kayda eski fiyat, indirim ve ek hizmet kopyalanmaz; hedef sezonun
+  şube + yeni seviye fiyatı uygulanır (finans kapalıysa ücret 0). Finans açıkken fiyatı tanımsız şube/seviye varsa geçiş başlamaz.
 - **Modüller:** değerler yalnızca `true/false`.
 
 ## Bu bölümde düzeltilen hatalar
@@ -97,7 +101,7 @@ Kural ihlali `YetkiHatasi` olarak döner (HTTP 403, mesaj kullanıcıya gösteri
 
 ## Testler
 `npm test` (veya `npx vitest run src/bolumler/01-kurum-yapisi`):
-- `kurallar.test.ts` — 41 test: örnek verinin kurallara uyması, kurum/şube/sezon/grup/ders/derslik/ders saati doğrulamaları,
+- `kurallar.test.ts` — 48 test (Bölüm 05 kararlarıyla fiyat listesi ve sezon geçişi fiyatı eklendi): örnek verinin kurallara uyması, kurum/şube/sezon/grup/ders/derslik/ders saati doğrulamaları,
   sezon geçişi planı (mezuniyet, sözleşme no, KVKK, rehber), sıralama, derslik/ders saati aktif-pasif (eski veri uyumu,
   seçim listesi, pasif atama yasağı, değişmeyen atamanın kilitlenmemesi).
 - `sunucu.test.ts` — 25 test: sunucunun reddettiği paketler (yinelenen kod, pasife alma, iki aktif sezon, kullanımdaki derslik,
@@ -106,14 +110,15 @@ Kural ihlali `YetkiHatasi` olarak döner (HTTP 403, mesaj kullanıcıya gösteri
 
 ## Bilinen sınırlar / açık sorular
 - **Sezon düzenleme yok.** Doküman "ekle/düzenle" diyor; şu an yalnızca ekleme ve aktif yapma var. Yanlış tarihli sezon düzeltilemez.
-- **Fiyat listesi modeli dokümandan farklı.** Doküman `sezon + seviye + şube` bazında fiyat tanımlıyor; veri modeli
-  (`fiyatListesi: Record<şubeId, number>`) yalnızca şube bazında tek fiyat tutuyor. Model değişikliği Bölüm 05 ile birlikte kararlaştırılmalı.
+- ~~Fiyat listesi modeli dokümandan farklı.~~ **Kapandı (karar 2026-11-07, Bölüm 05):** `fiyatListesi` artık
+  `{ sezonId, subeId, seviye, fiyat }[]`; eski biçim (şube → tek fiyat) yüklenirken / yedekten geri yüklenirken her sezon ve seviyeye
+  çevrilir (`fiyatListesiNormalize`, `server/veritabani.ts · veriyiOnar`). Ayrıntı: `../05-finans/README.md`.
 - ~~Derslik ve ders saatinde pasif durumu yok.~~ **Kapandı (2026-11-07):** "sil + pasif" kararıyla `aktif` alanı eklendi; ayrıntı İş kuralları bölümünde.
 - **Kasalar** dokümanda şubeye özel tanım olarak geçiyor; bu bölümde ekranı yok (Bölüm 05'e bırakıldı).
 - **Şube müdürü alanı serbest metin.** Doküman `müdür_id` diyor; personelle bağlantı kurulmadı.
 - **Şube telefonu doğrulanmıyor** (sabit hat biçimleri çeşitli; `telefonNormalize` yalnızca cep telefonu kabul ediyor).
-- **Sezon geçişinde fiyat/indirim/ek hizmetler** eski kayıttan aynen kopyalanıyor; yeni sezon fiyatının uygulanıp
-  uygulanmayacağı Finans kararına bağlı.
+- ~~Sezon geçişinde fiyat/indirim/ek hizmetler eski kayıttan kopyalanıyor.~~ **Kapandı (karar 2026-11-07):** kopyalanmaz;
+  hedef sezonun liste fiyatı uygulanır, finans açıkken fiyatı tanımsız şube/seviye varsa geçiş uyarıyla durur (`sezonGecisFiyatEngeli`).
 - **Aktif sezon değişikliği onay istemiyor**; tek tıkla tüm sistemin varsayılan sezonu değişir.
 - Kural ihlalleri sunucuda `YetkiHatasi` (HTTP 403) olarak dönüyor; ayrı bir "doğrulama hatası" (400) türü `server/uygulama.ts`
   değişikliği gerektirdiği için bu bölümde eklenmedi.

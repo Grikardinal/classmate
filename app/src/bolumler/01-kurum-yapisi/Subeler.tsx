@@ -97,7 +97,8 @@ function SubeDialog({ sube, onClose }: { sube?: Sube; onClose: () => void }) {
         const k = subeKopyasi(kopyaKaynak, id, x, kopya, yeniId);
         x.derslikler.push(...k.derslikler);
         x.dersSaatleri.push(...k.dersSaatleri);
-        x.fiyatListesi = { ...x.fiyatListesi, [id]: x.fiyatListesi[kopyaKaynak] ?? 0 };
+        // Fiyatlar (her sezon ve seviye) kaynak şubeden kopyalanır
+        x.fiyatListesi = [...x.fiyatListesi, ...x.fiyatListesi.filter((f) => f.subeId === kopyaKaynak).map((f) => ({ ...f, subeId: id }))];
       }
       // Genel yöneticinin kapsamına otomatik girer; diğer personel Bölüm 02'den atanır
       islemYaz(x, ad, "Şube", `${temiz.ad} (${kod}) şubesi açıldı`, id);

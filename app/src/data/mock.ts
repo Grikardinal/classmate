@@ -77,8 +77,14 @@ export const dersSaatleri: DersSaati[] = [
   { id: "h9", subeId: "s2", gunTipi: "hafta-sonu", sira: 1, baslangic: "10:00", bitis: "10:40", aktif: true },
 ];
 
-/** Varsayılan fiyat listesi (yalnızca Finans modülü açıkken kullanılır); şube bazında farklılaşabilir. */
-export const fiyatListesi: Record<string, number> = { s1: 13500, s2: 12000, s3: 12000 };
+/**
+ * Varsayılan fiyat listesi (yalnızca Finans modülü açıkken kullanılır): sezon + şube + seviye başına sezonluk liste fiyatı.
+ * Karar 2026-11-07 (Bölüm 05): fiyat sezon, seviye ve şube bazında tutulur.
+ */
+export type FiyatSatiri = { sezonId: string; subeId: string; seviye: number; fiyat: number };
+export const fiyatListesi: FiyatSatiri[] = ["z2", "z3"].flatMap((sezonId) =>
+  ["s1", "s2", "s3"].flatMap((subeId) => [3, 4, 5, 6, 7, 8].map((seviye) => ({ sezonId, subeId, seviye, fiyat: subeId === "s1" ? 13500 : 12000 }))),
+);
 export const ekHizmetler = [
   { ad: "Kitap seti", fiyat: 1200 },
   { ad: "Etüt paketi (8 ders)", fiyat: 3600 },

@@ -168,7 +168,7 @@ export function KayitIptal({ k, o, onClose }: { k: Kayit; o: Ogrenci; onClose: (
       <Field label="İptal nedeni (işlem kaydına yazılır)"><Textarea value={neden} onChange={(e) => setNeden(e.target.value)} /></Field>
       {aday && <Alert icon={<AlertTriangle />}>Bu öğrenci ön kayıttan geldi; aday “Görüşüldü” durumunda yeniden açılacak ve bugün aranacaklar listesine düşecek.</Alert>}
       {moduller.finans && kalan > 0 && (
-        <Alert tone="warning" icon={<AlertTriangle />}>Kalan borç: <b>{tl(kalan)}</b>. İade / kalan borç hesabı Finans bölümünden yapılır.</Alert>
+        <Alert tone="warning" icon={<AlertTriangle />}>Kalan borç: <b>{tl(kalan)}</b>. Borç silinmez, velinin cari hesabında kalır ve tahsil edilebilir; iptal edilen kayıt için otomatik ödeme hatırlatması gönderilmez.</Alert>
       )}
     </Dialog>
   );

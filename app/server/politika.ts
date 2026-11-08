@@ -48,6 +48,21 @@ import {
   veliYazmaEngeli,
   yeniSozlesmeNo,
 } from "../src/bolumler/04-ogrenciler/kurallar";
+import {
+  giderEngeli,
+  kasaBakiyesi,
+  kasaHareketleri,
+  kayitUcretEngeli,
+  odemeFarklari,
+  planToplamEngeli,
+  tahsilatEngeli,
+  tahsilatIptalEngeli,
+  taksitYazmaEngeli,
+  virmanEngeli,
+  yeniMakbuzNo,
+} from "../src/bolumler/05-finans/kurallar";
+import { farkUygula } from "../src/data/fark";
+import type { Gider, Tahsilat, Taksit, Virman } from "../src/data/model";
 import { telefonNormalize } from "../src/lib/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
@@ -128,15 +143,24 @@ export function subeSutunu(db: Db, k: Koleksiyon, s: Satir): string | null {
 /* =========================== Okuma =========================== */
 const FINANS: Koleksiyon[] = ["taksitler", "tahsilatlar", "giderler", "virmanlar"];
 
+/**
+ * Finans verisini kim görür (Bölüm 05): modül açık, 05 yetkisi var ve öğretmen değil.
+ * Görmeyen personele taksit, tahsilat, gider, virman gitmez; kayıtların ücret alanları (liste fiyatı, indirim, net) sıfırlanır.
+ */
+export function finansGorur(db: Db, a: Aktor): boolean {
+  return db.moduller?.finans === true && a.kullanici.rol !== "ogretmen" && yetki(db, a, "05");
+}
+
 export function okumaSuz(db: Db, a: Aktor): Db {
   const genel = a.kullanici.rol === "genel-yonetici";
   const ogretmen = a.kullanici.rol === "ogretmen";
   const kap = new Set(kapsam(db, a.kullanici));
   const ogrGrup = ogretmen ? ogretmenGruplari(db, a.personel.id) : null;
+  const finans = finansGorur(db, a);
   const sonuc = { ...db } as unknown as Record<string, unknown>;
 
   const gorur = (k: Koleksiyon, s: Satir): boolean => {
-    if (FINANS.includes(k) && (!yetki(db, a, "05") || ogretmen)) return false;
+    if (FINANS.includes(k) && !finans) return false;
     if (k === "girisler") return genel;
     if ((k === "kvkk" || k === "iceAktarmalar") && !yetki(db, a, "14")) return false;
     if (k === "kullanicilar" && !yetki(db, a, "02")) return s.id === a.kullanici.id;
@@ -171,6 +195,8 @@ export function okumaSuz(db: Db, a: Aktor): Db {
     }
     if (k === "personel" && !genel && !yetki(db, a, "13"))
       l = l.map((s) => (s.id === a.personel.id ? s : { ...s, telefon: "", eposta: "", sabitUcret: 0, dersUcreti: 0 }));
+    // Kayıt ücreti finans verisidir; yazarken sunucu maskeli alanları eski değerle korur (yazmaDenetle)
+    if (k === "kayitlar" && !finans) l = l.map((s) => ({ ...s, listeFiyati: 0, indirimler: [], net: 0 }));
     sonuc[k] = k === "yoklamalar" ? Object.fromEntries(l.map((s) => [s.oturumId, s])) : l;
   }
   // Personel ücret bilgisi yalnızca hak ediş yetkisi olanlara
@@ -275,11 +301,13 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           s.zaman = zaman;
           break;
         case "tahsilatlar":
+          // Ayrıntılı kurallar: finansDenetle() (Bölüm 05). Tahsil eden, tahsilat ve iptal zamanı sunucudan.
           if (eski) {
-            const sadeceIptal = !eski.iptal && s.iptal && JSON.stringify({ ...eski, iptal: null }) === JSON.stringify({ ...s, iptal: null });
-            if (!sadeceIptal || !(genel || rol === "sube-muduru")) hata("Tahsilat değiştirilemez; yalnızca yönetici iptal edebilir.");
-            s.iptal = { ...(s.iptal as object), kullanici: ad, zaman };
-          } else s.kullanici = ad;
+            if (s.iptal && typeof s.iptal === "object") s.iptal = { ...(s.iptal as object), kullanici: ad, zaman };
+          } else {
+            s.kullanici = ad;
+            s.zaman = zaman;
+          }
           break;
         case "kullanicilar":
           // Ayrıntılı kurallar: kullaniciDenetle() (Bölüm 02). Son giriş zamanını yalnızca sunucu yazar.
@@ -307,6 +335,18 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
             s.notlar = (s.notlar as Aday["notlar"]).map((n, i) => (i < (eski.notlar as unknown[]).length ? n : { ...n, yazar: ad, tarih: zaman }));
           break;
         case "kayitlar":
+          // Ücret alanları finans görmeyene maskeli gider (okumaSuz); onun yazdığı kayıtta eski değerler korunur
+          if (eski && !finansGorur(onceki, a)) {
+            s.listeFiyati = eski.listeFiyati;
+            s.indirimler = eski.indirimler;
+            s.net = eski.net;
+          }
+          // Finans kapalıyken yeni kayıt ücretsizdir (ekran başka bir kayıttan kopyalasa da ücret yazılmaz)
+          if (!eski && onceki.moduller?.finans !== true) {
+            s.listeFiyati = 0;
+            s.indirimler = [];
+            s.net = 0;
+          }
           // Kapsam dışına nakil: ekran hedef şubenin gruplarını göremez; grubu sunucu atar (aynı seviye, boş kontenjan)
           if (eski && eski.subeId !== s.subeId && !genel && !kap.has(String(s.subeId))) {
             const g = nakilHedefGrubu(sonrakiDb, eski as unknown as Kayit, String(s.subeId));
@@ -362,8 +402,84 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   tanimDenetle(onceki, sonrakiDb, temiz);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
+  finansDenetle(onceki, temiz, a, zaman);
   onKayitDenetle(onceki, sonrakiDb, temiz, a);
   return temiz;
+}
+
+/* =========================== Bölüm 05 finans =========================== */
+/**
+ * Ödeme planı, tahsilat ve kasa kuralları (ekranla ortak: src/bolumler/05-finans/kurallar.ts):
+ * - modül kapalıyken yeni taksit, tahsilat, gider, virman yazılamaz; kayda ücret yazılamaz
+ *   (yalnızca nakil devri: kalan taksitin şubesi kaydıyla birlikte değişir)
+ * - kayıt ücreti fiyat listesinden (sezon + şube + seviye), indirimler tanımlı türler, net = kayitUcreti; kayıtla gelen plan toplamı = net
+ * - tahsilat: tutar = dağılım toplamı, kasa = öğrencinin şubesi, ödeyen velinin çocukları, alındığı şube kapsamda;
+ *   makbuz no benzersiz (çakışırsa sunucu şubenin sıradaki numarasını verir); değiştirilemez / silinemez, yalnızca yönetici gerekçeyle iptal eder
+ * - taksitin ödenen tutarı yalnızca aynı paketteki tahsilat / iptal kadar değişir; fazla tahsilat yok;
+ *   tutar / vade değişikliği yalnızca yönetici
+ * - gider ve virman değiştirilemez; Genel Merkez yalnızca genel yönetici; virmanda kaynak kasada yeterli bakiye
+ * Şube kapsamı yazmaDenetle() içinde denetlenir. Sistem satırları (nakil devri) da aynı kurallardan geçer. `temiz` yerinde güncellenir.
+ */
+export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  const kayitYaz = (K.kayitlar?.yaz ?? []) as unknown as Kayit[];
+  const taksitYaz = (K.taksitler?.yaz ?? []) as unknown as Taksit[];
+  const tahsilatYaz = (K.tahsilatlar?.yaz ?? []) as unknown as Tahsilat[];
+  const giderYaz = (K.giderler?.yaz ?? []) as unknown as Gider[];
+  const virmanYaz = (K.virmanlar?.yaz ?? []) as unknown as Virman[];
+  if (!kayitYaz.length && !taksitYaz.length && !tahsilatYaz.length && !giderYaz.length && !virmanYaz.length) return;
+  const rol = a.kullanici.rol;
+  const genel = rol === "genel-yonetici";
+  const finans = onceki.moduller?.finans === true;
+  const bugun = zaman.slice(0, 10);
+  // Sunucunun düzelttiği satırlarla (veli birleştirme, nakil devri) son hal
+  const son = farkUygula(onceki, temiz);
+
+  // 1) Kayıt ücreti ve kayıtla birlikte oluşturulan ödeme planı
+  for (const k of kayitYaz) {
+    const eski = onceki.kayitlar.find((x) => x.id === k.id);
+    reddet(kayitUcretEngeli(k, eski, son, { rol }));
+    if (!eski && finans) reddet(planToplamEngeli(k.net, taksitYaz.filter((t) => t.kayitId === k.id && !onceki.taksitler.some((x) => x.id === t.id))));
+  }
+
+  // 2) Tahsilat ve iptal
+  const yeniler: Tahsilat[] = [];
+  const iptaller: Tahsilat[] = [];
+  const nolar = onceki.tahsilatlar.map((t) => t.makbuzNo);
+  for (const t of tahsilatYaz) {
+    const eski = onceki.tahsilatlar.find((x) => x.id === t.id);
+    if (eski) {
+      reddet(tahsilatIptalEngeli(eski, t, rol));
+      iptaller.push(eski);
+      continue;
+    }
+    reddet(tahsilatEngeli(t, son, { finans, kapsam: genel ? undefined : kapsam(onceki, a.kullanici) }));
+    // Makbuz no benzersiz: ekran başka kullanıcının aynı anda aldığı tahsilatı göremeyebilir
+    const kod = onceki.subeler.find((s) => s.id === t.subeId)?.kod ?? "SUB";
+    if (nolar.includes(t.makbuzNo) || !t.makbuzNo.startsWith(`${kod}-M-`)) t.makbuzNo = yeniMakbuzNo(kod, nolar);
+    nolar.push(t.makbuzNo);
+    yeniler.push(t);
+  }
+
+  // 3) Taksit: ödenen tutar yalnızca tahsilat / iptal kadar değişir
+  const farklar = odemeFarklari(yeniler, iptaller);
+  for (const [id, f] of farklar) if (f !== 0 && !taksitYaz.some((t) => t.id === id)) reddet("Tahsilatın dağıtıldığı taksit aynı işlemde güncellenmeli.");
+  for (const t of taksitYaz)
+    reddet(taksitYazmaEngeli(t, onceki.taksitler.find((x) => x.id === t.id), son, { finans, rol, odenenFarki: farklar.get(t.id) ?? 0 }));
+
+  // 4) Gider ve virman
+  for (const g of giderYaz) reddet(giderEngeli(g, onceki.giderler.find((x) => x.id === g.id), onceki, { finans, genel, bugun }));
+  if (virmanYaz.length) {
+    const virmanlar = [...onceki.virmanlar];
+    for (const v of virmanYaz) {
+      const hareketler = kasaHareketleri({ ...onceki, virmanlar });
+      reddet(virmanEngeli(v, onceki.virmanlar.find((x) => x.id === v.id), onceki, { finans, genel, bugun, bakiye: (kasa) => kasaBakiyesi(hareketler, kasa) }));
+      virmanlar.push(v);
+    }
+  }
 }
 
 /* =========================== Bölüm 04 öğrenci, veli ve kayıt =========================== */
@@ -430,9 +546,10 @@ export function kayitDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Akto
   for (const k of kayitYaz) {
     const eski = onceki.kayitlar.find((x) => x.id === k.id);
     // Kapsam dışındaki aktif şubeye nakil: yalnızca şube/grup/grup geçmişi değişir, grup sunucuca atanır, kontenjan aşılmaz
-    if (eski && eski.subeId !== k.subeId && !genel && !kap.includes(k.subeId)) {
-      reddet(kapsamDisiNakilEngeli(k, eski, son));
-      // Kalan taksitler yeni şubeye devredilir (ekran kapsam dışına taksit yazamaz; devri sunucu ekler)
+    if (eski && eski.subeId !== k.subeId) {
+      if (!genel && !kap.includes(k.subeId)) reddet(kapsamDisiNakilEngeli(k, eski, son));
+      // Kalan taksitler yeni şubeye devredilir. Ekran kapsam dışına taksit yazamaz; finans kapalıyken veya
+      // finans yetkisi yokken taksitleri hiç görmez (Bölüm 05 · okumaSuz). Devri her nakilde sunucu tamamlar.
       const tk = (K.taksitler ??= { yaz: [], sil: [] });
       for (const t of onceki.taksitler)
         if (t.kayitId === k.id && taksitKalan(t) > 0 && t.subeId !== k.subeId && !tk.yaz.some((x) => x.id === t.id)) tk.yaz.push({ ...t, subeId: k.subeId } as unknown as Satir);
@@ -617,7 +734,7 @@ export function tanimDenetle(onceki: Db, sonraki: Db, d: Degisiklik): void {
 
   const tekil = d.tekil ?? {};
   if ("kurum" in tekil) reddet(kurumDogrula(tekil.kurum as Kurum));
-  if ("fiyatListesi" in tekil) reddet(fiyatListesiDogrula(tekil.fiyatListesi));
+  if ("fiyatListesi" in tekil) reddet(fiyatListesiDogrula(tekil.fiyatListesi, sonraki));
   if ("moduller" in tekil) {
     const m = tekil.moduller;
     if (!m || typeof m !== "object" || Object.values(m as object).some((v) => typeof v !== "boolean")) reddet("Modül ayarı geçersiz.");

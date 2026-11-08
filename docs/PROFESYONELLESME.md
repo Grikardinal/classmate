@@ -21,7 +21,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 02 | Kullanıcılar ve yetkiler | `app/src/bolumler/02-kullanicilar` | 2 | ✅ |
 | 03 | Ön kayıt | `app/src/bolumler/03-on-kayit` | 3 | ✅ |
 | 04 | Öğrenci, veli ve kayıt | `app/src/bolumler/04-ogrenciler` | 4 | ✅ |
-| 05 | Finans | `app/src/bolumler/05-finans` | 5 | ⏳ |
+| 05 | Finans | `app/src/bolumler/05-finans` | 5 | ✅ |
 | 06 | Ders programı | `app/src/bolumler/06-ders-programi` | 1 | ⏳ |
 | 07 | Yoklama | `app/src/bolumler/07-yoklama` | 2 | ⏳ |
 | 08 | Ödev takibi | `app/src/bolumler/08-odevler` | 3 | ⏳ |
@@ -36,8 +36,8 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 
 | Tarih | Konu | Karar | Nerede uygulanacak |
 |---|---|---|---|
-| 2026-11-07 | Fiyat listesi modeli (doküman: sezon + seviye + şube; kod: yalnızca şube) | Bölüm 05'te ele alınacak | Bölüm 05 |
-| 2026-11-07 | Sezon geçişinde fiyat / indirim / ek hizmet | Eski kayıttan kopyalanmaz, **yeni sezonun fiyatları** uygulanır | Bölüm 05 (sezona bağlı fiyat listesiyle birlikte) |
+| 2026-11-07 | Fiyat listesi modeli (doküman: sezon + seviye + şube; kod: yalnızca şube) | Sezon + şube + seviye bazında fiyat; eski biçim açılışta/yedekte çevrilir | Bölüm 05 ✅ |
+| 2026-11-07 | Sezon geçişinde fiyat / indirim / ek hizmet | Eski kayıttan kopyalanmaz, **yeni sezonun fiyatları** uygulanır | Bölüm 05 ✅ (hedef fiyat tanımsızsa geçiş uyarıyla durur) |
 | 2026-11-07 | Programda kullanılmış derslik / ders saati | **Sil + pasif** ikisi de olsun: kullanılmamış kayıt silinir, kullanılmış kayıt pasife alınır (geçmiş korunur, yeni programda seçilemez) | Bölüm 01 ek iş ✅ |
 | 2026-11-07 | Aday şube devri | Tek şubeden sorumlu müdür de adayı **başka şubeye devredebilir** (devirden sonra aday onun kapsamından çıkar) | Bölüm 03 ek iş ✅ |
 | 2026-11-07 | Kaydı iptal edilen öğrencinin adayı | Aday **yeniden açılır** (kayda dönüşmüş durumundan çıkar, "Görüşüldü") | Bölüm 04 ✅ |

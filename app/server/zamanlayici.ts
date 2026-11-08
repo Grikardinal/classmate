@@ -17,6 +17,7 @@ import {
   type Db,
 } from "../src/data/model";
 import { dakika, gunFarki, hatirlatmaGunuMu, tarihEkle, tl } from "../src/lib/kurallar";
+import { otomatikHatirlatmaUygun } from "../src/bolumler/05-finans/kurallar";
 
 const tarihKisa = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
 
@@ -62,7 +63,8 @@ export function otomasyonlariCalistir(db: Db): Db {
   // 4) Taksit hatırlatmaları
   if (x.moduller.finans && SIMDI >= "10:00")
     for (const t of x.taksitler) {
-      if (taksitKalan(t) <= 0 || !hatirlatmaGunuMu(t.vade, BUGUN, x.ayarlar.hatirlatmaGunleri)) continue;
+      // İptal edilen / dondurulan kaydın kalan taksitine otomatik hatırlatma gitmez (Bölüm 05 · otomatikHatirlatmaUygun)
+      if (!otomatikHatirlatmaUygun(t, x.kayitlar) || !hatirlatmaGunuMu(t.vade, BUGUN, x.ayarlar.hatirlatmaGunleri)) continue;
       birKez(`taksit:${t.id}:${BUGUN}`, () => {
         bildirimEkle(x, t.vade >= BUGUN ? "taksitHatirlatma" : "gecikmisOdeme", t.ogrenciId, { tutar: tl(taksitKalan(t)), vade: tarihKisa(t.vade) }, simdi, true);
       });

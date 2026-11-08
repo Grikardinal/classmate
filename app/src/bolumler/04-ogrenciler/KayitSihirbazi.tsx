@@ -30,6 +30,8 @@ import { adSoyadBol, taksitPlani, telefonNormalize, tl } from "@/lib/kurallar";
 import { esc, yazdir } from "@/lib/yazdir";
 import { cn } from "@/lib/utils";
 import { kesinKayitEngeli } from "../03-on-kayit/kurallar";
+import { fiyatBul } from "../01-kurum-yapisi/kurallar";
+import { kayitUcreti } from "../05-finans/kurallar";
 import {
   EN_FAZLA_VELI,
   KVKK_SURUM,
@@ -112,10 +114,12 @@ export function KayitSihirbazi() {
   const dolu = secGrup ? grupDoluMu(d, secGrup.id) : false;
   const yonetici = kapasiteOnaylayabilir(rol);
 
-  const liste = tanimlar().fiyatListesi[subeId] ?? 0;
-  const hizmetTutar = ekHizmetler.filter((h) => hizmetler.includes(h.ad)).reduce((t, h) => t + h.fiyat, 0);
-  const indirimOran = Math.min(indirimTurleri.filter((i) => indirimler.includes(i.ad)).reduce((t, i) => t + i.oran, 0), 100);
-  const net = Math.round(liste * (1 - indirimOran / 100)) + hizmetTutar;
+  // Karar 2026-11-07: liste fiyatı sezon + şube + grubun seviyesine göre (Bölüm 01 · Fiyat listesi); tutarlar kuruş hassasiyetinde
+  const tanimliFiyat = fiyatBul(tanimlar().fiyatListesi, AKTIF_SEZON, subeId, secGrup?.seviye);
+  const liste = tanimliFiyat ?? 0;
+  const seciliIndirimler = indirimTurleri.filter((i) => indirimler.includes(i.ad));
+  const { oran: indirimOran, net } = kayitUcreti(liste, seciliIndirimler, hizmetler);
+  const fiyatHata = moduller.finans && secGrup && tanimliFiyat === null ? `Bu sezon için ${sube(subeId)?.ad} ${secGrup.seviye}. sınıf fiyatı tanımlı değil (Ayarlar → Fiyat listesi).` : null;
   const planHata = odemePlaniEngeli(net, plan);
   const planOnizleme = planHata ? [] : taksitPlani(net, plan.pesinat, plan.taksit, plan.ilkVade);
   const sozNo = subeId ? yeniSozlesmeNo(tanimlar(), d.kayitlar.map((k) => k.sozlesmeNo), subeId, AKTIF_SEZON, BUGUN) : "";
@@ -152,7 +156,8 @@ export function KayitSihirbazi() {
       if (dolu && !kapasiteOnay) return "Grup dolu; devam etmek için kapasite aşımını onaylayın.";
       return null;
     }
-    if (a === "Ödeme planı") return planHata;
+    if (a === "Ücret") return fiyatHata;
+    if (a === "Ödeme planı") return fiyatHata ?? planHata;
     if (a === "Kayıt formu" && !onay.aydinlatma) return "KVKK aydınlatma metninin okunduğu onaylanmalı.";
     return null;
   };
@@ -224,7 +229,7 @@ export function KayitSihirbazi() {
         id: kayitId, ogrenciId: ogrId, sezonId: AKTIF_SEZON, subeId, grupId, sozlesmeNo: no, durum: "aktif", tarih: BUGUN,
         grupGecmisi: [{ grupId, tarih: BUGUN }], ekHizmetler: hizmetler, kvkkOnay: { tarih: BUGUN, surum: KVKK_SURUM },
         listeFiyati: moduller.finans ? liste : 0,
-        indirimler: moduller.finans ? indirimTurleri.filter((i) => indirimler.includes(i.ad)) : [],
+        indirimler: moduller.finans ? seciliIndirimler : [],
         net: moduller.finans ? net : 0,
       });
       if (moduller.finans)
@@ -441,9 +446,10 @@ export function KayitSihirbazi() {
 
           {adimAdi === "Ücret" && (
             <>
+              {fiyatHata && <Alert tone="warning" icon={<AlertTriangle />}>{fiyatHata}</Alert>}
               <div className="grid gap-3 sm:grid-cols-3">
-                <StatCard label={`Liste fiyatı (${sube(subeId)?.kod})`} value={tl(liste)} />
-                <StatCard label="Ek hizmetler" value={tl(hizmetTutar)} />
+                <StatCard label={`Liste fiyatı (${sube(subeId)?.kod} · ${secGrup?.seviye ?? "—"}. sınıf)`} value={tanimliFiyat === null ? "—" : tl(liste)} />
+                <StatCard label="Ek hizmetler" value={tl(kayitUcreti(0, [], hizmetler).hizmetTutari)} />
                 <StatCard label="Net tutar" value={tl(net)} tone="success" hint={indirimOran ? `%${indirimOran} indirim uygulandı` : undefined} />
               </div>
               <div className="grid gap-2">

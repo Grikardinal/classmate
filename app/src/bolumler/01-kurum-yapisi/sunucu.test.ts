@@ -58,7 +58,11 @@ describe("şube ve sezon (kurum geneli)", () => {
   });
   it("bozuk kurum bilgisi, negatif fiyat ve modül ayarı reddedilir", () => {
     reddedilir(dene((x) => (x.kurum = { ...x.kurum, ad: "" })), /Kurum adı/);
-    reddedilir(dene((x) => (x.fiyatListesi = { ...x.fiyatListesi, s1: -5 })), /fiyat/i);
+    reddedilir(dene((x) => (x.fiyatListesi = x.fiyatListesi.map((f, i) => (i === 0 ? { ...f, fiyat: -5 } : f)))), /fiyat/i);
+    // Eski biçim (şube → tek fiyat) artık yazılamaz; yinelenen sezon + şube + seviye reddedilir
+    reddedilir(dene((x) => (x.fiyatListesi = { s1: 100 } as unknown as Db["fiyatListesi"])), /Fiyat listesi/);
+    reddedilir(dene((x) => (x.fiyatListesi = [...x.fiyatListesi, { ...x.fiyatListesi[0], fiyat: 1 }])), /iki fiyat/);
+    expect(dene((x) => (x.fiyatListesi = x.fiyatListesi.map((f, i) => (i === 0 ? { ...f, fiyat: 14250.75 } : f))))).not.toThrow();
     reddedilir(dene((x) => (x.moduller = { ...x.moduller, finans: "evet" as unknown as boolean })), /Modül/);
   });
 });

@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowRight, Plus } from "lucide-react";
 import { Alert, Badge, Button, Card, CardDescription, CardHeader, CardTitle, Checkbox, Dialog, Field, Input, Select, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
 import { grupDoluluk, grupEtiket, guncelle, islemYaz, useDb, yeniId } from "@/data/store";
-import { EN_YUKSEK_SEVIYE, grupAdiGecisi, sezonDogrula, sezonGecisEngeli, sezonGecisHedefleri, sezonGecisiPlani } from "./kurallar";
+import { EN_YUKSEK_SEVIYE, grupAdiGecisi, sezonDogrula, sezonGecisEngeli, sezonGecisFiyatEngeli, sezonGecisHedefleri, sezonGecisiPlani } from "./kurallar";
 import { HataMetni, tarihGoster, useGenel } from "./ortak";
 import { ogrenciDurumu } from "../04-ogrenciler/kurallar";
 
@@ -99,7 +99,8 @@ function SezonGecisi({ onClose }: { onClose: () => void }) {
   const [ogrenciTasi, setOgrenciTasi] = React.useState(true);
   const [aktifYap, setAktifYap] = React.useState(true);
   const kaynakGruplar = kaynak ? d.gruplar.filter((g) => g.sezonId === kaynak.id) : [];
-  const engel = sezonGecisEngeli(d, kaynak?.id, hedef);
+  // Karar 2026-11-07: taşınan kayda hedef sezonun liste fiyatı uygulanır; fiyat tanımsızsa geçiş durur
+  const engel = sezonGecisEngeli(d, kaynak?.id, hedef) ?? sezonGecisFiyatEngeli(d, kaynak?.id, hedef, ogrenciTasi);
 
   const uygula = () => {
     if (engel || !kaynak) return;
@@ -152,7 +153,7 @@ function SezonGecisi({ onClose }: { onClose: () => void }) {
               </p>
             ))}
           </div>
-          <Checkbox checked={ogrenciTasi} onChange={setOgrenciTasi} label="Aktif öğrencilerin kayıtlarını yeni gruplara taşı" description="Yeni sözleşme numarası verilir. Ödeme planı ve KVKK onayı yeni sezonda yeniden alınmalıdır." />
+          <Checkbox checked={ogrenciTasi} onChange={setOgrenciTasi} label="Aktif öğrencilerin kayıtlarını yeni gruplara taşı" description={`Yeni sözleşme numarası verilir. ${d.moduller.finans ? "Eski fiyat, indirim ve ek hizmet kopyalanmaz; hedef sezonun liste fiyatı uygulanır. " : ""}Ödeme planı ve KVKK onayı yeni sezonda yeniden alınmalıdır.`} />
           <Checkbox checked={aktifYap} onChange={setAktifYap} label="Hedef sezonu aktif sezon yap" />
           <p className="text-xs text-muted-foreground">{EN_YUKSEK_SEVIYE}. sınıf gruplarındaki kayıtlar “mezun” olarak işaretlenir; mezun kayıt geri alınamaz.</p>
         </>

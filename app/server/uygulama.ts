@@ -48,7 +48,7 @@ import {
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
-import { hepsiniYukle, semaKur, tamamenYaz, yaz, type Veritabani } from "./veritabani";
+import { hepsiniYukle, semaKur, tamamenYaz, veriyiOnar, yaz, type Veritabani } from "./veritabani";
 import { yedekAl, yedekOku, yedekleriListele } from "./yedek";
 
 export const DEMO_PAROLA = "Classmate2026";
@@ -69,6 +69,7 @@ function bosKurulum(): Db {
     moduller: { ...varsayilanModuller },
     subeler: [{ id: "s1", ad: "Merkez", kod: "MRK", adres: "", telefon: "", mudur: "", aktif: true }],
     sezonlar: d.sezonlar,
+    fiyatListesi: [],
     derslikler: [],
     dersSaatleri: [],
     gruplar: [],
@@ -98,6 +99,11 @@ export async function uygulamaOlustur(s: Secenekler) {
   }
   const durum = { db };
   tanimKaynagi(durum.db);
+
+  // Onarım/geçiş: eski biçimli fiyat listesi yüklenirken çevrildi (veriyiOnar); çevrilmiş hali kalıcı yazılır
+  const kayitliFiyat = (await vt.q("select veri from tekil where anahtar = 'fiyatListesi'"))[0]?.veri;
+  if (JSON.stringify(kayitliFiyat) !== JSON.stringify(durum.db.fiyatListesi))
+    await yaz(vt, { koleksiyonlar: {}, tekil: { fiyatListesi: durum.db.fiyatListesi } }, () => null);
 
   // Onarım/geçiş: yeni sürümde eklenen veya eksik bildirim olaylarını tamamla
   const eksikOlaylar = varsayilanOlaylar.filter((o) => !durum.db.olaylar.some((x) => x.key === o.key));
@@ -376,7 +382,10 @@ export async function uygulamaOlustur(s: Secenekler) {
   app.post("/api/yedek", personelGerekli, async (c) => {
     const a = c.get("aktor");
     if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici geri yükleyebilir.", 403);
-    const yeni = await c.req.json<Db>();
+    const ham = await c.req.json<Db>();
+    if (ham?.surum !== SURUM || !Array.isArray(ham.ogrenciler) || !Array.isArray(ham.kullanicilar)) return hata(c, "Geçerli bir Classmate yedeği değil (veya farklı sürüm).");
+    // Eski biçimli yedek (ör. şube başına tek fiyat) yeni biçime çevrilerek yazılır
+    const yeni = veriyiOnar(ham);
     if (yeni?.surum !== SURUM || !Array.isArray(yeni.ogrenciler) || !Array.isArray(yeni.kullanicilar)) return hata(c, "Geçerli bir Classmate yedeği değil (veya farklı sürüm).");
     if (!yeni.kullanicilar.some((k) => k.id === a.kullanici.id && k.aktif && k.rol === "genel-yonetici"))
       return hata(c, "Yedekte sizin aktif genel yönetici hesabınız yok; geri yükleme sizi dışarıda bırakırdı.");
