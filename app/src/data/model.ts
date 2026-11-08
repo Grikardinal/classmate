@@ -236,6 +236,8 @@ export type Odev = {
   teslimler: Record<string, TeslimDurumu>;
   notlar: Record<string, string>;
   kontrolEdildi: boolean;
+  /** İlk teslim kontrolünün tarihi (sunucu yazar; düzeltme süresi buna bağlı, eski kayıtlarda yok) */
+  kontrolTarihi?: string;
 };
 
 export type Musaitlik = { id: string; ogretmenId: string; subeId: string; gun: number; bas: string; bit: string };
@@ -266,6 +268,7 @@ export type OlayKey =
   | "yeniOdev"
   | "odevYapmadi"
   | "odevHatirlatma"
+  | "odevDuzeltme"
   | "etutHatirlatma"
   | "duyuru"
   | "taksitHatirlatma"
@@ -481,6 +484,7 @@ export const varsayilanOlaylar: BildirimOlayi[] = [
   { key: "yeniOdev", ad: "Yeni ödev", kanal: "push", aktif: true, sablon: "{ogrenci} için yeni {ders} ödevi: {baslik}. Teslim: {teslim}", modul: "odev" },
   { key: "odevYapmadi", ad: "Ödev yapılmadı", kanal: "push", aktif: true, sablon: "{ogrenci} {ders} ödevini ({baslik}) teslim etmedi.", modul: "odev" },
   { key: "odevHatirlatma", ad: "Ödev teslim hatırlatması (1 gün önce)", kanal: "push", aktif: true, sablon: "Yarın teslim: {ders} — {baslik}", modul: "odev" },
+  { key: "odevDuzeltme", ad: "Ödev durumu düzeltmesi", kanal: "push", aktif: true, sablon: "{ogrenci} {ders} ödevi ({baslik}) için gönderilen “teslim etmedi” bilgisi düzeltildi.", modul: "odev" },
   { key: "etutHatirlatma", ad: "Etüt hatırlatma", kanal: "push", aktif: true, sablon: "{ogrenci} için {tarih} {saat} etüt randevusu ({ogretmen}). {sube_adi}", modul: "etut" },
   { key: "duyuru", ad: "Duyuru", kanal: "push", aktif: true, sablon: "{baslik}: {metin}" },
   { key: "onKayitTesekkur", ad: "Ön kayıt teşekkür", kanal: "sms", aktif: true, sablon: "Bilgi talebiniz için teşekkürler, sizi en kısa sürede arayacağız. {sube_adi} {sube_telefonu}", modul: "onKayit" },

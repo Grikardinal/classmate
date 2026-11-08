@@ -2,11 +2,13 @@
 import { describe, expect, it } from "vitest";
 import type { Db, Gonderim, Kayit, Odev, Ogrenci, ProgramSatiri, TeslimDurumu } from "@/data/model";
 import {
+  kontrolDuzeltmeEngeli,
   kontrolZamanEngeli,
   notlarTemizle,
   odevBildirimiYineleniyor,
   odevDersleri,
   odevHedefleri,
+  odevKontrolEdebilir,
   odevKontrolListesi,
   odevOgretmeni,
   odevSilmeEngeli,
@@ -17,6 +19,7 @@ import {
   teslimDurumuGecerli,
   teslimOzeti,
   veliOdevleri,
+  yapmadiBildirimleri,
   yeniYapmayanlar,
   type OdevBaglami,
 } from "./kurallar";
@@ -39,9 +42,17 @@ const vadesi = odev({ verilis: "2026-11-01", teslim: "2026-11-08" });
 
 describe("ders ve öğretmen", () => {
   it("kapanmış satırın dersi grubun dersi sayılmaz", () => expect(odevDersleri(d, "g1", BUGUN)).toEqual(["l1", "l2"]));
-  it("öğretmen kendi dersini, rehber grubun tüm derslerini alır", () => {
+  it("öğretmen kendi dersini alır; rehberlik ders vermez", () => {
     expect(odevDersleri(d, "g1", BUGUN, "p1")).toEqual(["l1"]);
-    expect(odevDersleri(d, "g1", BUGUN, "pR")).toEqual(["l1", "l2"]);
+    expect(odevDersleri(d, "g1", BUGUN, "pR")).toEqual([]);
+  });
+  it("kontrolü ödevin öğretmeni ve dersin bugünkü öğretmeni yapar", () => {
+    const eskiOgretmen = odev({ ogretmenId: "pEski" });
+    expect(odevKontrolEdebilir(eskiOgretmen, d, "pEski", BUGUN)).toBe(true);
+    expect(odevKontrolEdebilir(eskiOgretmen, d, "p1", BUGUN)).toBe(true);
+    expect(odevKontrolEdebilir(eskiOgretmen, d, "p2", BUGUN)).toBe(false);
+    expect(odevKontrolEdebilir(eskiOgretmen, d, "pR", BUGUN)).toBe(false);
+    expect(odevKontrolEdebilir(odev({ ogretmenId: "pEski", dersId: "l3" }), d, "p3", BUGUN)).toBe(false);
   });
   it("ödevin öğretmeni açık satırdan bulunur", () => {
     expect(odevOgretmeni(d, "g1", "l2", BUGUN)).toBe("p2");
@@ -116,10 +127,31 @@ describe("teslim kontrolü denetimi", () => {
     expect(kontrol({ o1: "eksik" }, { notlar: { o1: "x".repeat(301) } })).toMatch(/300/);
     expect(kontrol({ o1: "eksik" }, { notlar: { o2: "not" } })).toMatch(/teslim durumu olan/);
   });
-  it("başkasının ödevini öğretmen değiştiremez, yönetici değiştirir", () => {
-    const baska = odev({ ...vadesi, ogretmenId: "p2" });
+  it("başkasının dersindeki ödevi öğretmen değiştiremez, yönetici değiştirir", () => {
+    const baska = odev({ ...vadesi, ogretmenId: "p2", dersId: "l2" });
     expect(kontrol({ o1: "yapti" }, {}, baska)).toMatch(/kendi ödev/);
     expect(kontrol({ o1: "yapti" }, {}, baska, yonetici)).toBeNull();
+  });
+  it("dersi devralan yalnızca teslim kontrolü yapar", () => {
+    const devir = odev({ ...vadesi, ogretmenId: "pEski" });
+    expect(kontrol({ o1: "yapti" }, {}, devir)).toBeNull();
+    expect(kontrol({ o1: "yapti" }, { baslik: "Yeni" }, devir)).toMatch(/yalnızca teslim kontrolü/);
+    expect(kontrol({ o1: "yapti" }, { teslim: "2026-11-07" }, devir)).toMatch(/yalnızca teslim kontrolü/);
+    expect(kontrol({ o1: "yapti" }, { ogretmenId: "p1" }, devir)).toMatch(/yalnızca teslim kontrolü/);
+    expect(odevSilmeEngeli(devir, ogretmen)).toMatch(/kendi/);
+  });
+  it("öğretmen kontrolü 7 gün düzeltir, sonrası yönetici", () => {
+    const k = (kontrolTarihi: string) => odev({ ...vadesi, kontrolEdildi: true, kontrolTarihi, teslimler: { o1: "yapti" } });
+    expect(kontrol({ o1: "eksik" }, {}, k("2026-11-02"))).toBeNull();
+    expect(kontrol({ o1: "eksik" }, {}, k("2026-11-01"))).toMatch(/7 günden eski/);
+    expect(kontrol({ o1: "eksik" }, {}, k("2026-11-01"), yonetici)).toBeNull();
+  });
+  it("kontrol tarihi olmayan eski kayıtta teslim tarihi esas alınır", () => {
+    const k = (teslim: string) => odev({ verilis: "2026-10-01", teslim, kontrolEdildi: true, teslimler: { o1: "yapti" } });
+    expect(kontrolDuzeltmeEngeli(k("2026-11-02"), "ogretmen", BUGUN)).toBeNull();
+    expect(kontrolDuzeltmeEngeli(k("2026-11-01"), "ogretmen", BUGUN)).toMatch(/yönetici/);
+    expect(kontrolDuzeltmeEngeli(k("2026-11-01"), "sube-muduru", BUGUN)).toBeNull();
+    expect(kontrol({ o1: "yapti" }, {}, odev({ ...vadesi, teslim: "2026-10-01", verilis: "2026-09-20", kontrolEdildi: false }))).toBeNull();
   });
   it("grup değiştirilemez; eski kayıttaki değişmeyen alanlar kilitlemez", () => {
     expect(odevYazmaEngeli({ ...vadesi, grupId: "g2" }, vadesi, d, yonetici)).toMatch(/grubu/);
@@ -150,6 +182,15 @@ describe("temizleme", () => {
     const s = odevTemizle({ ...eski, ogretmenId: "sahte", verilis: BUGUN, teslimler: { o1: "yapti" }, notlar: { o1: "eski" } }, eski, "p9", BUGUN);
     expect(s).toMatchObject({ ogretmenId: "p1", verilis: "2026-11-01", teslimler: { o3: "eksik", o1: "yapti" }, notlar: { o3: "not" } });
   });
+  it("kontrol tarihi sunucudan: ilk kontrolde yazılır, düzeltmede değişmez, istemci belirleyemez", () => {
+    const acik = odev();
+    expect(odevTemizle({ ...acik, kontrolEdildi: true, kontrolTarihi: "2030-01-01" }, acik, "p1", BUGUN).kontrolTarihi).toBe(BUGUN);
+    const yapilmis = odev({ kontrolEdildi: true, kontrolTarihi: "2026-11-03" });
+    expect(odevTemizle({ ...yapilmis, kontrolTarihi: "2030-01-01" }, yapilmis, "p1", BUGUN).kontrolTarihi).toBe("2026-11-03");
+    const eskiKayit = odev({ kontrolEdildi: true });
+    expect(odevTemizle({ ...eskiKayit, kontrolTarihi: "2030-01-01" }, eskiKayit, "p1", BUGUN).kontrolTarihi).toBeUndefined();
+    expect(odevTemizle(odev({ kontrolTarihi: "2030-01-01" }), undefined, "p1", BUGUN).kontrolTarihi).toBeUndefined();
+  });
   it("notlar: yaptı, boş ve durumsuz atılır", () => expect(notlarTemizle({ a: " n ", b: "x", c: "  ", d: "y" }, { a: "eksik", b: "yapti", c: "eksik" })).toEqual({ a: "n" }));
   it("durum değeri", () => {
     expect(teslimDurumuGecerli("yapti")).toBe(true);
@@ -159,9 +200,9 @@ describe("temizleme", () => {
 
 describe("görünürlük", () => {
   it("öğretmen kendi ödevini ve rehberi olduğu grubu görür", () => {
-    expect(ogretmenOdevGorur(odev(), d.gruplar, "p1")).toBe(true);
-    expect(ogretmenOdevGorur(odev({ ogretmenId: "p2" }), d.gruplar, "pR")).toBe(true);
-    expect(ogretmenOdevGorur(odev({ ogretmenId: "p2" }), d.gruplar, "p1")).toBe(false);
+    expect(ogretmenOdevGorur(odev(), d, "p1", BUGUN)).toBe(true);
+    expect(ogretmenOdevGorur(odev({ ogretmenId: "p2", dersId: "l2" }), d, "pR", BUGUN)).toBe(true);
+    expect(ogretmenOdevGorur(odev({ ogretmenId: "p2", dersId: "l2" }), d, "p1", BUGUN)).toBe(false);
   });
   it("veli yalnızca çocuğunun ödevini ve durumunu alır", () => {
     const k = [kayit("o1"), kayit("o2"), kayit("o3", { grupId: "g2" })];
@@ -183,6 +224,11 @@ describe("bildirim", () => {
   it("kimliksiz eski kayıt metinle eşleşir; başka veli ve olay sayılmaz", () => {
     expect(odevBildirimiYineleniyor(g(), "x", [g()])).toBe(true);
     expect(odevBildirimiYineleniyor(g(), "x", [g({ veliId: "z" }), g({ olay: "yeniOdev" })])).toBe(false);
+  });
+  it("yapmadı bildirimleri ödev kimliğiyle, eski kayıt başlıkla eşleşir", () => {
+    const o = { id: "x", baslik: "Kesir" };
+    const l = [g({ odevId: "x", metin: "a" }), g({ metin: "Kesir ödevi" }), g({ odevId: "y", metin: "Kesir" }), g({ olay: "yeniOdev", odevId: "x" }), g({ odevId: "x", ogrenciId: "o2" })];
+    expect(yapmadiBildirimleri(l, o, "o1")).toEqual([l[0], l[1]]);
   });
   it("SMS izni kapalı veliye push", () => {
     const s = { kanal: "sms" as const, veliId: "v", maliyet: 2 };

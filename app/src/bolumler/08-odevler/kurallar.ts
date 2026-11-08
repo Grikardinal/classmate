@@ -6,10 +6,13 @@
  */
 import type { Db, Gonderim, Kayit, Odev, Ogrenci, Rol, TeslimDurumu, Veli } from "../../data/model";
 import type { Hata } from "../01-kurum-yapisi/kurallar";
-import { tarihGecerli } from "../06-ders-programi/kurallar";
-import { yoklamaOgrencileri } from "../07-yoklama/kurallar";
+import { satirGecerliMi, tarihGecerli } from "../06-ders-programi/kurallar";
+import { yoklamaOgrencileri, yoklamaYoneticisi } from "../07-yoklama/kurallar";
+import { tarihEkle } from "../../lib/kurallar";
 
 export const TESLIM_DURUMLARI: TeslimDurumu[] = ["yapti", "eksik", "yapmadi"];
+/** Öğretmen kontrolü, yapıldığı tarihten itibaren bu kadar gün düzeltebilir (karar 2026-11-08) */
+export const KONTROL_DUZELTME_GUN = 7;
 export const BASLIK_UZUNLUK = 200;
 export const ACIKLAMA_UZUNLUK = 2000;
 export const KAYNAK_UZUNLUK = 500;
@@ -26,11 +29,14 @@ type ProgramVerisi = Pick<Db, "program" | "gruplar">;
 /** Grubun bugün veya ileride geçerli program satırları (kapanmış satır ders vermez) */
 const gecerliSatirlar = (d: Pick<Db, "program">, grupId: string, bugun: string) => d.program.filter((p) => p.grupId === grupId && (!p.bitis || p.bitis >= bugun));
 
-/** Grubun aldığı dersler. personelId verilirse: öğretmenin ödev verebileceği dersler (kendi dersleri; rehberse grubun tüm dersleri). */
-export function odevDersleri(d: ProgramVerisi, grupId: string, bugun: string, personelId?: string | null): string[] {
-  const satirlar = gecerliSatirlar(d, grupId, bugun);
-  const rehber = !!personelId && d.gruplar.some((g) => g.id === grupId && g.rehberId === personelId);
-  return [...new Set(satirlar.filter((p) => !personelId || rehber || p.ogretmenId === personelId).map((p) => p.dersId))];
+/** Grubun aldığı dersler. personelId verilirse: öğretmenin ödev verebileceği dersler (yalnızca kendi dersleri; rehberlik ders vermez, karar 2026-11-08). */
+export function odevDersleri(d: Pick<Db, "program">, grupId: string, bugun: string, personelId?: string | null): string[] {
+  return [...new Set(gecerliSatirlar(d, grupId, bugun).filter((p) => !personelId || p.ogretmenId === personelId).map((p) => p.dersId))];
+}
+
+/** Teslim kontrolünü kim yapar: ödevin öğretmeni veya o grubun o dersinde bugün geçerli satırı olan öğretmen (devralan, karar 2026-11-08) */
+export function odevKontrolEdebilir(o: Pick<Odev, "ogretmenId" | "grupId" | "dersId">, d: Pick<Db, "program">, personelId: string, bugun: string): boolean {
+  return o.ogretmenId === personelId || d.program.some((p) => p.grupId === o.grupId && p.dersId === o.dersId && p.ogretmenId === personelId && satirGecerliMi(p, bugun));
 }
 
 /** Yönetici ödev verdiğinde ödevin öğretmeni: o dersin programdaki öğretmeni */
@@ -59,9 +65,9 @@ export function odevKontrolListesi(d: OgrenciVerisi, o: OdevHedefi & Pick<Odev, 
 
 /* ---------- Görünürlük ---------- */
 
-/** Öğretmen ekranı: kendi ödevleri ve rehberi olduğu grubun ödevleri (rehber yalnızca görür) */
-export function ogretmenOdevGorur(o: Pick<Odev, "ogretmenId" | "grupId">, gruplar: Db["gruplar"], personelId: string): boolean {
-  return o.ogretmenId === personelId || gruplar.some((g) => g.id === o.grupId && g.rehberId === personelId);
+/** Öğretmen ekranı: kendi ödevleri, devraldığı dersin ödevleri ve rehberi olduğu grubun ödevleri (rehber yalnızca görür) */
+export function ogretmenOdevGorur(o: Pick<Odev, "ogretmenId" | "grupId" | "dersId">, d: ProgramVerisi, personelId: string, bugun: string): boolean {
+  return odevKontrolEdebilir(o, d, personelId, bugun) || d.gruplar.some((g) => g.id === o.grupId && g.rehberId === personelId);
 }
 
 /** Veliye giden ödevler: yalnızca çocuğunun hedefinde olduğu ödev; teslim durumu ve not yalnızca kendi çocuğunun */
@@ -90,6 +96,12 @@ export function kontrolZamanEngeli(teslim: string, bugun: string): Hata {
   return teslim > bugun ? "Teslim tarihi gelmeden teslim kontrolü yapılamaz." : null;
 }
 
+/** Yapılmış kontrolü öğretmen 7 gün düzeltir, sonrası yönetici. Eski kayıtta kontrol tarihi yoksa teslim tarihi esas alınır. */
+export function kontrolDuzeltmeEngeli(o: Pick<Odev, "kontrolEdildi" | "kontrolTarihi" | "teslim">, rol: Rol, bugun: string): Hata {
+  if (!o.kontrolEdildi || yoklamaYoneticisi(rol)) return null;
+  return bugun > tarihEkle(o.kontrolTarihi ?? o.teslim, KONTROL_DUZELTME_GUN) ? `Kontrol ${KONTROL_DUZELTME_GUN} günden eski; yalnızca yönetici düzeltebilir.` : null;
+}
+
 function metinEngeli(s: Odev, eski: Odev | undefined): Hata {
   if (typeof s.baslik !== "string" || !s.baslik.trim()) return "Ödev başlığı boş olamaz.";
   if (typeof s.aciklama !== "string" || typeof s.kaynak !== "string") return "Ödev bilgileri hatalı.";
@@ -111,7 +123,7 @@ function teslimEngeli(s: Odev, eski: Odev, d: YazmaVerisi, b: OdevBaglami): Hata
   if (eski.kontrolEdildi && s.kontrolEdildi !== true) return "Yapılmış teslim kontrolü geri alınamaz.";
   if (ayni(s.teslimler, eski.teslimler) && ayni(s.notlar, eski.notlar) && s.kontrolEdildi === eski.kontrolEdildi) return null;
   if (s.kontrolEdildi !== true) return "Teslim durumu kontrolle birlikte kaydedilir.";
-  const zaman = kontrolZamanEngeli(s.teslim, b.bugun);
+  const zaman = kontrolZamanEngeli(s.teslim, b.bugun) ?? kontrolDuzeltmeEngeli(eski, b.rol, b.bugun);
   if (zaman) return zaman;
   const hedef = new Set(odevHedefleri(d, s).map((x) => x.id));
   const girdiler = Object.entries(s.teslimler);
@@ -127,11 +139,17 @@ function teslimEngeli(s: Odev, eski: Odev, d: YazmaVerisi, b: OdevBaglami): Hata
   return null;
 }
 
+/** Devralan öğretmenin değiştiremeyeceği alanlar */
+const KONTROL_DISI_ALANLAR = ["ogretmenId", "dersId", "grupId", "ogrenciIds", "baslik", "aciklama", "kaynak", "verilis", "teslim"] as const;
+
 export function odevYazmaEngeli(s: Odev, eski: Odev | undefined, d: YazmaVerisi, b: OdevBaglami): Hata {
   if (!b.modulAcik) return "Ödev modülü kapalı.";
   if (b.ogretmenGruplari) {
     if (!b.ogretmenGruplari.has(s.grupId)) return "Yalnızca kendi gruplarınızın ödevlerini yazabilirsiniz.";
-    if (eski && eski.ogretmenId !== b.personelId) return "Yalnızca kendi ödevlerinizi değiştirebilirsiniz.";
+    if (eski && eski.ogretmenId !== b.personelId) {
+      if (!odevKontrolEdebilir(eski, d, b.personelId, b.bugun)) return "Yalnızca kendi ödevlerinizi değiştirebilirsiniz.";
+      if (KONTROL_DISI_ALANLAR.some((a) => !ayni(s[a], eski[a]))) return "Devraldığınız ödevde yalnızca teslim kontrolü yapabilirsiniz.";
+    }
   }
   if (eski && eski.grupId !== s.grupId) return "Ödevin grubu değiştirilemez.";
   if (!d.gruplar.some((g) => g.id === s.grupId)) return "Grup bulunamadı.";
@@ -174,17 +192,26 @@ export function notlarTemizle(notlar: Record<string, string>, durumlar: Record<s
 
 /** Sunucunun yazdığı son hal: öğretmen, veriliş ve kontrol alanları istemciye bırakılmaz; ayrılan öğrencinin kaydı silinmez */
 export function odevTemizle(s: Odev, eski: Odev | undefined, ogretmenId: string, bugun: string): Odev {
+  const { kontrolTarihi: _istemci, ...temel } = s;
+  void _istemci;
   const metinler = { baslik: s.baslik.trim(), aciklama: s.aciklama.trim(), kaynak: s.kaynak.trim() };
-  if (!eski) return { ...s, ...metinler, ogretmenId, verilis: bugun, teslimler: {}, notlar: {}, kontrolEdildi: false };
+  if (!eski) return { ...temel, ...metinler, ogretmenId, verilis: bugun, teslimler: {}, notlar: {}, kontrolEdildi: false };
+  // İlk kontrolün tarihi sabittir; düzeltme süreyi uzatmaz
+  const kontrolTarihi = eski.kontrolTarihi ?? (!eski.kontrolEdildi && s.kontrolEdildi ? bugun : undefined);
   const teslimler = { ...eski.teslimler, ...s.teslimler };
   const korunan = Object.fromEntries(Object.entries(eski.notlar).filter(([id]) => s.teslimler[id] === undefined));
-  return { ...s, ...metinler, ogretmenId: eski.ogretmenId, verilis: eski.verilis, teslimler, notlar: notlarTemizle({ ...korunan, ...s.notlar }, teslimler) };
+  return { ...temel, ...metinler, ogretmenId: eski.ogretmenId, verilis: eski.verilis, teslimler, notlar: notlarTemizle({ ...korunan, ...s.notlar }, teslimler), ...(kontrolTarihi ? { kontrolTarihi } : {}) };
 }
 
 /* ---------- Bildirim ---------- */
 
-export type OdevOlayi = "yeniOdev" | "odevYapmadi" | "odevHatirlatma";
-export const odevBildirimiMi = (olay: unknown): olay is OdevOlayi => olay === "yeniOdev" || olay === "odevYapmadi" || olay === "odevHatirlatma";
+export type OdevOlayi = "yeniOdev" | "odevYapmadi" | "odevHatirlatma" | "odevDuzeltme";
+export const odevBildirimiMi = (olay: unknown): olay is OdevOlayi => olay === "yeniOdev" || olay === "odevYapmadi" || olay === "odevHatirlatma" || olay === "odevDuzeltme";
+
+/** "Yapmadı" bildirimleri. Ödev kimliği yazılmadan önceki kayıtlar başlıkla eşleşir. */
+export function yapmadiBildirimleri<T extends Pick<Gonderim, "olay" | "ogrenciId" | "metin" | "odevId">>(gonderimler: T[], o: Pick<Odev, "id" | "baslik">, ogrenciId: string): T[] {
+  return gonderimler.filter((g) => g.olay === "odevYapmadi" && g.ogrenciId === ogrenciId && (g.odevId === o.id || (!g.odevId && g.metin.includes(o.baslik))));
+}
 
 /** Bu kayıtla yeni "yapmadı" olanlar */
 export function yeniYapmayanlar(yeni: Record<string, TeslimDurumu>, eski: Record<string, TeslimDurumu>): string[] {

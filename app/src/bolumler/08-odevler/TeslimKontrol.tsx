@@ -3,7 +3,7 @@ import * as React from "react";
 import { CheckCheck } from "lucide-react";
 import { Avatar, Button, Input, Sheet, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
-import { bildirimEkle, dersAdi, grupEtiket, guncelle, islemYaz, tamAd, useDb, type Odev, type TeslimDurumu } from "@/data/store";
+import { BUGUN, bildirimEkle, dersAdi, grupEtiket, guncelle, islemYaz, tamAd, useDb, type Odev, type TeslimDurumu } from "@/data/store";
 import { cn } from "@/lib/utils";
 import { NOT_UZUNLUK, notlarTemizle, odevKontrolListesi, yeniYapmayanlar } from "./kurallar";
 import { tarihKisa, teslimSecenek } from "./ortak";
@@ -17,7 +17,7 @@ export default function TeslimKontrol({ o, onClose }: { o: Odev; onClose: () => 
   const kaydet = () => {
     let n = 0;
     guncelle((x) => {
-      x.odevler = x.odevler.map((y) => (y.id === o.id ? { ...y, teslimler: { ...y.teslimler, ...durum }, notlar: notlarTemizle(notlar, durum), kontrolEdildi: true } : y));
+      x.odevler = x.odevler.map((y) => (y.id === o.id ? { ...y, teslimler: { ...y.teslimler, ...durum }, notlar: notlarTemizle(notlar, durum), kontrolEdildi: true, kontrolTarihi: y.kontrolTarihi ?? (y.kontrolEdildi ? undefined : BUGUN) } : y));
       for (const ogrId of yeniYapmayanlar(durum, o.teslimler)) n += bildirimEkle(x, "odevYapmadi", ogrId, { ders: dersAdi(o.dersId), baslik: o.baslik }, undefined, true);
       islemYaz(x, ad, "Ödev kontrolü", `${grupEtiket(x, o.grupId)} — ${o.baslik}`);
     });

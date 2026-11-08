@@ -63,6 +63,11 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-08 | Sekreterin yoklama alması | Aynı gün ve 7 güne kadar geç giriş; geçmiş düzeltme yok (değişiklik yok) | — |
 | 2026-11-08 | Öğretmenin geç giriş sınırı | **7 gün** (değişiklik yok) | — |
 | 2026-11-08 | Dersi olmayan güne veli izni | **Reddedilir** | Bölüm 07 ek iş ✅ |
+| 2026-11-08 | Teslimden önce ödev kontrolü | **Engelli** kalır (değişiklik yok); kontrol edilmiş ödevi yalnızca yönetici siler | — |
+| 2026-11-08 | Grubu devralan öğretmen | Önceki öğretmenin kontrol bekleyen ödevlerini **kontrol edebilir** | Bölüm 08 ek iş ✅ |
+| 2026-11-08 | Rehber öğretmenin ödev vermesi | Yalnızca **kendi dersinden** | Bölüm 08 ek iş ✅ |
+| 2026-11-08 | Ödev kontrolünü düzeltme süresi | Öğretmene **7 gün**, sonrası yönetici | Bölüm 08 ek iş ✅ |
+| 2026-11-08 | "Yapmadı" düzeltilince | Bildirim gitmişse veliye **tek düzeltme mesajı** | Bölüm 08 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

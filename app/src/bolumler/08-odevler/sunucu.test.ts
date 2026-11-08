@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { ornekVeriUret, type Db, type Gonderim, type Odev, type ProgramSatiri } from "@/data/model";
 import { farkHesapla, farkUygula } from "@/data/fark";
+import { veriyiOnar } from "../../../server/veritabani";
 import { YetkiHatasi, okumaSuz, veliVerisi, yazmaDenetle, type Aktor } from "../../../server/politika";
 
 const BUGUN = "2026-11-09";
@@ -77,8 +78,23 @@ describe("yetki ve modül", () => {
   it("öğretmen kendi ogretmenId'si ile başka gruba yazamaz", () => reddedilir(yeni(odev({ grupId: BASKA_GRUP.id })), /kendi grup/));
   it("öğretmen başkasının ödevini sahiplenemez, değiştiremez, silemez", () => {
     const b = vadesi({ ogretmenId: "p7" });
-    reddedilir(degistir(b, { ogretmenId: "p4" }), /kendi ödev/);
+    reddedilir(degistir(b, { ogretmenId: "p4" }), /yalnızca teslim kontrolü/);
+    reddedilir(degistir(vadesi({ ogretmenId: "p7", dersId: "dersYok" }), { baslik: "x" }), /kendi ödev/);
     reddedilir(sil(b), /kendi/);
+  });
+  it("dersi devralan öğretmen kontrol eder; ogretmenId değişmez, kontrol tarihi sunucudan", () => {
+    const b = vadesi({ ogretmenId: "p7" });
+    expect(yazilan(degistir(b, { teslimler: { [OGR]: "yapti" }, kontrolEdildi: true, kontrolTarihi: "2030-01-01" }))).toMatchObject({ ogretmenId: "p7", kontrolTarihi: BUGUN });
+    reddedilir(degistir(b, { baslik: "Yeni", teslimler: { [OGR]: "yapti" }, kontrolEdildi: true }), /yalnızca teslim kontrolü/);
+  });
+  it("rehber başka dersten ödev veremez ama grubu görür", () => {
+    const k: Db = { ...db, gruplar: db.gruplar.map((g) => (g.id === "g1" ? { ...g, rehberId: "p7" } : g)) };
+    reddedilir(yeni(odev({ ogretmenId: "p7" }), ogretmenOl("p7"), k), /kendi dersiniz/);
+  });
+  it("öğretmen 7 günden eski kontrolü düzeltemez, müdür düzeltir", () => {
+    const v = vadesi({ kontrolEdildi: true, kontrolTarihi: "2026-11-01", teslimler: { [OGR]: "yapti" } });
+    reddedilir(degistir(v, { teslimler: { [OGR]: "eksik" } }), /7 günden eski/);
+    expect(degistir(v, { teslimler: { [OGR]: "eksik" } }, MUDUR)).not.toThrow();
   });
   it("grubu devreden öğretmen ödevini değiştiremez, silemez ve görmez (karar 2026-11-08)", () => {
     const k: Db = { ...db, program: db.program.map((p) => (p.ogretmenId === "p4" && p.grupId === "g1" ? { ...p, bitis: "2026-11-01" } : p)), odevler: [vadesi()] };
@@ -178,6 +194,32 @@ describe("bildirim", () => {
     const k: Db = { ...db, odevler: [v], gonderimler: [gonderim("a", { odevId: v.id }), gonderim("b", { odevId: v.id, ogrenciId: OGR2, durum: "iletildi" })] };
     const f = degistir(v, { teslimler: { [OGR]: "yapti", [OGR2]: "yapti" } }, OGRETMEN, k);
     expect(f().koleksiyonlar.gonderimler!.sil).toEqual(["a"]);
+  });
+  describe("düzeltme mesajı", () => {
+    const v = vadesi({ kontrolEdildi: true, teslimler: { [OGR]: "yapmadi" } });
+    const calistir = (gs: Gonderim[], k: Partial<Db> = {}) => degistir(v, { teslimler: { [OGR]: "yapti" } }, OGRETMEN, { ...db, odevler: [v], gonderimler: gs, ...k })().koleksiyonlar.gonderimler;
+    const gitmis = gonderim("a", { odevId: v.id, durum: "iletildi" });
+    it("gitmiş bildirime veliye tek düzeltme gider", () => {
+      const s = calistir([gitmis])!;
+      expect(s.sil).toEqual([]);
+      const l = s.yaz as unknown as Gonderim[];
+      expect(l).toHaveLength(1);
+      expect(l[0]).toMatchObject({ olay: "odevDuzeltme", veliId: VELI, ogrenciId: OGR, odevId: v.id, subeId: "s1" });
+    });
+    it("gitmemiş bildirimde düzeltme gitmez, kuyruktan silinir", () => {
+      const s = calistir([gonderim("a", { odevId: v.id, durum: "bekliyor" })])!;
+      expect(s.sil).toEqual(["a"]);
+      expect(s.yaz).toEqual([]);
+    });
+    it("düzeltme ikinci kez gitmez", () => expect(calistir([gitmis, gonderim("d", { olay: "odevDuzeltme", odevId: v.id, durum: "iletildi" })])).toBeUndefined());
+    it("başka ödevin bildirimi sayılmaz", () => expect(calistir([gonderim("a", { odevId: "baska", durum: "iletildi" })])).toBeUndefined());
+    it("olay kapalıysa gitmez; SMS izni kapalıysa push olur", () => {
+      expect(calistir([gitmis], { olaylar: db.olaylar.map((o) => (o.key === "odevDuzeltme" ? { ...o, aktif: false } : o)) })!.yaz).toEqual([]);
+      const sms = calistir([gitmis], { olaylar: db.olaylar.map((o) => (o.key === "odevDuzeltme" ? { ...o, kanal: "sms" as const } : o)), veliler: db.veliler.map((x) => (x.id === VELI ? { ...x, izinSms: false } : x)) })!;
+      expect(sms.yaz[0]).toMatchObject({ kanal: "push", maliyet: 0 });
+    });
+    it("istemci düzeltme mesajı yazamaz", () => expect(gonderimler(dene(ekle(gonderim("g1", { olay: "odevDuzeltme" }))))).toEqual([]));
+    it("eski veriye olay eklenir", () => expect(veriyiOnar({ ...db, olaylar: db.olaylar.filter((o) => o.key !== "odevDuzeltme") }).olaylar.map((o) => o.key)).toContain("odevDuzeltme"));
   });
   it("hatırlatma aynı ödev için bir kez, başkasının ödevine öğretmenden gitmez", () => {
     const y = odev({ teslim: YARIN, baslik: "Y" });

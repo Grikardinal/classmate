@@ -23,8 +23,9 @@ Sunucu: `app/server/politika.ts · odevDenetle`, `veliVerisi`. Otomasyon: `app/s
 **Kim**
 - Yazma için 08 yetkisi gerekir (genel yönetici, şube müdürü, öğretmen). Şube kapsamı `yazmaDenetle` içindedir.
 - Modül kapalıyken ödev yazılamaz, silinemez, ödev bildirimi kuyruğa girmez, veliye ödev gitmez.
-- Öğretmen yalnızca bugünkü kendi grubuna (`ogretmenGruplariHesapla`) ve kendi dersinden verir; rehberse grubun programındaki her dersten verebilir.
-- Öğretmen yalnızca kendi ödevini değiştirir, siler, kontrol eder. Rehber, grubundaki diğer ödevleri yalnızca görür.
+- Öğretmen yalnızca bugünkü kendi grubuna (`ogretmenGruplariHesapla`) ve o grupta program satırı olan kendi dersinden verir. Rehberlik ders vermez (karar 2026-11-08).
+- Öğretmen yalnızca kendi ödevini değiştirir, siler. Rehber, grubundaki diğer ödevleri yalnızca görür.
+- Grubun o dersinde bugün geçerli program satırı olan öğretmen, önceki öğretmenin ödevinde yalnızca teslim kontrolü yapar (`odevKontrolEdebilir`); başka alanı değiştiremez, silemez, `ogretmenId` değişmez. Yaptığı kontrolü 7 günlük süre içinde düzeltebilir.
 - Grubu devreden öğretmen grubu, öğrencileri, ödevlerini görmez ve yazamaz (karar 2026-11-08).
 - Kontrol edilmiş ödevi öğretmen silemez, yönetici siler. Ekran silmeden önce onay ister.
 
@@ -38,7 +39,8 @@ Sunucu: `app/server/politika.ts · odevDenetle`, `veliVerisi`. Otomasyon: `app/s
 
 **Teslim kontrolü**
 - Durumlar: `yapti`, `eksik`, `yapmadi`. Hedef: teslim tarihinde grupta olan, kaydı aktif öğrenci (`odevHedefleri`).
-- Teslim tarihi gelmeden kontrol kaydedilemez. Kontrol geri alınamaz; durumlar sonradan düzeltilebilir.
+- Teslim tarihi gelmeden kontrol kaydedilemez. Kontrol geri alınamaz.
+- Öğretmen kontrolü, ilk kontrol tarihinden (`kontrolTarihi`, sunucu yazar, düzeltmede değişmez) itibaren 7 gün düzeltir; sonrası yalnızca şube müdürü ve genel yönetici (`kontrolDuzeltmeEngeli`). Eski kayıtta alan yoksa teslim tarihi esas alınır. Sınırı sunucu denetler, ekran düğmeyi kilitler.
 - Hedefte olmayan öğrenci reddedilir. Sonradan ayrılan öğrencinin eski durumu ve notu korunur (sunucu birleştirir).
 - Not en fazla 300 karakter, yalnızca `eksik` / `yapmadi` için saklanır.
 - Kim kontrol ettiği işlem kaydında görünür (kullanıcı ve zaman sunucudan).
@@ -47,7 +49,7 @@ Sunucu: `app/server/politika.ts · odevDenetle`, `veliVerisi`. Otomasyon: `app/s
 - Sunucu her ödev bildirimini gerçek bir ödeve bağlar (`Gonderim.odevId`); karşılığı olmayan bildirim düşer.
 - Aynı veliye, aynı öğrenci ve ödev için aynı olay ikinci kez gitmez. Bu alandan önceki kayıtlar metinle eşleşir.
 - "Şimdi gönder" ile 19:00 otomasyonu çift hatırlatma üretmez. Kontrol edilmiş ödeve hatırlatma gitmez.
-- `yapmadı` kaldırılınca henüz gitmemiş bildirim kuyruktan silinir.
+- `yapmadı` kaldırılınca sunucu karar verir (`duzeltmePlani`): henüz ulaşmamış bildirim kuyruktan silinir ve düzeltme gitmez; ulaşmışsa o veliye bir kez `odevDuzeltme` gider. İstemci bu olayı yazamaz. Olay eski veriye `veriyiOnar` ile eklenir.
 - `izinSms` kapalı veliye SMS gitmez; kanal uygulama içine döner, maliyet 0 olur.
 
 **Oran** (`teslimOzeti`): `yaptı / işaretlenen öğrenci`, yalnızca kontrol edilmiş ödevlerde. Hiç kontrol yoksa "—". Öğretmen yalnızca kendi ödevlerinin oranını görür.
@@ -64,9 +66,9 @@ Sunucu: `app/server/politika.ts · odevDenetle`, `veliVerisi`. Otomasyon: `app/s
 - Bildirim metnini ekran üretir; sunucu bağlar, tekilleştirir, süzer.
 - Ödev bildirimleri yalnızca birincil veliye gider (mevcut davranış).
 
-## Açık sorular
-1. **Teslimden önce kontrol:** Bu bölümde engellendi (erken "yapmadı" bildirimi yanlış gidiyordu). Öneri: böyle kalsın; öğretmen erken kontrol etmek isterse teslim tarihini ona göre verir.
-2. **Grubu devralan öğretmen, önceki öğretmenin kontrol bekleyen ödevleri:** Şu an yalnızca yönetici kontrol edebilir. Öneri: yeni öğretmene devredilmesi; ayrı iş olarak.
-3. **Rehberin başka dersten ödev vermesi:** Şu an verebilir (yoklamadan farklı). Öneri: yalnızca kendi dersi olacak şekilde daraltılması, kullanıcı onayıyla.
-4. **Kontrolün düzeltilebileceği süre:** Şu an sınırsız. Öneri: öğretmene 7 gün (yoklama geç giriş penceresiyle aynı), sonrası yönetici.
-5. **"Yapmadı" düzeltilince veliye mesaj:** Gitmiş bildirim için düzeltme mesajı yok. Öneri: yoklamadaki gibi tek düzeltme mesajı (yeni olay gerektirir).
+## Kapandı (2026-11-08)
+1. **Teslimden önce kontrol:** engelli kalır (erken "yapmadı" bildirimi yanlış gider). Kontrol edilmiş ödevi öğretmen silemez, yönetici siler (değişiklik yok).
+2. **Grubu devralan öğretmen:** o dersin bugünkü öğretmeni bekleyen ödevleri kontrol eder; başka alan değiştiremez, silemez.
+3. **Rehber:** yalnızca kendi dersinden ödev verir; grubu salt okunur görür.
+4. **Kontrol düzeltme süresi:** öğretmene kontrol tarihinden itibaren 7 gün, sonrası şube müdürü veya genel yönetici.
+5. **"Yapmadı" düzeltilince:** bildirim gitmişse veliye tek düzeltme mesajı gider; gitmemişse kuyruktan silinir.

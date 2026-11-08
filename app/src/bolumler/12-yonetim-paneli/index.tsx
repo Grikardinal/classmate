@@ -58,6 +58,7 @@ import {
   useDb,
   type Db,
 } from "@/data/store";
+import { odevKontrolEdebilir } from "@/bolumler/08-odevler/kurallar";
 import { csvOlustur, devamsizlikOzeti, gecikmeGunu, haftaBasi, tarihEkle, tl, yoklamaGecikti } from "@/lib/kurallar";
 import { dosyaIndir, esc, yazdir } from "@/lib/yazdir";
 import { cn } from "@/lib/utils";
@@ -338,7 +339,7 @@ function OgretmenPaneli() {
     const t = tarihEkle(BUGUN, -i);
     alinmayan.push(...oturumlar(d, t).filter((o) => o.satir.ogretmenId === personel.id && !o.iptal && !o.tatil && !d.yoklamalar[o.id] && (t < BUGUN || yoklamaGecikti(o.bas, SIMDI, d.ayarlar.yoklamaHatirlatmaDk))));
   }
-  const odevler = d.odevler.filter((o) => o.ogretmenId === personel.id && o.teslim <= BUGUN && !o.kontrolEdildi);
+  const odevler = d.odevler.filter((o) => odevKontrolEdebilir(o, d, personel.id, BUGUN) && o.teslim <= BUGUN && !o.kontrolEdildi);
   const etutler = d.randevular.filter((r) => r.ogretmenId === personel.id && r.tarih >= BUGUN && r.durum === "planli").sort((a, b) => a.tarih.localeCompare(b.tarih));
   return (
     <div className="grid gap-6">

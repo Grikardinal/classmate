@@ -6,7 +6,7 @@ import { useOturum } from "@/context/AppContext";
 import { BUGUN, bildirimEkle, ders, dersAdi, grupEtiket, guncelle, islemYaz, personelAdi, useDb, type Odev } from "@/data/store";
 import { tarihEkle } from "@/lib/kurallar";
 import { cn } from "@/lib/utils";
-import { kontrolZamanEngeli, odevHedefleri, odevSilmeEngeli, ogretmenOdevGorur } from "./kurallar";
+import { kontrolDuzeltmeEngeli, kontrolZamanEngeli, odevHedefleri, odevKontrolEdebilir, odevSilmeEngeli, ogretmenOdevGorur } from "./kurallar";
 import { tarihKisa, teslimSecenek } from "./ortak";
 import TeslimKontrol from "./TeslimKontrol";
 
@@ -17,9 +17,10 @@ export default function OdevListesi() {
   const [kontrolId, setKontrolId] = React.useState<string | null>(null);
   const [silinecek, setSilinecek] = React.useState<Odev | null>(null);
 
-  const gorunen = d.odevler.filter((o) => grupGorunur(o.grupId) && (!ogretmenMi || ogretmenOdevGorur(o, d.gruplar, personel.id)));
-  // Rehber öğretmen başka öğretmenin ödevini yalnızca görür
+  const gorunen = d.odevler.filter((o) => grupGorunur(o.grupId) && (!ogretmenMi || ogretmenOdevGorur(o, d, personel.id, BUGUN)));
+  // Rehber öğretmen başka öğretmenin ödevini yalnızca görür; dersi devralan yalnızca teslim kontrolü yapar
   const benim = (o: Odev) => !ogretmenMi || o.ogretmenId === personel.id;
+  const kontrolEder = (o: Odev) => !ogretmenMi || odevKontrolEdebilir(o, d, personel.id, BUGUN);
   const islenen = gorunen.filter(benim);
   const bekliyorMu = (o: Odev) => o.teslim <= BUGUN && !o.kontrolEdildi;
   const odevler = gorunen
@@ -30,7 +31,7 @@ export default function OdevListesi() {
       return true;
     })
     .sort((a, b) => b.teslim.localeCompare(a.teslim));
-  const kontrolBekleyen = islenen.filter(bekliyorMu).length;
+  const kontrolBekleyen = gorunen.filter((o) => kontrolEder(o) && bekliyorMu(o)).length;
   const yarin = islenen.filter((o) => o.teslim === tarihEkle(BUGUN, 1) && !o.kontrolEdildi);
   const kontrolOdev = d.odevler.find((o) => o.id === kontrolId);
   const baglam = { rol, personelId: personel.id, bugun: BUGUN, modulAcik: true, ogretmenGruplari: ogretmenMi ? new Set(d.gruplar.map((g) => g.id)) : null };
@@ -83,7 +84,7 @@ export default function OdevListesi() {
             const t = Object.values(o.teslimler);
             const ds = ders(o.dersId);
             const bekliyor = bekliyorMu(o);
-            const zamanEngeli = kontrolZamanEngeli(o.teslim, BUGUN);
+            const zamanEngeli = kontrolZamanEngeli(o.teslim, BUGUN) ?? kontrolDuzeltmeEngeli(o, rol, BUGUN);
             const silEngeli = odevSilmeEngeli(o, baglam);
             return (
               <Card key={o.id} className={cn(bekliyor && "border-warning/40")}>
@@ -108,9 +109,9 @@ export default function OdevListesi() {
                   )}
                   <div className="flex items-center justify-between border-t pt-3">
                     <span className="text-xs text-muted-foreground">{personelAdi(d, o.ogretmenId)} · verildi {tarihKisa(o.verilis)}</span>
-                    {benim(o) && (
+                    {kontrolEder(o) && (
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" aria-label="Sil" title={silEngeli ?? undefined} disabled={!!silEngeli} onClick={() => setSilinecek(o)}><Trash2 /></Button>
+                        {benim(o) && <Button variant="ghost" size="icon" aria-label="Sil" title={silEngeli ?? undefined} disabled={!!silEngeli} onClick={() => setSilinecek(o)}><Trash2 /></Button>}
                         <Button size="sm" variant={bekliyor ? "default" : "outline"} title={zamanEngeli ?? undefined} disabled={!!zamanEngeli} onClick={() => setKontrolId(o.id)}>Teslim kontrol</Button>
                       </div>
                     )}
