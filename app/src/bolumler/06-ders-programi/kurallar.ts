@@ -4,7 +4,7 @@
  * Sunucu da içe aktardığı için burada yalnızca göreli içe aktarma kullanılır.
  * Hata dönen fonksiyonlar Türkçe mesaj, sorun yoksa null döndürür.
  */
-import type { Db, Iptal, Personel, ProgramSatiri, Tatil } from "../../data/model";
+import type { Db, DoluSaat, Iptal, Personel, ProgramSatiri, Rol, Sezon, Tatil } from "../../data/model";
 import { cakismaBul, dakika, haftaGunu, subeGecisUyarisi, tarihEkle, type Cakisma, type Slot } from "../../lib/kurallar";
 import { programAtamaEngeli, tanimAktif, type Hata } from "../01-kurum-yapisi/kurallar";
 
@@ -139,20 +139,32 @@ export function uygunOgretmenler(personel: Personel[], dersId: string, subeId: s
   return personel.filter((p) => p.gorev === "ogretmen" && p.aktif && p.subeIds.includes(subeId) && p.dersIds.includes(dersId));
 }
 
-export function ogretmenUygunlukEngeli(ogretmenId: string, dersId: string, subeId: string, personel: Personel[]): Hata {
+/** Karar 2026-11-08: branş dışı (yedek) öğretmeni yalnızca şube müdürü veya genel yönetici atar */
+export function bransDisiAtayabilir(rol: Rol): boolean {
+  return rol === "genel-yonetici" || rol === "sube-muduru";
+}
+
+/** Bu şubede görevli, aktif ama bu dersi vermeyen öğretmenler (yalnızca yöneticiye listelenir) */
+export function bransDisiOgretmenler(personel: Personel[], dersId: string, subeId: string): Personel[] {
+  return personel.filter((p) => p.gorev === "ogretmen" && p.aktif && p.subeIds.includes(subeId) && !p.dersIds.includes(dersId));
+}
+
+export type AtamaSecenegi = { bransDisi?: boolean };
+
+export function ogretmenUygunlukEngeli(ogretmenId: string, dersId: string, subeId: string, personel: Personel[], bransDisi = false): Hata {
   if (!ogretmenId) return OGRETMEN_SECILMELI;
   const p = personel.find((x) => x.id === ogretmenId);
   if (!p || p.gorev !== "ogretmen") return "Seçilen kişi öğretmen değil.";
   if (!p.aktif) return "Seçilen öğretmen pasif.";
   if (!p.subeIds.includes(subeId)) return "Seçilen öğretmen bu şubede görevli değil.";
-  if (!p.dersIds.includes(dersId)) return "Seçilen öğretmen bu dersi vermiyor; personel kartından ders eklenebilir.";
+  if (!p.dersIds.includes(dersId) && !bransDisi) return "Seçilen öğretmen bu dersi vermiyor; branş dışı atamayı yalnızca yönetici yapabilir.";
   return null;
 }
 
 type SatirTanimlari = Pick<Db, "gruplar" | "dersSaatleri" | "derslikler" | "dersler" | "personel" | "subeler" | "sezonlar">;
 
 /** Alan, şube uyumu, sezon ve öğretmen kuralları. Var olan satırda yalnızca değişen alan denetlenir (eski atama kaydı kilitlemesin). */
-export function programSatirEngeli(p: ProgramSatiri, eski: ProgramSatiri | undefined, d: SatirTanimlari): Hata {
+export function programSatirEngeli(p: ProgramSatiri, eski: ProgramSatiri | undefined, d: SatirTanimlari, secenek: AtamaSecenegi = {}): Hata {
   const degisti = (...alanlar: (keyof ProgramSatiri)[]) => !eski || alanlar.some((a) => p[a] !== eski[a]);
   const g = d.gruplar.find((x) => x.id === p.grupId);
   if (!g) return "Grup bulunamadı.";
@@ -183,7 +195,7 @@ export function programSatirEngeli(p: ProgramSatiri, eski: ProgramSatiri | undef
     if (z && (p.baslangic < z.baslangic || p.baslangic > z.bitis)) return `Başlangıç tarihi grubun sezonu içinde olmalı (${tarihYaz(z.baslangic)} – ${tarihYaz(z.bitis)}).`;
     if (z && p.bitis && p.bitis > z.bitis) return `Bitiş tarihi grubun sezonunu aşamaz (${tarihYaz(z.bitis)}).`;
   }
-  if (degisti("ogretmenId", "dersId", "grupId")) return ogretmenUygunlukEngeli(p.ogretmenId, p.dersId, g.subeId, d.personel);
+  if (degisti("ogretmenId", "dersId", "grupId")) return ogretmenUygunlukEngeli(p.ogretmenId, p.dersId, g.subeId, d.personel, secenek.bransDisi);
   return null;
 }
 
@@ -198,7 +210,7 @@ export type DegisiklikSonucu = {
 };
 
 /** Pencere ve sürükle-bırak aynı denetimden geçer. eski yoksa yeni satır eklenir. */
-export function degisiklikDenetle(d: Db, eski: ProgramSatiri | undefined, yeni: ProgramSatiri, gecerlilik: string, bugun: string): DegisiklikSonucu {
+export function degisiklikDenetle(d: Db, eski: ProgramSatiri | undefined, yeni: ProgramSatiri, gecerlilik: string, bugun: string, secenek: AtamaSecenegi = {}): DegisiklikSonucu {
   const taslakId = "__yeni";
   const yerinde = !!eski && eski.baslangic >= gecerlilik;
   const liste = eski ? programDegistir(d.program, eski, yeni, gecerlilik, () => taslakId) : [...d.program, { ...yeni, id: taslakId }];
@@ -208,7 +220,7 @@ export function degisiklikDenetle(d: Db, eski: ProgramSatiri | undefined, yeni: 
     satir,
     liste,
     tarihEngeli: eski ? degisiklikTarihiEngeli(eski, gecerlilik, d, bugun) : !tarihGecerli(gecerlilik) ? "Geçerlilik tarihi hatalı." : gecerlilik < bugun ? "Ders geçmiş tarihten başlatılamaz." : null,
-    atamaEngeli: programAtamaEngeli(satir, karsilastirma, d) ?? programSatirEngeli(satir, karsilastirma, d),
+    atamaEngeli: programAtamaEngeli(satir, karsilastirma, d) ?? programSatirEngeli(satir, karsilastirma, d, secenek),
     cakismalar: programCakismalari(satir, liste, d),
     gecisler: programGecisleri(satir, liste, d, d.ayarlar.subeGecisDk),
   };
@@ -225,7 +237,7 @@ function yalnizKapatma(s: ProgramSatiri, eski: ProgramSatiri): boolean {
   return ALANLAR.every((a) => s[a] === eski[a]) && (s.bitis === eski.bitis || (!!s.bitis && (!eski.bitis || s.bitis <= eski.bitis)));
 }
 
-export function programYazmaEngeli(s: ProgramSatiri, eski: ProgramSatiri | undefined, d: DenetimVerisi, bugun: string): Hata {
+export function programYazmaEngeli(s: ProgramSatiri, eski: ProgramSatiri | undefined, d: DenetimVerisi, bugun: string, secenek: AtamaSecenegi = {}): Hata {
   if (eski && yalnizKapatma(s, eski)) {
     if (s.bitis === eski.bitis) return null;
     if (!tarihGecerli(s.bitis)) return "Bitiş tarihi hatalı.";
@@ -241,7 +253,7 @@ export function programYazmaEngeli(s: ProgramSatiri, eski: ProgramSatiri | undef
   }
   if (!tarihGecerli(s.baslangic)) return "Başlangıç tarihi hatalı.";
   if (s.baslangic < bugun) return "Ders geçmiş tarihten başlatılamaz.";
-  const m = programSatirEngeli(s, eski, d);
+  const m = programSatirEngeli(s, eski, d, secenek);
   if (m) return m;
   const c = programCakismalari(s, d.program, d);
   return c.length ? cakismaMesaji(c[0]) : null;
@@ -290,4 +302,50 @@ export function iptalYazmaEngeli(i: Iptal, eski: Iptal | undefined, d: Pick<Db, 
     if (tatilMi(i.telafi)) return "Telafi tarihi tatil gününe denk geliyor.";
   }
   return null;
+}
+
+/** Karar 2026-11-08: dersin tarihi geçmediyse (bugün dahil) ve yoklaması alınmadıysa iptal geri alınır */
+export function iptalGeriAlmaEngeli(i: Iptal, d: Pick<Db, "yoklamalar">, bugun: string): Hata {
+  const k = oturumKimligi(i.oturumId);
+  if (!k) return "İptal edilen ders bulunamadı.";
+  if (k.tarih < bugun) return "Tarihi geçmiş dersin iptali geri alınamaz.";
+  if (d.yoklamalar?.[i.oturumId]) return "Yoklaması alınmış dersin iptali geri alınamaz.";
+  return null;
+}
+
+/* ---------- Görünürlük (kararlar 2026-11-08) ---------- */
+
+/** Öğretmenin grupları: bugün veya ileride geçerli satırı olan veya rehberi olduğu gruplar. Grubu devreden öğretmenin erişimi kesilir. */
+export function ogretmenGruplariHesapla(d: Pick<Db, "program" | "gruplar">, personelId: string, bugun: string): Set<string> {
+  return new Set([
+    ...d.program.filter((p) => p.ogretmenId === personelId && (!p.bitis || p.bitis >= bugun)).map((p) => p.grupId),
+    ...d.gruplar.filter((g) => g.rehberId === personelId).map((g) => g.id),
+  ]);
+}
+
+/** Şube müdürüne, kapsamındaki öğretmenlerin diğer şubelerdeki dersleri: yalnızca gün ve saat (ders, grup, şube yok) */
+export function doluSaatleriHesapla(d: Pick<Db, "program" | "gruplar" | "dersSaatleri" | "personel" | "sezonlar">, kapsam: Set<string>): DoluSaat[] {
+  const sonuc: DoluSaat[] = [];
+  for (const p of d.program) {
+    const g = d.gruplar.find((x) => x.id === p.grupId);
+    const h = d.dersSaatleri.find((x) => x.id === p.saatId);
+    const ogretmen = d.personel.find((x) => x.id === p.ogretmenId);
+    if (!g || !h || !ogretmen || kapsam.has(g.subeId) || !ogretmen.subeIds.some((s) => kapsam.has(s))) continue;
+    const sezon = d.sezonlar.find((z) => z.id === g.sezonId);
+    sonuc.push({ ogretmenId: p.ogretmenId, gun: p.gun, bas: h.baslangic, bit: h.bitis, baslangic: p.baslangic, bitis: p.bitis ?? sezon?.bitis ?? null });
+  }
+  return sonuc;
+}
+
+/* ---------- Sezon sonu (karar 2026-11-08) ---------- */
+
+/** Sezonun gruplarındaki açık satırların sezon sonuyla kapatılmış halleri (yalnızca değişenler) */
+export function sezonSatirlariniKapat(program: ProgramSatiri[], gruplar: Db["gruplar"], sezon: Pick<Sezon, "id" | "bitis">): ProgramSatiri[] {
+  const idler = new Set(gruplar.filter((g) => g.sezonId === sezon.id).map((g) => g.id));
+  return program.filter((p) => !p.bitis && idler.has(p.grupId) && p.baslangic <= sezon.bitis).map((p) => ({ ...p, bitis: sezon.bitis }));
+}
+
+/** Bitmiş sezonların açık satırları; kapandıktan sonra boş döner (tekrar çalışması bir şey değiştirmez) */
+export function sezonuBitenSatirlar(d: Pick<Db, "program" | "gruplar" | "sezonlar">, bugun: string): ProgramSatiri[] {
+  return d.sezonlar.filter((z) => z.bitis < bugun).flatMap((z) => sezonSatirlariniKapat(d.program, d.gruplar, z));
 }

@@ -7,11 +7,12 @@ import { BUGUN, dersAdi, derslikAdi, grup, grupEtiket, guncelle, islemYaz, perso
 import { haftaGunu, tarihEkle } from "@/lib/kurallar";
 import { pasifEki, secilebilirTanimlar, tanimAktif } from "@/bolumler/01-kurum-yapisi/kurallar";
 import { bildirimGrubaDersDegisikligi, tarihKisa } from "./ortak";
-import { OGRETMEN_SECILMELI, degisiklikDenetle, enErkenGecerlilik, programDegistir, uygunOgretmenler } from "./kurallar";
+import { OGRETMEN_SECILMELI, bransDisiAtayabilir, bransDisiOgretmenler, degisiklikDenetle, enErkenGecerlilik, programDegistir, uygunOgretmenler } from "./kurallar";
 
 export function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: ProgramSatiri; gun: number; saatId: string; grupId: string; onClose: () => void }) {
   const d = useDb();
-  const { ad } = useOturum();
+  const { ad, rol } = useOturum();
+  const yonetici = bransDisiAtayabilir(rol);
   const g = grup(d, grupId)!;
   const h = saat(saatId)!;
   // Pasif derslik seçeneklerde yok; satırın/grubun mevcut dersliği pasifse "(pasif)" ekiyle görünür kalır
@@ -33,10 +34,13 @@ export function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: Pr
   });
   const uygun = uygunOgretmenler(d.personel, form.dersId, g.subeId);
   // Satırın mevcut öğretmeni artık uygun değilse listede görünür; kayıtta engel gösterilir
-  const mevcutOgretmen = form.ogretmenId && !uygun.some((p) => p.id === form.ogretmenId) ? d.personel.find((p) => p.id === form.ogretmenId) : undefined;
-  const ogretmenSecenekleri = mevcutOgretmen ? [...uygun, mevcutOgretmen] : uygun;
+  const listelenen = yonetici ? [...uygun, ...bransDisiOgretmenler(d.personel, form.dersId, g.subeId)] : uygun;
+  const mevcutOgretmen = form.ogretmenId && !listelenen.some((p) => p.id === form.ogretmenId) ? d.personel.find((p) => p.id === form.ogretmenId) : undefined;
+  const ogretmenSecenekleri = mevcutOgretmen ? [...listelenen, mevcutOgretmen] : listelenen;
+  const bransDisi = (p: { dersIds: string[] }) => !p.dersIds.includes(form.dersId);
+  const seciliBransDisi = yonetici && !!form.ogretmenId && ogretmenSecenekleri.some((p) => p.id === form.ogretmenId && bransDisi(p));
   const yeni: ProgramSatiri = { id: satir?.id ?? "yeni", grupId, gun, saatId, dersId: form.dersId, ogretmenId: form.ogretmenId, derslikId: form.derslikId, baslangic: form.gecerlilik, bitis: null };
-  const sonuc = degisiklikDenetle(d, satir, yeni, form.gecerlilik, BUGUN);
+  const sonuc = degisiklikDenetle(d, satir, yeni, form.gecerlilik, BUGUN, { bransDisi: yonetici });
   const cakismalar = form.ogretmenId ? sonuc.cakismalar : [];
   const gecisler = form.ogretmenId ? sonuc.gecisler : [];
   const { tarihEngeli } = sonuc;
@@ -89,10 +93,10 @@ export function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: Pr
           {secilebilirTanimlar(tanimlar().dersler, satir?.dersId).map((x) => <option key={x.id} value={x.id}>{x.ad}{pasifEki(x)}</option>)}
         </Select>
       </Field>
-      <Field label="Öğretmen" hint={uygun.length === 0 ? "Bu şubede bu dersi veren aktif öğretmen yok; personel kartından ders eklenebilir." : undefined}>
+      <Field label="Öğretmen" hint={uygun.length === 0 && !yonetici ? "Bu şubede bu dersi veren aktif öğretmen yok; personel kartından ders eklenebilir." : undefined}>
         <Select value={form.ogretmenId} onChange={(e) => setForm({ ...form, ogretmenId: e.target.value, gecisOnay: false })}>
           <option value="">Seçiniz</option>
-          {ogretmenSecenekleri.map((p) => <option key={p.id} value={p.id}>{p.ad} {p.soyad}</option>)}
+          {ogretmenSecenekleri.map((p) => <option key={p.id} value={p.id}>{p.ad} {p.soyad}{bransDisi(p) ? " (branş dışı)" : ""}</option>)}
         </Select>
       </Field>
       <Field label="Derslik">
@@ -103,6 +107,11 @@ export function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: Pr
       <Field label="Geçerlilik başlangıcı" hint="Değişiklik bu tarihten itibaren uygulanır; geçmiş oturumlar ve yoklamalar korunur.">
         <Input type="date" value={form.gecerlilik} min={enErken} onChange={(e) => setForm({ ...form, gecerlilik: e.target.value || enErken })} />
       </Field>
+      {seciliBransDisi && (
+        <Alert tone="warning" icon={<AlertTriangle />}>
+          Seçilen öğretmen bu dersin branşında değil; yedek atama olarak kaydedilecek.
+        </Alert>
+      )}
       {tarihEngeli && (
         <Alert tone="danger" icon={<XCircle />}>
           {tarihEngeli}

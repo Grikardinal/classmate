@@ -180,6 +180,9 @@ export type ProgramSatiri = {
   bitis: string | null;
 };
 
+/** Şube müdürüne giden, ayrıntısız "dolu saat" (yalnızca okuma; sunucu okumaSuz üretir, koleksiyon değildir, geri yazılamaz) */
+export type DoluSaat = { ogretmenId: string; gun: number; bas: string; bit: string; baslangic: string; bitis: string | null };
+
 export type Tatil = { id: string; tarih: string; ad: string; subeId: string | null };
 export type Iptal = { oturumId: string; neden: string; tarih: string; telafi?: string };
 
@@ -405,6 +408,8 @@ export type Db = {
   ayarlar: Ayarlar;
   /** Sunucu otomasyonlarının tekrar üretmemek için tuttuğu kayıt (anahtar → tarih) */
   otomasyon: Record<string, string>;
+  /** Yalnızca şube müdürünün okuma görünümünde bulunur (Bölüm 06) */
+  doluSaatler?: DoluSaat[];
 };
 
 export const SURUM = 5;
@@ -876,6 +881,8 @@ export function oturumlar(d: Db, tarih: string): Oturum[] {
   return d.program
     // Grubu veya ders saati görünmeyen (yetki dışı / silinmiş) satırlar atlanır
     .filter((p) => p.gun === gun && p.baslangic <= tarih && (!p.bitis || p.bitis >= tarih) && grup(d, p.grupId) && saat(p.saatId))
+    // Oturum grubun sezon sonunu aşmaz (karar 2026-11-08)
+    .filter((p) => tarih <= (d.sezonlar.find((z) => z.id === grup(d, p.grupId)!.sezonId)?.bitis ?? tarih))
     .map((p) => {
       const g = grup(d, p.grupId)!;
       const h = saat(p.saatId)!;

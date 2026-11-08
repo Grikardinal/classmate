@@ -5,7 +5,7 @@ import { BUGUN, ders, derslikAdi, grupEtiket, oturumlar, personelAdi, saat, sube
 import { dakika, subeGecisUyarisi, tarihEkle } from "@/lib/kurallar";
 import { cn } from "@/lib/utils";
 import { tarihKisa } from "./ortak";
-import { haftaSatirlari, satirSlotu } from "./kurallar";
+import { haftaSatirlari, satirGecerliMi, satirSlotu } from "./kurallar";
 
 export function OgretmenAjandasi({ ogretmenId, hafta }: { ogretmenId: string; hafta: string }) {
   const d = useDb();
@@ -22,11 +22,19 @@ export function OgretmenAjandasi({ ogretmenId, hafta }: { ogretmenId: string; ha
           const t = tarihEkle(hafta, g - 1);
           const liste = oturumlar(d, t).filter((o) => o.satir.ogretmenId === ogretmenId);
           const slotlar = liste.map((o) => satirSlotu(d, o.satir)!);
+          // Şube müdürü: diğer şubelerdeki dersler ayrıntısız (karar 2026-11-08)
+          const dolu = (d.doluSaatler ?? []).filter((s) => s.ogretmenId === ogretmenId && s.gun === g && satirGecerliMi(s, t)).sort((a, b) => dakika(a.bas) - dakika(b.bas));
           return (
             <div key={g} className={cn("rounded-lg border p-2", t === BUGUN && "border-primary/50 bg-accent/30")}>
               <p className="mb-2 text-xs font-medium text-muted-foreground">{gunAdlari[g]} · {tarihKisa(t)}</p>
               <div className="grid gap-1.5">
-                {liste.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">—</p>}
+                {liste.length === 0 && dolu.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">—</p>}
+                {dolu.map((s) => (
+                  <div key={s.bas + s.baslangic} className="rounded-md border border-dashed p-1.5 text-xs text-muted-foreground">
+                    <p className="font-medium tabular-nums">{s.bas}–{s.bit}</p>
+                    <p>Dolu</p>
+                  </div>
+                ))}
                 {liste.map((o, i) => {
                   const ds = ders(o.satir.dersId)!;
                   const gecis = subeGecisUyarisi(slotlar[i], slotlar, d.ayarlar.subeGecisDk).length > 0;

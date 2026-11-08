@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { ornekVeriUret, type Db, type ProgramSatiri, type Yoklama } from "@/data/model";
+import { oturumlar, ornekVeriUret, type Db, type ProgramSatiri, type Yoklama } from "@/data/model";
 import {
   aralikGunuOrtusur,
+  bransDisiAtayabilir,
+  bransDisiOgretmenler,
+  doluSaatleriHesapla,
+  iptalGeriAlmaEngeli,
+  ogretmenGruplariHesapla,
+  sezonSatirlariniKapat,
+  sezonuBitenSatirlar,
   degisiklikDenetle,
   degisiklikTarihiEngeli,
   enErkenGecerlilik,
@@ -224,5 +231,53 @@ describe("iptal ve telafi", () => {
   });
   it("iptal sonradan değiştirilemez", () => {
     expect(iptalYazmaEngeli(i, i, db, BUGUN)).toMatch(/değiştirilemez/);
+  });
+});
+
+describe("kararlar 2026-11-08", () => {
+  it("öğretmenin grupları: kapanmış satır grup vermez, bugün biten verir, rehberlik verir", () => {
+    const d = { gruplar: [{ ...db.gruplar[0], id: "gR", rehberId: "pX" }], program: [satir({ grupId: "gA", ogretmenId: "pX", bitis: "2026-11-08" }), satir({ grupId: "gB", ogretmenId: "pX", bitis: BUGUN }), satir({ grupId: "gC", ogretmenId: "pX", baslangic: "2026-12-07" })] };
+    expect([...ogretmenGruplariHesapla(d, "pX", BUGUN)].sort()).toEqual(["gB", "gC", "gR"]);
+  });
+  it("branş dışı atama yalnızca yöneticiye açık; aktiflik ve şube yine denetlenir", () => {
+    expect(bransDisiAtayabilir("sube-muduru")).toBe(true);
+    expect(bransDisiAtayabilir("genel-yonetici")).toBe(true);
+    expect(bransDisiAtayabilir("sekreter")).toBe(false);
+    expect(ogretmenUygunlukEngeli("p4", "l5", "s1", db.personel, true)).toBeNull();
+    expect(ogretmenUygunlukEngeli("p4", "l5", "s2", db.personel, true)).toMatch(/görevli değil/);
+    expect(bransDisiOgretmenler(db.personel, "l5", "s1").some((p) => p.id === "p4")).toBe(true);
+    expect(bransDisiOgretmenler(db.personel, "l1", "s1").some((p) => p.id === "p4")).toBe(false);
+    expect(degisiklikDenetle(db, undefined, satir({ dersId: "l5" }), BUGUN, BUGUN, { bransDisi: true }).atamaEngeli).toBeNull();
+    expect(degisiklikDenetle(db, undefined, satir({ dersId: "l5" }), BUGUN, BUGUN).atamaEngeli).toMatch(/vermiyor/);
+  });
+  it("iptal geri alma: bugün dahil, geçmiş ve yoklamalı olamaz", () => {
+    const i = (t: string) => ({ oturumId: `ps1_${t}`, neden: "x", tarih: BUGUN });
+    expect(iptalGeriAlmaEngeli(i(BUGUN), db, BUGUN)).toBeNull();
+    expect(iptalGeriAlmaEngeli(i("2026-11-08"), db, BUGUN)).toMatch(/geçmiş/);
+    expect(iptalGeriAlmaEngeli(i("2026-11-23"), { yoklamalar: yoklama("ps1", "2026-11-23") }, BUGUN)).toMatch(/Yoklaması/);
+    expect(iptalGeriAlmaEngeli({ oturumId: "bozuk", neden: "", tarih: BUGUN }, db, BUGUN)).toMatch(/bulunamadı/);
+  });
+  it("dolu saatler yalnızca kapsam dışı dersler ve kapsamdaki öğretmenler içindir; açık satır sezon sonuyla sınırlanır", () => {
+    const l = doluSaatleriHesapla(db, new Set(["s1"]));
+    expect(l.length).toBeGreaterThan(0);
+    expect(l.every((s) => ["p5", "p8"].includes(s.ogretmenId))).toBe(true);
+    expect(l[0].bitis).toBe("2027-06-18");
+    expect(doluSaatleriHesapla(db, new Set(["s1", "s2"]))).toEqual([]);
+  });
+  it("sezon kapatma açık satırları kapatır; kapalıya ve başka sezona dokunmaz", () => {
+    const g = [{ ...db.gruplar[0], id: "gA", sezonId: "z" }, { ...db.gruplar[0], id: "gB", sezonId: "y" }];
+    const liste = [satir({ id: "1", grupId: "gA", baslangic: "2026-09-01" }), satir({ id: "2", grupId: "gA", baslangic: "2026-09-01", bitis: "2026-10-01" }), satir({ id: "3", grupId: "gB", baslangic: "2026-09-01" }), satir({ id: "4", grupId: "gA", baslangic: "2027-07-01" })];
+    expect(sezonSatirlariniKapat(liste, g, { id: "z", bitis: "2027-06-18" })).toEqual([{ ...liste[0], bitis: "2027-06-18" }]);
+  });
+  it("sürmekte olan sezon kapatılmaz; kapanınca tekrar sonuç vermez", () => {
+    expect(sezonuBitenSatirlar(db, BUGUN)).toEqual([]);
+    const bitti = { ...db, sezonlar: db.sezonlar.map((z) => (z.id === "z2" ? { ...z, bitis: "2026-10-01" } : z)) };
+    const kapanan = sezonuBitenSatirlar(bitti, BUGUN);
+    expect(kapanan.length).toBe(db.program.length);
+    expect(sezonuBitenSatirlar({ ...bitti, program: kapanan }, BUGUN)).toEqual([]);
+  });
+  it("oturum üretimi sezon sonunu aşmaz", () => {
+    expect(oturumlar(db, "2027-06-14").length).toBeGreaterThan(0); // son pazartesi
+    expect(oturumlar(db, "2027-06-21")).toHaveLength(0);
   });
 });

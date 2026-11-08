@@ -2,7 +2,9 @@ import * as React from "react";
 import { AlertTriangle, ArrowRight, Plus } from "lucide-react";
 import { Alert, Badge, Button, Card, CardDescription, CardHeader, CardTitle, Checkbox, Dialog, Field, Input, Select, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
-import { grupDoluluk, grupEtiket, guncelle, islemYaz, useDb, yeniId } from "@/data/store";
+import { BUGUN, grupDoluluk, grupEtiket, guncelle, islemYaz, useDb, yeniId } from "@/data/store";
+import { tarihEkle } from "@/lib/kurallar";
+import { sezonSatirlariniKapat } from "../06-ders-programi/kurallar";
 import { EN_YUKSEK_SEVIYE, grupAdiGecisi, sezonDogrula, sezonGecisEngeli, sezonGecisFiyatEngeli, sezonGecisHedefleri, sezonGecisiPlani } from "./kurallar";
 import { HataMetni, tarihGoster, useGenel } from "./ortak";
 import { ogrenciDurumu } from "../04-ogrenciler/kurallar";
@@ -116,6 +118,9 @@ function SezonGecisi({ onClose }: { onClose: () => void }) {
       const mezunOgr = new Set(plan.mezunlar.map((k) => k.ogrenciId));
       x.ogrenciler = x.ogrenciler.map((o) => (mezunOgr.has(o.id) ? { ...o, durum: ogrenciDurumu(o.id, x.kayitlar) } : o));
       if (aktifYap) x.sezonlar = x.sezonlar.map((s) => ({ ...s, aktif: s.id === hedef }));
+      // Eski sezonun açık ders satırları sezon sonuyla kapanır; sezon önceden bittiyse otomasyon kapatmıştır (Bölüm 06)
+      const kapanan = new Map(sezonSatirlariniKapat(x.program, x.gruplar, kaynak).filter((p) => p.bitis! >= tarihEkle(BUGUN, -1)).map((p) => [p.id, p]));
+      x.program = x.program.map((p) => kapanan.get(p.id) ?? p);
       sonuc = { grup: plan.gruplar.length, ogrenci: plan.kayitlar.length };
       islemYaz(x, ad, "Sezon geçişi", `${kaynak.ad} → ${hedefAd}: ${sonuc.grup} grup, ${sonuc.ogrenci} öğrenci, ${plan.mezunlar.length} mezun`);
     });

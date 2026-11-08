@@ -1,6 +1,8 @@
 import * as React from "react";
 import { guncelle, useDb, type Db, type Kullanici, type ModulKey, type Personel, type Rol } from "@/data/store";
 import { bolumYetkisi } from "@/bolumler/02-kullanicilar/kurallar";
+import { BUGUN as BUGUN_06 } from "@/data/model";
+import { ogretmenGruplariHesapla } from "@/bolumler/06-ders-programi/kurallar";
 
 export type { ModulKey };
 
@@ -103,12 +105,9 @@ export function useApp() {
   return ctx;
 }
 
-/** Öğretmen yalnızca kendi gruplarını görür (programda dersi olan veya rehberi olduğu gruplar). */
+/** Öğretmen yalnızca kendi gruplarını görür (bugün veya ileride dersi olan veya rehberi olduğu gruplar; sunucuyla aynı kural). */
 export function ogretmenGruplari(d: Db, personelId: string): Set<string> {
-  return new Set([
-    ...d.program.filter((p) => p.ogretmenId === personelId).map((p) => p.grupId),
-    ...d.gruplar.filter((g) => g.rehberId === personelId).map((g) => g.id),
-  ]);
+  return ogretmenGruplariHesapla(d, personelId, BUGUN_06);
 }
 
 /** Oturum açan kullanıcı, rolü ve kapsamı (sunucu ayrıca her istekte uygular) */

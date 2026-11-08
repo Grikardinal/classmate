@@ -7,7 +7,7 @@ import { BUGUN, ders, dersAdi, derslikAdi, grup, grupEtiket, guncelle, islemYaz,
 import { tanimAktif } from "@/bolumler/01-kurum-yapisi/kurallar";
 import { cn } from "@/lib/utils";
 import { bildirimGrubaDersDegisikligi, tarihKisa } from "./ortak";
-import { cakismaMesaji, degisiklikDenetle, enErkenGecerlilik, gecerliSatirlar, programDegistir } from "./kurallar";
+import { bransDisiAtayabilir, cakismaMesaji, degisiklikDenetle, enErkenGecerlilik, gecerliSatirlar, programDegistir } from "./kurallar";
 
 export function ProgramGrid({
   gunler,
@@ -27,7 +27,7 @@ export function ProgramGrid({
   onHucre: (gun: number, saatId: string, satir?: ProgramSatiri) => void;
 }) {
   const d = useDb();
-  const { ad } = useOturum();
+  const { ad, rol } = useOturum();
   const [surukle, setSurukle] = React.useState<string | null>(null);
 
   // Pencereyle aynı denetim; değişiklik gösterilen haftadan değil, uygulanabilecek ilk tarihten itibaren geçerlidir
@@ -36,7 +36,7 @@ export function ProgramGrid({
     if (!s || (s.gun === gun && s.saatId === saatId)) return;
     const yeni = { ...s, gun, saatId };
     const gecerlilik = enErkenGecerlilik(s, d, BUGUN);
-    const sonuc = degisiklikDenetle(d, s, yeni, gecerlilik, BUGUN);
+    const sonuc = degisiklikDenetle(d, s, yeni, gecerlilik, BUGUN, { bransDisi: bransDisiAtayabilir(rol) });
     const engel = sonuc.tarihEngeli ?? sonuc.atamaEngeli ?? (sonuc.cakismalar[0] ? cakismaMesaji(sonuc.cakismalar[0]) : null);
     if (engel) {
       toast(`Taşınamadı: ${engel}`, "hata");

@@ -2,11 +2,11 @@ import * as React from "react";
 import { Plus, Trash2, XCircle } from "lucide-react";
 import { Alert, Badge, Button, Card, CardDescription, CardHeader, CardTitle, Dialog, Field, Input, Select, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
-import { BUGUN, bildirimEkle, dersAdi, grupEtiket, grupOgrencileri, guncelle, islemYaz, oturumlar, personelAdi, saat, sube, tanimlar, useDb, yeniId, type Tatil } from "@/data/store";
+import { BUGUN, bildirimEkle, dersAdi, grup, grupEtiket, grupOgrencileri, guncelle, islemYaz, oturumlar, personelAdi, saat, sube, tanimlar, useDb, yeniId, type Iptal, type ProgramSatiri, type Tatil } from "@/data/store";
 import { tarihEkle } from "@/lib/kurallar";
 import { cn } from "@/lib/utils";
 import { tarihKisa } from "./ortak";
-import { iptalYazmaEngeli, oturumKimligi, tatilSilmeEngeli, tatilYazmaEngeli } from "./kurallar";
+import { iptalGeriAlmaEngeli, iptalYazmaEngeli, oturumKimligi, tatilSilmeEngeli, tatilYazmaEngeli } from "./kurallar";
 
 /* =========================== Tatil ve iptaller =========================== */
 export function TatilIptal() {
@@ -23,6 +23,18 @@ export function TatilIptal() {
       x.tatiller = x.tatiller.filter((t) => t.id !== tatil.id);
       islemYaz(x, ad, "Takvim", `${tatil.tarih} ${tatil.ad} tatili kaldırıldı`, tatil.subeId);
     });
+  // Karar 2026-11-08: dersin tarihi geçmediyse iptal geri alınır; iptal bildirimi alan velilere geri alma da bildirilir
+  const iptalGeriAl = (i: Iptal, p: ProgramSatiri, tarih: string) => {
+    if (iptalGeriAlmaEngeli(i, d, BUGUN)) return;
+    let n = 0;
+    guncelle((x) => {
+      x.iptaller = x.iptaller.filter((y) => y.oturumId !== i.oturumId);
+      for (const o of grupOgrencileri(x, p.grupId))
+        n += bildirimEkle(x, "dersIptal", o.id, { tarih: tarihKisa(tarih), saat: saat(p.saatId)?.baslangic ?? "", ders: dersAdi(p.dersId), neden: "iptali geri alınmıştır, ders yapılacaktır" });
+      islemYaz(x, ad, "Ders iptali", `${grupEtiket(x, p.grupId)} ${tarih} ${dersAdi(p.dersId)} iptali geri alındı`, grup(x, p.grupId)?.subeId);
+    });
+    toast(`İptal geri alındı; ${n} veliye bildirim gönderildi.`);
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -62,7 +74,7 @@ export function TatilIptal() {
           {duzenleyebilir && <Button size="sm" onClick={() => setIptalAcik(true)}><XCircle /> Ders iptal et</Button>}
         </CardHeader>
         <Table>
-          <thead><tr><Th>Ders</Th><Th>Neden</Th><Th>Telafi</Th></tr></thead>
+          <thead><tr><Th>Ders</Th><Th>Neden</Th><Th>Telafi</Th><Th /></tr></thead>
           <tbody>
             {iptaller.map((i) => {
               const kimlik = oturumKimligi(i.oturumId);
@@ -76,10 +88,15 @@ export function TatilIptal() {
                   </Td>
                   <Td>{i.neden}</Td>
                   <Td className="tabular-nums">{i.telafi ? tarihKisa(i.telafi) : "—"}</Td>
+                  <Td className="text-right">
+                    {p && duzenleyebilir && !iptalGeriAlmaEngeli(i, d, BUGUN) && (
+                      <Button variant="ghost" size="sm" onClick={() => iptalGeriAl(i, p, tarih)}>Geri al</Button>
+                    )}
+                  </Td>
                 </tr>
               );
             })}
-            {iptaller.length === 0 && <tr><Td colSpan={3} className="text-center text-muted-foreground">İptal yok.</Td></tr>}
+            {iptaller.length === 0 && <tr><Td colSpan={4} className="text-center text-muted-foreground">İptal yok.</Td></tr>}
           </tbody>
         </Table>
       </Card>

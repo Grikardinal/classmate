@@ -52,6 +52,11 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-08 | Sekreterin indirim uygulaması | Sekreter uygulayabilir, **yönetici onayıyla** geçerli olur | Bölüm 05 ek iş ✅ |
 | 2026-11-08 | Yanlış girilen gider / virman | Yönetici **gerekçeyle iptal** eder, iptal gününe **ters kayıt** düşer | Bölüm 05 ek iş ✅ |
 | 2026-11-08 | İptal edilmiş kaydın tahsilatı | **İptal edilemez**; yanlış tahsilat kayıt iptalinden önce düzeltilir | Bölüm 05 ek iş ✅ |
+| 2026-11-08 | Grubu devreden öğretmenin erişimi | **Kesilir** (grup ve öğrencileri artık görmez) | Bölüm 06 ek iş ✅ |
+| 2026-11-08 | Branş dışı (yedek) öğretmen ataması | **Yalnızca yönetici** yapabilir | Bölüm 06 ek iş ✅ |
+| 2026-11-08 | Ders iptalinin geri alınması | Dersin **tarihi geçmediyse** geri alınabilir | Bölüm 06 ek iş ✅ |
+| 2026-11-08 | Şube müdürü, öğretmenin diğer şubelerdeki dersleri | Yalnızca **dolu saat** olarak görür, ders ayrıntısı yok | Bölüm 06 ek iş ✅ |
+| 2026-11-08 | Sezon bitince açık ders satırları | **Sezon sonu tarihiyle otomatik kapanır** | Bölüm 06 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

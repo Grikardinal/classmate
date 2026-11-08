@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { ornekVeriUret, type Db, type ProgramSatiri, type Yoklama } from "@/data/model";
 import { farkHesapla, farkUygula } from "@/data/fark";
 import { YetkiHatasi, okumaSuz, yazmaDenetle, type Aktor } from "../../../server/politika";
+import { otomasyonlariCalistir } from "../../../server/zamanlayici";
 import { programDegistir } from "./kurallar";
 
 const BUGUN = "2026-11-09";
@@ -20,6 +21,8 @@ const MUDUR = aktor("u1"); // yalnızca s1
 const ogretmenKullanici = db.kullanicilar.find((k) => k.rol === "ogretmen" && k.personelId === "p4")!;
 const OGRETMEN: Aktor = { kullanici: ogretmenKullanici, personel: db.personel.find((p) => p.id === "p4")! };
 const ps1 = db.program.find((p) => p.id === "ps1")!;
+const sekreterKullanici = db.kullanicilar.find((k) => k.rol === "sekreter" && k.subeIds !== "all" && k.subeIds.includes("s1"))!;
+const SEKRETER: Aktor = { kullanici: sekreterKullanici, personel: db.personel.find((p) => p.id === sekreterKullanici.personelId)! };
 
 function dene(fn: (x: Db) => void, a: Aktor = YONETICI, kaynak: Db = db) {
   const taslak = { ...kaynak } as Db;
@@ -87,7 +90,7 @@ describe("çakışma ve uygunluk", () => {
     expect(ekle(satir({ bitis: "2026-12-06" }), YONETICI, ileri)).not.toThrow();
   });
   it("uygun olmayan öğretmen, başka şubenin dersliği ve yanlış gün tipi reddedilir", () => {
-    reddedilir(ekle(satir({ dersId: "l5" })), /vermiyor/);
+    reddedilir(ekle(satir({ dersId: "l5" }), SEKRETER), /vermiyor/);
     reddedilir(ekle(satir({ derslikId: "d4" })), /Derslik/);
     reddedilir(ekle(satir({ gun: 6 })), /gün/);
   });
@@ -142,5 +145,78 @@ describe("tatil ve iptal", () => {
     reddedilir(dene((x) => x.iptaller.push({ oturumId: "ps1_2026-11-16", neden: "x", tarih: BUGUN })), /tatil/);
     reddedilir(dene((x) => x.iptaller.push({ oturumId: `ps1_${BUGUN}`, neden: "x", tarih: BUGUN }), YONETICI, yoklamali(BUGUN)), /Yoklaması/);
     reddedilir(dene((x) => x.iptaller.push({ oturumId: "psYok_2026-11-23", neden: "x", tarih: BUGUN })));
+  });
+});
+
+describe("kararlar 2026-11-08", () => {
+  const devredilmis: Db = { ...db, program: db.program.map((p) => (p.grupId === "g2" && p.ogretmenId === "p4" ? { ...p, bitis: "2026-10-01" } : p)) };
+
+  it("grubu devreden öğretmen grubu ve öğrencilerini görmez, rehberi olduğu grubu görür", () => {
+    const o = okumaSuz(devredilmis, OGRETMEN, BUGUN);
+    expect(o.gruplar.some((g) => g.id === "g2")).toBe(false);
+    expect(o.gruplar.some((g) => g.id === "g1")).toBe(true);
+    expect(o.kayitlar.some((k) => k.grupId === "g2")).toBe(false);
+    expect(okumaSuz(db, OGRETMEN, BUGUN).gruplar.some((g) => g.id === "g2")).toBe(true);
+  });
+  it("devredilen grubun yoklaması öğretmene gitmez ve yazamaz", () => {
+    const y = { oturumId: "ps6_2026-10-03", tarih: "2026-10-03", satirId: "ps8", grupId: "g2", ogretmenId: "p4", durumlar: { o1: "geldi" }, konu: "", kayitZamani: "" } as Yoklama;
+    const k = { ...devredilmis, yoklamalar: { [y.oturumId]: y } };
+    expect(Object.keys(okumaSuz(k, OGRETMEN, BUGUN).yoklamalar)).toHaveLength(0);
+    reddedilir(dene((x) => (x.yoklamalar[y.oturumId] = { ...y, konu: "değişti" }), OGRETMEN, k), /kendi gruplar/);
+  });
+  it("branş dışı atama yöneticide geçer, sekreterde geçmez", () => {
+    const y = satir({ dersId: "l5" });
+    expect(ekle(y, YONETICI)).not.toThrow();
+    expect(ekle(y, MUDUR)).not.toThrow();
+    reddedilir(ekle(y, SEKRETER), /vermiyor/);
+  });
+  it("branş dışı olsa da pasif veya başka şubedeki öğretmen atanamaz", () => {
+    reddedilir(ekle(satir({ grupId: "g5", saatId: "h8", gun: 1, derslikId: "d4", dersId: "l1", ogretmenId: "p4" })), /görevli değil/);
+  });
+
+  const iptalli = (oturumId: string): Db => ({ ...db, iptaller: [{ oturumId, neden: "x", tarih: "2026-11-01" }] });
+  const geriAl = (x: Db) => (x.iptaller = []);
+  it("tarihi geçmemiş iptal (bugün dahil) geri alınır", () => {
+    expect(dene(geriAl, MUDUR, iptalli("ps1_2026-11-23"))).not.toThrow();
+    expect(dene(geriAl, YONETICI, iptalli(`ps1_${BUGUN}`))).not.toThrow();
+  });
+  it("tarihi geçmiş veya yoklamalı iptal geri alınamaz; öğretmen geri alamaz", () => {
+    reddedilir(dene(geriAl, YONETICI, iptalli("ps1_2026-11-02")), /geçmiş/);
+    reddedilir(dene(geriAl, YONETICI, { ...yoklamali("2026-11-23"), iptaller: iptalli("ps1_2026-11-23").iptaller }), /Yoklaması/);
+    reddedilir(dene(geriAl, OGRETMEN, iptalli("ps1_2026-11-23")));
+  });
+  it("iptalin başka alanı değiştirilemez", () => {
+    reddedilir(dene((x) => (x.iptaller = [{ ...x.iptaller[0], neden: "başka" }]), YONETICI, iptalli("ps1_2026-11-23")), /değiştirilemez/);
+  });
+
+  it("şube müdürü diğer şubedeki dersi ayrıntısız dolu saat olarak alır", () => {
+    const o = okumaSuz(db, MUDUR, BUGUN);
+    expect(o.program.some((p) => p.grupId === "g5")).toBe(false);
+    const dolu = o.doluSaatler!.filter((s) => s.ogretmenId === "p5" && s.gun === 2);
+    expect(dolu.some((s) => s.bas === "16:30")).toBe(true);
+    expect(Object.keys(dolu[0]).sort()).toEqual(["baslangic", "bas", "bit", "bitis", "gun", "ogretmenId"].sort());
+    expect(JSON.stringify(o.doluSaatler)).not.toMatch(/"g5"|"l2"|"d4"/);
+  });
+  it("genel yönetici ve sekreter dolu saat almaz; genel yönetici ayrıntıyı görür", () => {
+    expect(okumaSuz(db, YONETICI, BUGUN).doluSaatler).toBeUndefined();
+    expect(okumaSuz(db, SEKRETER, BUGUN).doluSaatler).toBeUndefined();
+    expect(okumaSuz(db, YONETICI, BUGUN).program.some((p) => p.grupId === "g5")).toBe(true);
+  });
+  it("dolu saat geri yazılamaz: farka girmez", () => {
+    const fark = farkHesapla(db, { ...db, doluSaatler: [{ ogretmenId: "p5", gun: 1, bas: "10:00", bit: "11:00", baslangic: BUGUN, bitis: null }] });
+    expect(JSON.stringify(fark)).not.toContain("doluSaatler");
+  });
+
+  it("otomasyon biten sezonun açık satırlarını kapatır, tekrar çalışınca değişmez", () => {
+    const k: Db = { ...db, sezonlar: db.sezonlar.map((z) => (z.id === "z2" ? { ...z, bitis: "2026-10-01" } : z)) };
+    const a = otomasyonlariCalistir(k);
+    expect(a.program.every((p) => p.bitis === "2026-10-01")).toBe(true);
+    expect(a.islemler.length).toBe(k.islemler.length + 1);
+    const b = otomasyonlariCalistir(a);
+    expect(b.program).toBe(a.program);
+    expect(b.islemler.length).toBe(a.islemler.length);
+  });
+  it("sezonu sürerken otomasyon programa dokunmaz", () => {
+    expect(otomasyonlariCalistir(db).program).toBe(db.program);
   });
 });

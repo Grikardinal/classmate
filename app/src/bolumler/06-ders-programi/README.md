@@ -28,7 +28,7 @@ Sunucu denetimi: `app/server/politika.ts · programDenetle`. Pasif derslik / der
 - Şubeler arası geçiş süresi yetersizse uyarı çıkar, onayla geçilir. Onay yalnızca ekrandadır. Sürükle-bırakta uyarı çıkarsa taşıma pencerede onaylanır.
 
 **Atama**
-- Öğretmen: öğretmen görevinde, aktif, grubun şubesinde görevli ve o dersi verebilen olmalı.
+- Öğretmen: öğretmen görevinde, aktif, grubun şubesinde görevli ve o dersi verebilen olmalı (branş dışı atama yalnızca yönetici).
 - Derslik ve ders saati grubun şubesine ait olmalı; saatin gün tipi (hafta içi / sonu) güne uymalı; ders aktif, şube aktif olmalı.
 - Başlangıç grubun sezonu içinde, bitiş sezonu aşmamalı ve başlangıçtan önce olmamalı.
 - Var olan satırda yalnızca değişen alan denetlenir; eski atama kaydı kilitlemez. Bölünen satırın yeni parçası yeni atama sayılır.
@@ -40,7 +40,7 @@ Sunucu denetimi: `app/server/politika.ts · programDenetle`. Pasif derslik / der
 
 **Tatil, iptal, telafi**
 - Tatil: ad ve geçerli tarih zorunlu; geçmiş tarihe eklenemez, geçmiş tatil kaldırılamaz; aynı tarih + kapsam yinelenemez; yoklaması alınmış güne eklenemez. Kurum geneli tatili yalnızca genel yönetici yazar.
-- İptal: gerçek bir oturum olmalı; geçmiş, tatil veya yoklamalı ders iptal edilemez; neden zorunlu; telafi dersten önce veya tatil gününe olamaz; sonradan değiştirilemez. İptal tarihi sunucudan yazılır.
+- İptal: gerçek bir oturum olmalı; geçmiş, tatil veya yoklamalı ders iptal edilemez; neden zorunlu; telafi dersten önce veya tatil gününe olamaz; sonradan değiştirilemez, yalnızca tarihi geçmeden geri alınır. İptal tarihi sunucudan yazılır.
 
 **Yetki ve görünürlük**
 - Düzenleme 06 yetkisiyle yönetim içindir. Öğretmen 06'yı görür ama program, tatil, iptal yazamaz (sunucuda da).
@@ -52,14 +52,14 @@ Sunucu denetimi: `app/server/politika.ts · programDenetle`. Pasif derslik / der
 
 ## Bilinen sınırlar
 - Şubeler arası geçiş onayı sunucuda denetlenmez (uyarıdır).
-- Bitişi olmayan satır, sezon bitse de oturum üretir (`oturumlar` sezonu bilmez).
-- Şube müdürü öğretmen görünümünde yalnızca kendi şubesindeki dersleri görür; doküman "tüm şubeler" der, tam görünüm yalnızca kapsamı yeten kullanıcıdadır.
-- İleride iptal edilmiş dersi olan satırın değişikliği o iptalden sonraya kalır; iptali geri alma ekranı yoktur.
+- İleride iptal edilmiş dersi olan satırın değişikliği o iptalden sonraya kalır; önce iptal geri alınabilir.
+- Çakışma denetiminde ekran `doluSaatler`i kullanmaz; diğer şubedeki çakışmayı sunucu reddeder.
+- Haftalık grid sezon sonrasındaki haftalarda otomasyon çalışana kadar açık satırı gösterir; oturum üretilmez.
 - Öğretmene ertesi gün bildirimi (opsiyonel) bu bölümde yoktur.
 
-## Açık sorular
-1. Grubu başka öğretmene geçen öğretmen, kapanmış satır yüzünden grubu ve öğrencileri görmeye devam ediyor (`ogretmenGruplari`, istemcide `AppContext`). Geçmiş ders kayıtlarını görebilmesi mi, kişisel veriyi görmemesi mi öncelikli?
-2. Bu şubede dersi verebilen öğretmen yoksa önceki ekran tüm öğretmenleri listeliyordu; artık atama engelleniyor. Branş dışı (yedek) öğretmen ataması istenir mi?
-3. İptal geri alınabilmeli mi? Alınabilirse ileri tarihli iptal değişikliği de öne çekilebilir.
-4. Şube müdürü öğretmenin diğer şubelerdeki derslerini (en azından dolu / boş olarak) görmeli mi?
-5. Sezon bittiğinde açık satırlar kendiliğinden kapansın mı?
+## Kapandı (2026-11-08)
+1. **Grubu devreden öğretmen:** erişim kesilir. Öğretmen yalnızca bugün veya ileride geçerli satırı olan veya rehberi olduğu grupları, öğrencilerini, yoklama ve ödevlerini görür (`ogretmenGruplariHesapla`). Kendi eski program satırı (öğrenci verisi yok) gider, grubu görünmediği için ekranlarda listelenmez.
+2. **Branş dışı (yedek) atama:** yalnızca şube müdürü veya genel yönetici. Listede "(branş dışı)" ekiyle görünür, uyarı çıkar; sunucu aynı kuralı uygular. Aktiflik ve şubede görev yine zorunludur.
+3. **İptalin geri alınması:** dersin tarihi geçmediyse (bugün dahil) ve yoklaması alınmadıysa; yetki iptalle aynı. Velilere bildirim gider, işlem kaydına yazılır. Sunucuda yalnızca silme açıldı, iptalin alanları değiştirilemez.
+4. **Şube müdürü, diğer şubedeki dersler:** yalnızca "Dolu". Sunucu `okumaSuz` içinde ayrı `doluSaatler` alanı gönderir (öğretmen, gün, saat, yürürlük; ders, grup, şube, satır kimliği yok). Koleksiyon olmadığı için farka girmez, geri yazılamaz. Sekretere gönderilmez; genel yönetici zaten tüm satırları görür.
+5. **Sezon sonu:** otomasyon (`server/zamanlayici.ts`) biten sezonun açık satırlarını sezon sonuyla kapatır, tekrar çalışınca değişiklik yapmaz. Sezon geçişi (Bölüm 01) eski sezonun satırlarını da kapatır. `oturumlar` sezon sonunu aşmaz.

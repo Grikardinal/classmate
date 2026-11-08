@@ -3,6 +3,7 @@
  * - Zamanlanmış duyurular vakti gelince gönderilir
  * - Etüt randevusundan 1 saat önce veliye hatırlatma
  * - Ödev tesliminden 1 gün önce (19:00'dan sonra) hatırlatma
+ * - Sezonu biten grupların açık ders satırları sezon sonuyla kapanır (Bölüm 06)
  * - Finans açıksa taksit hatırlatmaları: vadeden 3 gün önce, vade günü, gecikmede 3. ve 10. gün (10:00'dan sonra)
  */
 import {
@@ -12,12 +13,14 @@ import {
   duyuruGonderimleri,
   grupOgrencileri,
   hedefVeliler,
+  islemYaz,
   personelAdi,
   taksitKalan,
   type Db,
 } from "../src/data/model";
 import { dakika, gunFarki, hatirlatmaGunuMu, tarihEkle, tl } from "../src/lib/kurallar";
 import { otomatikHatirlatmaUygun } from "../src/bolumler/05-finans/kurallar";
+import { sezonuBitenSatirlar } from "../src/bolumler/06-ders-programi/kurallar";
 
 const tarihKisa = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
 
@@ -69,6 +72,14 @@ export function otomasyonlariCalistir(db: Db): Db {
         bildirimEkle(x, t.vade >= BUGUN ? "taksitHatirlatma" : "gecikmisOdeme", t.ogrenciId, { tutar: tl(taksitKalan(t)), vade: tarihKisa(t.vade) }, simdi, true);
       });
     }
+
+  // 5) Sezonu biten grupların açık program satırları sezon sonuyla kapanır (karar 2026-11-08; kapanınca tekrar çalışması bir şey değiştirmez)
+  const kapanan = new Map(sezonuBitenSatirlar(x, BUGUN).map((p) => [p.id, p]));
+  if (kapanan.size) {
+    x.program = x.program.map((p) => kapanan.get(p.id) ?? p);
+    x.islemler = [...x.islemler];
+    islemYaz(x, "Sistem", "Program", `Sezonu biten ${kapanan.size} ders satırı sezon sonuyla kapatıldı`);
+  }
 
   // Eski kayıtları temizle (30 gün)
   for (const [k, t] of Object.entries(x.otomasyon)) if (gunFarki(t, BUGUN) > 30) delete x.otomasyon[k];
