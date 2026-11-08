@@ -295,6 +295,8 @@ export type Gonderim = {
   metin: string;
   /** Devamsızlık bildirimlerinin oturumu (sunucu yazar; düzeltme eşleşmesi, Bölüm 07) */
   oturumId?: string;
+  /** Ödev bildirimlerinin ödevi (sunucu yazar; tekrar engeli, Bölüm 08) */
+  odevId?: string;
   /** bekliyor: sunucu gönderim kuyruğunda; iletildi/basarisiz: sağlayıcı yanıtı */
   durum: "bekliyor" | "iletildi" | "basarisiz" | "okundu";
   hata?: string;

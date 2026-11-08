@@ -24,7 +24,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 05 | Finans | `app/src/bolumler/05-finans` | 5 | ✅ |
 | 06 | Ders programı | `app/src/bolumler/06-ders-programi` | 1 | ✅ |
 | 07 | Yoklama | `app/src/bolumler/07-yoklama` | 2 | ✅ |
-| 08 | Ödev takibi | `app/src/bolumler/08-odevler` | 3 | ⏳ |
+| 08 | Ödev takibi | `app/src/bolumler/08-odevler` | 3 | ✅ |
 | 09 | Etüt ve birebir ders | `app/src/bolumler/09-etut` | 4 | ⏳ |
 | 10 | İletişim ve bildirimler | `app/src/bolumler/10-iletisim` | 5 | ⏳ |
 | 11 | Veli ve öğrenci portalı | `app/src/bolumler/11-veli-portali` | 1 | ⏳ |

@@ -11,7 +11,6 @@ import {
   SIMDI,
   bildirimEkle,
   duyuruGonderimleri,
-  grupOgrencileri,
   hedefVeliler,
   islemYaz,
   personelAdi,
@@ -21,6 +20,7 @@ import {
 import { dakika, gunFarki, hatirlatmaGunuMu, tarihEkle, tl } from "../src/lib/kurallar";
 import { otomatikHatirlatmaUygun } from "../src/bolumler/05-finans/kurallar";
 import { sezonuBitenSatirlar } from "../src/bolumler/06-ders-programi/kurallar";
+import { odevBildirimiYineleniyor, odevHedefleri, smsIzniUygula } from "../src/bolumler/08-odevler/kurallar";
 
 const tarihKisa = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
 
@@ -57,9 +57,17 @@ export function otomasyonlariCalistir(db: Db): Db {
     for (const od of x.odevler) {
       if (od.kontrolEdildi || od.teslim !== tarihEkle(BUGUN, 1)) continue;
       birKez(`odev:${od.id}`, () => {
-        const hedef = grupOgrencileri(x, od.grupId).filter((o) => !od.ogrenciIds || od.ogrenciIds.includes(o.id));
         const ders = x.dersler.find((d) => d.id === od.dersId)?.ad ?? "";
-        for (const o of hedef) bildirimEkle(x, "odevHatirlatma", o.id, { ders, baslik: od.baslik }, simdi, true);
+        for (const o of odevHedefleri(x, od)) {
+          // "Şimdi gönder" ile aynı gün gitmiş hatırlatma tekrar gitmez; SMS izni kapalı veliye SMS gitmez (Bölüm 08)
+          const n = x.gonderimler.length;
+          bildirimEkle(x, "odevHatirlatma", o.id, { ders, baslik: od.baslik }, simdi, true);
+          for (const g of x.gonderimler.splice(n)) {
+            if (odevBildirimiYineleniyor(g, od.id, x.gonderimler)) continue;
+            smsIzniUygula(g, x.veliler);
+            x.gonderimler.push({ ...g, odevId: od.id });
+          }
+        }
       });
     }
 

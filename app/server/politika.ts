@@ -72,11 +72,12 @@ import {
 } from "../src/bolumler/05-finans/kurallar";
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
 import { devamsizlikBildirimiMi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
+import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
 import { farkUygula } from "../src/data/fark";
-import type { Gider, Gonderim, Iade, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
+import type { Gider, Gonderim, Iade, Odev, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
 const ayni = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-import { telefonNormalize } from "../src/lib/kurallar";
+import { tarihEkle, telefonNormalize } from "../src/lib/kurallar";
 import { KOLEKSIYONLAR, TEKILLER, anahtar, type Degisiklik, type Koleksiyon, type Satir, type Tekil } from "./veritabani";
 
 export class YetkiHatasi extends Error {}
@@ -406,7 +407,8 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
             s.notlar = (s.notlar as Ogrenci["notlar"]).map((n, i) => (i < yeni && n && typeof n === "object" ? { ...n, yazar: ad, tarih: zaman } : n));
           }
           break;
-        case "odevler": case "musaitlikler": case "randevular":
+        // Ödevin ayrıntılı kuralları: odevDenetle() (Bölüm 08)
+        case "musaitlikler": case "randevular":
           if (ogrGrup && s.ogretmenId !== a.personel.id) hata("Yalnızca kendi kayıtlarınızı değiştirebilirsiniz.");
           break;
       }
@@ -432,6 +434,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   tanimDenetle(onceki, sonrakiDb, temiz);
   programDenetle(onceki, sonrakiDb, temiz, a, zaman);
   yoklamaDenetle(onceki, sonrakiDb, temiz, a, zaman);
+  odevDenetle(onceki, sonrakiDb, temiz, a, zaman);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   finansDenetle(onceki, temiz, a, zaman);
@@ -549,6 +552,71 @@ export function yoklamaDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
         hedef.yaz.push(g as unknown as Satir);
       }
     }
+  }
+}
+
+/* =========================== Bölüm 08 ödev =========================== */
+/**
+ * Ödev ve teslim kuralları (ekranla ortak: src/bolumler/08-odevler/kurallar.ts):
+ * - modül kapalıyken ödev yazılamaz, silinemez; ödev bildirimi kuyruğa girmez
+ * - öğretmen yalnızca bugünkü kendi grubunda, kendi dersinden (rehber: grubun dersinden) verir; yalnızca kendi ödevini değiştirir, siler, kontrol eder
+ * - öğretmen, veriliş, ilk teslim alanları sunucudan; grup değişmez; kontrol teslim tarihinden önce yapılamaz, geri alınamaz
+ * - ödev bildirimi gerçek bir ödeve bağlanır (odevId), aynı veliye ikinci kez gitmez; SMS izni kapalı veliye SMS gitmez
+ * - "yapmadı" kaldırılınca henüz gitmemiş bildirim kuyruktan silinir
+ * Şube kapsamı yazmaDenetle() içinde denetlenir. `temiz` yerinde güncellenir.
+ */
+export function odevDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  const bugun = zaman.slice(0, 10);
+  const ogretmen = a.kullanici.rol === "ogretmen";
+  const b: OdevBaglami = { rol: a.kullanici.rol, personelId: a.personel.id, bugun, modulAcik: onceki.moduller?.odev !== false, ogretmenGruplari: ogretmen ? ogretmenGruplari(onceki, a.personel.id, bugun) : null };
+
+  for (const id of K.odevler?.sil ?? []) {
+    const eski = onceki.odevler.find((x) => x.id === id);
+    if (eski) reddet(odevSilmeEngeli(eski, b));
+  }
+  const ham = (K.odevler?.yaz ?? []) as unknown as Odev[];
+  const yazilan: Odev[] = [];
+  for (const s of ham) {
+    const eski = onceki.odevler.find((x) => x.id === s.id);
+    reddet(odevYazmaEngeli(s, eski, sonraki, b));
+    const sahibi = ogretmen ? a.personel.id : (odevOgretmeni(sonraki, s.grupId, s.dersId, bugun) ?? a.personel.id);
+    yazilan.push(odevTemizle(s, eski, sahibi, bugun));
+  }
+  if (K.odevler) K.odevler.yaz = yazilan as unknown as Satir[];
+  const eskisi = (o: Odev) => onceki.odevler.find((x) => x.id === o.id);
+
+  // Bildirimin ait olabileceği ödevler: paketteki gerçek değişiklik veya yarın teslim edilecek açık ödev
+  const adaylar = (g: Gonderim): Odev[] => {
+    const ogr = String(g.ogrenciId);
+    if (g.olay === "yeniOdev") return yazilan.filter((o) => !eskisi(o) && odevHedefleri(sonraki, o).some((x) => x.id === ogr));
+    if (g.olay === "odevYapmadi") return yazilan.filter((o) => !!eskisi(o) && o.teslimler[ogr] === "yapmadi");
+    const hedefGun = tarihEkle(bugun, 1);
+    return sonraki.odevler.filter((o) => o.teslim === hedefGun && !o.kontrolEdildi && (!ogretmen || o.ogretmenId === a.personel.id) && odevHedefleri(sonraki, o).some((x) => x.id === ogr));
+  };
+  if (K.gonderimler) {
+    const mevcut: Gonderim[] = [...onceki.gonderimler];
+    K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
+      if (!odevBildirimiMi(g.olay) || onceki.gonderimler.some((x) => x.id === g.id)) return true;
+      if (!b.modulAcik) return false;
+      const od = adaylar(g).find((o) => !odevBildirimiYineleniyor(g, o.id, mevcut));
+      if (!od) return false;
+      g.odevId = od.id;
+      mevcut.push(g);
+      smsIzniUygula(g, onceki.veliler);
+      return true;
+    }) as unknown as Satir[];
+  }
+  // "Yapmadı" kaldırıldı: henüz gitmemiş bildirim kuyruktan silinir
+  for (const o of yazilan) {
+    const eski = eskisi(o);
+    if (!eski) continue;
+    const kalkan = Object.keys(eski.teslimler).filter((id) => eski.teslimler[id] === "yapmadi" && o.teslimler[id] !== "yapmadi");
+    const silinecek = onceki.gonderimler.filter((g) => g.olay === "odevYapmadi" && g.odevId === o.id && kalkan.includes(String(g.ogrenciId)) && (g.durum === "bekliyor" || g.durum === "basarisiz")).map((g) => g.id);
+    if (silinecek.length) (K.gonderimler ??= { yaz: [], sil: [] }).sil.push(...silinecek);
   }
 }
 
@@ -987,14 +1055,7 @@ export function veliVerisi(db: Db, veliId: string): Db {
     ),
     izinler: db.izinler.filter((i) => ogrIds.has(i.ogrenciId)),
     adaylar: [],
-    odevler: db.odevler
-      .filter((o) => grupIds.has(o.grupId) && (!o.ogrenciIds || o.ogrenciIds.some((x) => ogrIds.has(x))))
-      .map((o) => ({
-        ...o,
-        teslimler: Object.fromEntries(Object.entries(o.teslimler).filter(([x]) => ogrIds.has(x))),
-        notlar: Object.fromEntries(Object.entries(o.notlar).filter(([x]) => ogrIds.has(x))),
-        ogrenciIds: o.ogrenciIds ? o.ogrenciIds.filter((x) => ogrIds.has(x)) : null,
-      })),
+    odevler: db.moduller?.odev === false ? [] : veliOdevleri(db.odevler, kayitlar, ogrIds),
     musaitlikler: db.musaitlikler.filter((m) => subeIds.has(m.subeId)),
     // Başka öğrencilerin randevuları yalnızca "dolu saat" olarak görünür
     randevular: db.randevular
