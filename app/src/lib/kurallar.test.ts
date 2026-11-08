@@ -87,9 +87,12 @@ describe("ders programı (06)", () => {
 describe("yoklama (07)", () => {
   it("izinli devamsızlık orana katılmaz", () => {
     const o = devamsizlikOzeti(["geldi", "gelmedi", "izinli", "gec"]);
-    expect(o.oran).toBe(0.25);
+    expect(o.payda).toBe(3);
+    expect(o.oran).toBeCloseTo(1 / 3);
     expect(o.izinliOran).toBe(0.25);
     expect(devamsizlikOzeti([]).oran).toBe(0);
+    expect(devamsizlikOzeti(["izinli", "izinli"]).oran).toBe(0); // payda 0
+    expect(devamsizlikOzeti(["gelmedi", "izinli"]).oran).toBe(1);
   });
   it("15 dakika sonra yoklama gecikmiş sayılır", () => {
     expect(yoklamaGecikti("16:00", "16:14")).toBe(false);

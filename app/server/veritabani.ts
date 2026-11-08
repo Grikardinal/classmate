@@ -6,7 +6,7 @@
  * Şema: her koleksiyon kendi tablosunda tutulur (id, sube_id, veri jsonb). Şubeye bağlı her satırda sube_id
  * doludur; kapsam sorguları ve raporlar bu sütunla filtrelenir. Kimlik/oturum tabloları ayrıdır.
  */
-import { SURUM, type Db } from "../src/data/model";
+import { SURUM, varsayilanOlaylar, type Db } from "../src/data/model";
 import { fiyatListesiNormalize } from "../src/bolumler/01-kurum-yapisi/kurallar";
 
 export type Satir = Record<string, unknown>;
@@ -103,8 +103,11 @@ export async function hepsiniYukle(vt: Veritabani): Promise<Db | null> {
 /**
  * Eski veri ve yedeklerle uyum (yükleme ve yedekten geri yüklemede):
  * - fiyat listesi eski biçimdeyse (şube → tek fiyat) sezon + şube + seviye satırlarına çevrilir (karar 2026-11-07, Bölüm 05)
+ * - sonradan eklenen bildirim olayları (Bölüm 07) eski veriye varsayılanıyla eklenir
  */
-export function veriyiOnar(db: Db): Db {
+export function veriyiOnar(girdi: Db): Db {
+  const eksikOlay = Array.isArray(girdi.olaylar) ? varsayilanOlaylar.filter((o) => !girdi.olaylar.some((x) => x.key === o.key)) : [];
+  const db = eksikOlay.length ? { ...girdi, olaylar: [...girdi.olaylar, ...eksikOlay.map((o) => ({ ...o }))] } : girdi;
   const ham = (db as unknown as Record<string, unknown>).fiyatListesi;
   const fiyatListesi = fiyatListesiNormalize(ham, { sezonlar: Array.isArray(db.sezonlar) ? db.sezonlar : [] });
   return JSON.stringify(fiyatListesi) === JSON.stringify(ham) ? db : { ...db, fiyatListesi };

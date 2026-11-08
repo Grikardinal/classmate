@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { ornekVeriUret, type Db, type Gonderim, type ProgramSatiri, type Yoklama } from "@/data/model";
 import { farkHesapla, farkUygula } from "@/data/fark";
+import { veriyiOnar } from "../../../server/veritabani";
 import { YetkiHatasi, ogretmenGruplari, okumaSuz, yazmaDenetle, type Aktor } from "../../../server/politika";
 
 const BUGUN = "2026-11-09"; // pazartesi
@@ -170,6 +171,70 @@ describe("bildirim", () => {
   it("SMS izni açık veliye SMS gider", () => {
     const k = { ...db, veliler: db.veliler.map((v) => (v.id === veli.id ? { ...v, izinSms: true } : v)) };
     expect(paket(gonderim("g1", { veliId: veli.id }), OGRETMEN, k)[0].kanal).toBe("sms");
+  });
+});
+
+describe("yok → var düzeltmesi", () => {
+  const vId = db.ogrenciler.find((o) => o.id === OGR)!.veliIds[0];
+  const y0 = yok(BUGUN, { durumlar: { [OGR]: "gelmedi", [OGR2]: "geldi" } });
+  const sonra = yok(BUGUN, { durumlar: { [OGR]: "geldi", [OGR2]: "geldi" } });
+  const bil = (p: Partial<Gonderim>) => gonderim("g0", { veliId: vId, oturumId: oturum(BUGUN), zaman: `${BUGUN}T16:10`, ...p });
+  const calistir = (gon: Gonderim[], kaynak: Db = db, a: Aktor = OGRETMEN) => yaz(sonra, a, { ...kaynak, yoklamalar: { [oturum(BUGUN)]: y0 }, gonderimler: gon })().koleksiyonlar.gonderimler;
+  it("kuyrukta bekleyen bildirim silinir, düzeltme mesajı gitmez", () => {
+    const k = calistir([bil({ durum: "bekliyor" })])!;
+    expect(k.sil).toEqual(["g0"]);
+    expect(k.yaz).toEqual([]);
+  });
+  it("gitmiş bildirim için tek düzeltme mesajı; oturum, metin, zaman sunucudan", () => {
+    const [g] = calistir([bil({ durum: "iletildi" })])!.yaz as unknown as Gonderim[];
+    expect(g.olay).toBe("devamsizlikDuzeltme");
+    expect(g.veliId).toBe(vId);
+    expect(g.oturumId).toBe(oturum(BUGUN));
+    expect(g.metin).toContain("09.11.2026");
+    expect(g.metin).not.toContain("bugün");
+    expect(g.zaman).toBe(ZAMAN);
+    expect(g.durum).toBe("bekliyor");
+  });
+  it("aynı düzeltme ikinci kez gitmez", () => {
+    expect(calistir([bil({ durum: "iletildi" }), bil({ id: "d0", olay: "devamsizlikDuzeltme", durum: "iletildi" })])).toBeUndefined();
+  });
+  it("bildirimi olmayan öğrencide hiçbir şey olmaz", () => {
+    expect(calistir([])).toBeUndefined();
+  });
+  it("SMS izni kapalı veliye düzeltme push olarak gider", () => {
+    const k = { ...db, veliler: db.veliler.map((v) => (v.id === vId ? { ...v, izinSms: false, pushAcik: false } : v)) };
+    const [g] = calistir([bil({ durum: "iletildi" })], k)!.yaz as unknown as Gonderim[];
+    expect(g.kanal).toBe("push");
+    expect(g.maliyet).toBe(0);
+  });
+  it("olay kapalıysa düzeltme gitmez, bekleyen yine silinir", () => {
+    const k = { ...db, olaylar: db.olaylar.map((o) => (o.key === "devamsizlikDuzeltme" ? { ...o, aktif: false } : o)) };
+    expect(calistir([bil({ durum: "iletildi" })], k)!.yaz).toEqual([]);
+    expect(calistir([bil({ durum: "bekliyor" })], k)!.sil).toEqual(["g0"]);
+  });
+  it("silinen bildirimden sonra yeniden gelmedi: bildirim yine kuyruğa girer", () => {
+    expect(dene((x) => x.gonderimler.push(gonderim("g9", { veliId: vId, oturumId: undefined })), OGRETMEN)().koleksiyonlar.gonderimler!.yaz).toHaveLength(1);
+  });
+  it("yeni bildirime oturum kimliği sunucudan yazılır", () => {
+    const y = yok(BUGUN);
+    const paket = dene((x) => { x.yoklamalar[y.oturumId] = y; x.gonderimler.push(gonderim("g1", { veliId: vId, oturumId: "sahte" })); })();
+    expect((paket.koleksiyonlar.gonderimler!.yaz[0] as unknown as Gonderim).oturumId).toBe(y.oturumId);
+  });
+  it("geçmişe dönük mesaj: aynı metin başka gün de yinelenmez, SMS izni uygulanır", () => {
+    const v = db.veliler[0].id;
+    const k = { ...db, gonderimler: [gonderim("g0", { olay: "devamsizlikGecmis", veliId: v, zaman: "2026-11-05T10:00" })] };
+    expect(dene((x) => x.gonderimler.push(gonderim("g1", { olay: "devamsizlikGecmis", veliId: v })), OGRETMEN, k)().koleksiyonlar.gonderimler!.yaz).toEqual([]);
+    const izinsiz = { ...db, veliler: db.veliler.map((x) => (x.id === v ? { ...x, izinSms: false } : x)) };
+    const [g] = dene((x) => x.gonderimler.push(gonderim("g1", { olay: "devamsizlikGecmis", veliId: v })), OGRETMEN, izinsiz)().koleksiyonlar.gonderimler!.yaz as unknown as Gonderim[];
+    expect(g.kanal).toBe("push");
+  });
+});
+
+describe("eski veri", () => {
+  it("sonradan eklenen bildirim olayları eski veriye eklenir, tam veri aynen döner", () => {
+    const eski = { ...db, olaylar: db.olaylar.filter((o) => o.key !== "devamsizlikGecmis" && o.key !== "devamsizlikDuzeltme") };
+    expect(veriyiOnar(eski).olaylar.map((o) => o.key)).toEqual(expect.arrayContaining(["devamsizlikGecmis", "devamsizlikDuzeltme"]));
+    expect(veriyiOnar(db).olaylar).toBe(db.olaylar);
   });
 });
 

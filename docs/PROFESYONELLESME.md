@@ -57,6 +57,12 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-08 | Ders iptalinin geri alınması | Dersin **tarihi geçmediyse** geri alınabilir | Bölüm 06 ek iş ✅ |
 | 2026-11-08 | Şube müdürü, öğretmenin diğer şubelerdeki dersleri | Yalnızca **dolu saat** olarak görür, ders ayrıntısı yok | Bölüm 06 ek iş ✅ |
 | 2026-11-08 | Sezon bitince açık ders satırları | **Sezon sonu tarihiyle otomatik kapanır** | Bölüm 06 ek iş ✅ |
+| 2026-11-08 | İzinli dersler ve devamsızlık oranı | İzinli dersler **orandan çıkarılır** (pay ve payda) | Bölüm 07 ek iş ✅ |
+| 2026-11-08 | Yoklama "yok"tan "var"a düzeltilince | Veliye **düzeltme mesajı** gider, kuyrukta bekleyen SMS **iptal edilir** | Bölüm 07 ek iş ✅ |
+| 2026-11-08 | Geçmişe dönük girilen devamsızlık | Veliye **tarihli ayrı mesaj** gider | Bölüm 07 ek iş ✅ |
+| 2026-11-08 | Sekreterin yoklama alması | Aynı gün ve 7 güne kadar geç giriş; geçmiş düzeltme yok (değişiklik yok) | — |
+| 2026-11-08 | Öğretmenin geç giriş sınırı | **7 gün** (değişiklik yok) | — |
+| 2026-11-08 | Dersi olmayan güne veli izni | **Reddedilir** | Bölüm 07 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

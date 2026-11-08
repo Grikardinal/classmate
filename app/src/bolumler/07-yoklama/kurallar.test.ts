@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest";
 import type { Db, Gonderim, Kayit, Ogrenci, Yoklama } from "../../data/model";
 import {
   GEC_YOKLAMA_GUN,
-  anindaBildirilir,
+  devamsizlikOlayi,
   devamsizlikYineleniyor,
+  duzeltmePlani,
   durumGecerli,
   ilkDurumlar,
   izinEngeli,
+  kaldirilanGelmeyenler,
   kayitGrubu,
+  oturumBildirimleri,
+  tarihMetni,
   oturumDurumu,
   raporBaslangici,
   yeniGelmeyenler,
@@ -140,9 +144,27 @@ describe("devamsızlık bildirimi", () => {
     expect(yeniGelmeyenler({ a: "gelmedi", b: "gelmedi", c: "geldi" }, { a: "gelmedi", b: "geldi", c: "gelmedi" })).toEqual(["b"]);
     expect(yeniGelmeyenler({ a: "gelmedi" })).toEqual(["a"]);
   });
-  it("yalnızca dersin gününde anında bildirilir", () => {
-    expect(anindaBildirilir(BUGUN, BUGUN)).toBe(true);
-    expect(anindaBildirilir("2026-11-02", BUGUN)).toBe(false);
+  it("olay: dersin günü, 7 günlük pencere, daha eski", () => {
+    expect(devamsizlikOlayi(BUGUN, BUGUN)).toBe("devamsizlik");
+    expect(devamsizlikOlayi("2026-11-02", BUGUN)).toBe("devamsizlikGecmis");
+    expect(devamsizlikOlayi("2026-11-01", BUGUN)).toBeNull();
+    expect(devamsizlikOlayi("2026-11-16", BUGUN)).toBeNull();
+    expect(tarihMetni("2026-11-02")).toBe("02.11.2026");
+  });
+  it("tarihli mesaj başka gün de yinelenmez", () => {
+    expect(devamsizlikYineleniyor(g({ olay: "devamsizlikGecmis", zaman: "2026-11-20T10:00" }), [g({ olay: "devamsizlikGecmis" })])).toBe(true);
+  });
+  it("kaldırılan gelmedi: yalnızca yeni yoklamada durumu değişenler", () => {
+    expect(kaldirilanGelmeyenler({ a: "geldi", b: "gelmedi", c: "izinli" }, { a: "gelmedi", b: "gelmedi", c: "gelmedi", d: "gelmedi" })).toEqual(["a", "c"]);
+  });
+  it("oturum bildirimi kimlikle, eski kayıt gün ve saatle eşleşir", () => {
+    const l = [g({ id: "1", oturumId: "o1" }), g({ id: "2", oturumId: "o2" }), g({ id: "3", metin: "16:00 ders" }), g({ id: "4", metin: "18:00 ders" }), g({ id: "5", olay: "duyuru", oturumId: "o1" })];
+    expect(oturumBildirimleri(l, "o1", BUGUN, "a", "16:00").map((x) => x.id)).toEqual(["1", "3"]);
+  });
+  it("düzeltme planı: gitmemiş silinir, giden veliye bir kez", () => {
+    const l = [g({ id: "1", veliId: "v1", durum: "bekliyor" }), g({ id: "2", veliId: "v2", durum: "iletildi" }), g({ id: "3", veliId: "v3", durum: "okundu" }), g({ id: "4", veliId: "v4", durum: "basarisiz" })];
+    expect(duzeltmePlani(l, [])).toEqual({ silinecek: ["1", "4"], veliler: ["v2", "v3"] });
+    expect(duzeltmePlani(l, [{ veliId: "v2" }]).veliler).toEqual(["v3"]);
   });
   it("aynı gün aynı metin yinelenmez; başka gün, veli, metin yinelenme sayılmaz", () => {
     expect(devamsizlikYineleniyor(g({ zaman: `${BUGUN}T18:00` }), [g()])).toBe(true);
@@ -154,13 +176,16 @@ describe("devamsızlık bildirimi", () => {
 });
 
 describe("veli izni", () => {
-  const d = { kayitlar: [kayit("a"), kayit("b", { durum: "dondurulmus" })], izinler: [{ ogrenciId: "a", tarih: "2026-11-10" }] } as unknown as Db;
+  const d = { ...veri, tatiller: [{ id: "t", tarih: "2026-12-07", ad: "Tatil", subeId: null }], kayitlar: [kayit("a"), kayit("b", { durum: "dondurulmus" })], izinler: [{ ogrenciId: "a", tarih: "2026-11-23" }] } as unknown as Db;
   it("tarih geçerli ve aralıkta olmalı", () => {
-    expect(izinEngeli({ ogrenciId: "a", tarih: "2026-11-11" }, d, BUGUN)).toBeNull();
+    expect(izinEngeli({ ogrenciId: "a", tarih: "2026-11-30" }, d, BUGUN)).toBeNull();
     for (const t of ["2026-13-45", "2026-11-08", "2027-02-01", 5]) expect(izinEngeli({ ogrenciId: "a", tarih: t }, d, BUGUN), String(t)).toMatch(/Geçersiz/);
   });
-  it("aktif kayıt gerekir", () => expect(izinEngeli({ ogrenciId: "b", tarih: "2026-11-11" }, d, BUGUN)).toMatch(/aktif kaydı/));
-  it("aynı gün ikinci izin yazılmaz", () => expect(izinEngeli({ ogrenciId: "a", tarih: "2026-11-10" }, d, BUGUN)).toMatch(/zaten/));
+  it("aktif kayıt gerekir", () => expect(izinEngeli({ ogrenciId: "b", tarih: "2026-11-30" }, d, BUGUN)).toMatch(/aktif kaydı/));
+  it("dersi olmayan, tatil ve iptal gününe izin yazılmaz", () => {
+    for (const t of ["2026-11-24", "2026-12-07", "2026-11-16"]) expect(izinEngeli({ ogrenciId: "a", tarih: t }, d, BUGUN), t).toMatch(/ders yok/);
+  });
+  it("aynı gün ikinci izin yazılmaz", () => expect(izinEngeli({ ogrenciId: "a", tarih: "2026-11-23" }, d, BUGUN)).toMatch(/zaten/));
 });
 
 describe("ekran yardımcıları", () => {

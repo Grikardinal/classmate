@@ -259,6 +259,8 @@ export type Paket = { id: string; ogrenciId: string; ogretmenId: string; dersId:
 
 export type OlayKey =
   | "devamsizlik"
+  | "devamsizlikGecmis"
+  | "devamsizlikDuzeltme"
   | "dersIptal"
   | "hosgeldin"
   | "yeniOdev"
@@ -291,6 +293,8 @@ export type Gonderim = {
   subeId: string;
   kanal: "push" | "sms";
   metin: string;
+  /** Devamsızlık bildirimlerinin oturumu (sunucu yazar; düzeltme eşleşmesi, Bölüm 07) */
+  oturumId?: string;
   /** bekliyor: sunucu gönderim kuyruğunda; iletildi/basarisiz: sağlayıcı yanıtı */
   durum: "bekliyor" | "iletildi" | "basarisiz" | "okundu";
   hata?: string;
@@ -468,6 +472,8 @@ const grupKayitSayisi: Record<string, number> = { g1: 11, g2: 16, g3: 12, g4: 9,
 
 export const varsayilanOlaylar: BildirimOlayi[] = [
   { key: "devamsizlik", ad: "Devamsızlık", kanal: "push+sms", aktif: true, sablon: "{ogrenci} bugün {saat} {ders} dersine katılmadı. {sube_adi} {sube_telefonu}" },
+  { key: "devamsizlikGecmis", ad: "Devamsızlık (geç girilen)", kanal: "push+sms", aktif: true, sablon: "{ogrenci} {tarih} tarihli {saat} {ders} dersine katılmadı. {sube_adi} {sube_telefonu}" },
+  { key: "devamsizlikDuzeltme", ad: "Devamsızlık düzeltmesi", kanal: "push+sms", aktif: true, sablon: "{ogrenci} için {tarih} {saat} {ders} dersindeki devamsızlık kaydı düzeltildi; devamsız sayılmıyor. {sube_adi} {sube_telefonu}" },
   { key: "dersIptal", ad: "Ders iptali / değişikliği", kanal: "push+sms", aktif: true, sablon: "{grup} {ders} dersi ({tarih} {saat}): {neden}. {sube_adi} {sube_telefonu}" },
   { key: "hosgeldin", ad: "Hoş geldiniz / portal daveti", kanal: "sms", aktif: true, sablon: "{ogrenci} kaydı tamamlandı, hoş geldiniz! Veli portalı: classmate.app/veli — {sube_adi}" },
   { key: "yeniOdev", ad: "Yeni ödev", kanal: "push", aktif: true, sablon: "{ogrenci} için yeni {ders} ödevi: {baslik}. Teslim: {teslim}", modul: "odev" },

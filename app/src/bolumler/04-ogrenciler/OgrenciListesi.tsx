@@ -121,7 +121,7 @@ export function OgrenciListesi() {
                       <span className={cn("tabular-nums", oz.oran >= 0.15 ? "font-medium text-danger" : oz.oran >= 0.08 ? "text-warning" : "")}>
                         %{Math.round(oz.oran * 100)}
                       </span>
-                      <span className="ml-1 text-xs text-muted-foreground">({oz.gelmedi}/{oz.toplam})</span>
+                      <span className="ml-1 text-xs text-muted-foreground">({oz.gelmedi}/{oz.payda})</span>
                     </Td>
                     <Td><KayitDurumRozeti durum={k.durum} /></Td>
                   </tr>

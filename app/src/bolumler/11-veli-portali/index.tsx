@@ -76,7 +76,7 @@ import {
   type Ogrenci,
   type Veli,
 } from "@/data/store";
-import { gunFarki, haftaGunu, iyelik, tarihEkle, telefonNormalize, tl } from "@/lib/kurallar";
+import { devamsizlikOzeti, gunFarki, haftaGunu, iyelik, tarihEkle, telefonNormalize, tl } from "@/lib/kurallar";
 import { bosSlotlar, etutTurAd } from "@/bolumler/09-etut";
 import { api, ApiHatasi } from "@/lib/api";
 import { Yukleniyor, useSunucuDurumu } from "@/layout/Giris";
@@ -553,14 +553,14 @@ function IzinDialog({ onClose }: { onClose: () => void }) {
   const { cocuk, islem } = usePortal();
   const [tarih, setTarih] = React.useState(tarihEkle(BUGUN, 1));
   const [not, setNot] = React.useState("");
-  const dersVar = oturumlar(d, tarih).some((o) => o.satir.grupId === aktifKayit(d, cocuk.id)?.grupId);
+  const dersVar = oturumlar(d, tarih).some((o) => o.satir.grupId === aktifKayit(d, cocuk.id)?.grupId && !o.iptal && !o.tatil);
   const gonder = async () => {
     if (await islem("/api/veli/izin", { ogrenciId: cocuk.id, tarih, not: not.trim() }, "Bildiriminiz öğretmene iletildi; yoklamada “izinli” görünecek.")) onClose();
   };
   return (
     <Dialog open onClose={onClose} title="Gelemeyecek bildirimi" description={`${cocuk.ad} için öğretmene önceden bilgi verin.`} footer={<><Button variant="outline" onClick={onClose}>Vazgeç</Button><Button onClick={gonder} disabled={tarih < BUGUN}>Gönder</Button></>}>
       <Field label="Tarih"><Input type="date" min={BUGUN} value={tarih} onChange={(e) => setTarih(e.target.value)} /></Field>
-      {!dersVar && <Alert tone="warning">Bu tarihte {iyelik(cocuk.ad)} dersi görünmüyor.</Alert>}
+      {!dersVar && <Alert tone="warning">Bu tarihte {iyelik(cocuk.ad)} dersi yok (tatil veya iptal olabilir); bildirim gönderilemez.</Alert>}
       <Field label="Açıklama (isteğe bağlı)"><Textarea value={not} onChange={(e) => setNot(e.target.value)} placeholder="Doktor randevusu" /></Field>
     </Dialog>
   );
@@ -610,7 +610,7 @@ function PortalYoklama() {
       <div className="grid grid-cols-3 gap-2">
         <StatCard label="Ders" value={l.length} />
         <StatCard label="Gelmedi" value={gelmedi} tone={gelmedi ? "danger" : "default"} />
-        <StatCard label="Devam" value={`%${l.length ? Math.round(((l.length - gelmedi) / l.length) * 100) : 100}`} tone="success" />
+        <StatCard label="Devam" value={`%${Math.round((1 - devamsizlikOzeti(l.map((x) => x.durum)).oran) * 100)}`} tone="success" />
       </div>
       {izinler.map((i) => <Alert key={i.id} icon={<CalendarDays />}>{tarihKisa(i.tarih)} için izin bildirdiniz: {i.not}</Alert>)}
       <Card className="divide-y">

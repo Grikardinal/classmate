@@ -122,23 +122,67 @@ export function yeniGelmeyenler(yeni: Record<string, YoklamaDurumu>, eski?: Reco
   return Object.entries(yeni).filter(([id, s]) => s === "gelmedi" && eski?.[id] !== "gelmedi").map(([id]) => id);
 }
 
-/** Şablon "bugün ... katılmadı" der: yalnızca dersin gününde girilen devamsızlık veliye anında bildirilir */
-export const anindaBildirilir = (tarih: string, bugun: string) => tarih === bugun;
+/** Yeni "gelmedi" kaldırılınca (gelmedi → geldi / geç / izinli) */
+export function kaldirilanGelmeyenler(yeni: Record<string, YoklamaDurumu>, eski: Record<string, YoklamaDurumu>): string[] {
+  return Object.entries(eski).filter(([id, s]) => s === "gelmedi" && yeni[id] !== undefined && yeni[id] !== "gelmedi").map(([id]) => id);
+}
+
+export type DevamsizlikOlayi = "devamsizlik" | "devamsizlikGecmis";
+export const devamsizlikBildirimiMi = (olay: unknown): olay is DevamsizlikOlayi => olay === "devamsizlik" || olay === "devamsizlikGecmis";
+
+/** Dersin günü: "bugün" şablonu; 7 günlük geç giriş penceresi: tarihli şablon; daha eskisi veya gelecek: bildirim yok (karar 2026-11-08) */
+export function devamsizlikOlayi(tarih: string, bugun: string): DevamsizlikOlayi | null {
+  if (tarih === bugun) return "devamsizlik";
+  return tarih < bugun && tarih >= tarihEkle(bugun, -GEC_YOKLAMA_GUN) ? "devamsizlikGecmis" : null;
+}
+
+/** Mesajdaki tarih: 09.11.2026 */
+export const tarihMetni = (t: string) => t.split("-").reverse().join(".");
 
 type BildirimAlani = Pick<Gonderim, "olay" | "veliId" | "ogrenciId" | "metin" | "zaman">;
 
-/** Aynı veliye aynı gün aynı devamsızlık metni daha önce kuyruğa girdiyse tekrar gönderilmez (gelmedi → geldi → gelmedi, iki cihazdan kayıt) */
+/**
+ * Aynı veliye aynı devamsızlık metni daha önce kuyruğa girdiyse tekrar gönderilmez (gelmedi → geldi → gelmedi, iki cihazdan kayıt).
+ * "Bugün" metni aynı gün için geçerlidir; tarihli metin tarihi kendi taşır.
+ */
 export function devamsizlikYineleniyor(g: BildirimAlani, onceki: BildirimAlani[]): boolean {
-  return g.olay === "devamsizlik" && onceki.some((x) => x.olay === "devamsizlik" && x.veliId === g.veliId && x.ogrenciId === g.ogrenciId && x.metin === g.metin && x.zaman.slice(0, 10) === g.zaman.slice(0, 10));
+  return devamsizlikBildirimiMi(g.olay) && onceki.some((x) => x.olay === g.olay && x.veliId === g.veliId && x.ogrenciId === g.ogrenciId && x.metin === g.metin && (g.olay === "devamsizlikGecmis" || x.zaman.slice(0, 10) === g.zaman.slice(0, 10)));
+}
+
+type OturumBildirimi = Pick<Gonderim, "id" | "olay" | "veliId" | "ogrenciId" | "metin" | "zaman" | "durum" | "oturumId">;
+
+/** Öğrencinin bu oturum için aldığı devamsızlık bildirimleri. Oturum kimliği yazılmadan önceki kayıtlar gün ve ders saatiyle eşleşir. */
+export function oturumBildirimleri<T extends OturumBildirimi>(gonderimler: T[], oturumId: string, tarih: string, ogrenciId: string, bas: string): T[] {
+  return gonderimler.filter((g) => devamsizlikBildirimiMi(g.olay) && g.ogrenciId === ogrenciId && (g.oturumId === oturumId || (!g.oturumId && g.olay === "devamsizlik" && g.zaman.slice(0, 10) === tarih && g.metin.includes(bas))));
+}
+
+/** Henüz ulaşmamış bildirim silinir; ulaşan velilere, daha önce almadılarsa, düzeltme mesajı gider */
+export function duzeltmePlani(bildirimler: OturumBildirimi[], duzeltmeler: Pick<Gonderim, "veliId">[]): { silinecek: string[]; veliler: string[] } {
+  const alanlar = new Set(duzeltmeler.map((g) => g.veliId));
+  return {
+    silinecek: bildirimler.filter((g) => g.durum === "bekliyor" || g.durum === "basarisiz").map((g) => g.id),
+    veliler: [...new Set(bildirimler.filter((g) => (g.durum === "iletildi" || g.durum === "okundu") && g.veliId && !alanlar.has(g.veliId)).map((g) => String(g.veliId)))],
+  };
 }
 
 /* ---------- Veli izni ---------- */
 
 export type IzinGirdisi = { ogrenciId: string; tarih: unknown };
 
-export function izinEngeli(g: IzinGirdisi, d: Pick<Db, "izinler" | "kayitlar">, bugun: string): Hata {
+/** O tarihte öğrencinin grubunda yapılacak ders var mı (tatil / iptal sayılmaz) */
+function izinGunuDersVar(ogrenciId: string, tarih: string, d: OturumVerisi & Pick<Db, "kayitlar">): boolean {
+  const gruplar = new Set(d.kayitlar.filter((k) => k.ogrenciId === ogrenciId && k.durum === "aktif").map((k) => kayitGrubu(k, tarih)));
+  return d.program.some((p) => {
+    if (!gruplar.has(p.grupId)) return false;
+    const o = yoklamaOturumu(d, `${p.id}_${tarih}`);
+    return !!o && !o.iptal && !o.tatil;
+  });
+}
+
+export function izinEngeli(g: IzinGirdisi, d: OturumVerisi & Pick<Db, "izinler" | "kayitlar">, bugun: string): Hata {
   if (!tarihGecerli(g.tarih) || g.tarih < bugun || g.tarih > tarihEkle(bugun, IZIN_UFUK_GUN)) return "Geçersiz tarih.";
   if (!d.kayitlar.some((k) => k.ogrenciId === g.ogrenciId && k.durum === "aktif")) return "Öğrencinin aktif kaydı yok.";
+  if (!izinGunuDersVar(g.ogrenciId, g.tarih, d)) return "Seçtiğiniz tarihte ders yok (tatil veya iptal olabilir). Lütfen dersi olan bir gün seçin.";
   if (d.izinler.some((i) => i.ogrenciId === g.ogrenciId && i.tarih === g.tarih)) return "Bu tarih için izin zaten bildirilmiş.";
   return null;
 }

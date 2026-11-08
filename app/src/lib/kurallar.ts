@@ -134,13 +134,16 @@ export function devamsizlikOzeti(durumlar: YoklamaDurumu[]) {
   const gelmedi = durumlar.filter((d) => d === "gelmedi").length;
   const izinli = durumlar.filter((d) => d === "izinli").length;
   const gec = durumlar.filter((d) => d === "gec").length;
+  /** Karar 2026-11-08: izinli dersler orandan çıkarılır (pay ve payda) */
+  const payda = toplam - izinli;
   return {
     toplam,
+    payda,
     gelmedi,
     izinli,
     gec,
-    /** İzinli devamsızlık ayrı gösterilir, orana katılmaz */
-    oran: toplam ? gelmedi / toplam : 0,
+    /** gelmedi / (toplam − izinli); izinli devamsızlık ayrı gösterilir */
+    oran: payda > 0 ? gelmedi / payda : 0,
     izinliOran: toplam ? izinli / toplam : 0,
   };
 }

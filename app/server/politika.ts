@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { BUGUN, aktifKayit, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
+import { BUGUN, aktifKayit, bildirimEkle, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -71,7 +71,7 @@ import {
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
-import { devamsizlikYineleniyor, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
+import { devamsizlikBildirimiMi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -492,6 +492,7 @@ export function programDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
  * - öğretmen, konu temizliği ve kayıt zamanı sunucudan; düzeltme eski öğrencileri silemez
  * - izinler yalnızca veli portalından yazılır (/api/veli/izin)
  * - devamsızlık bildirimi: aynı gün aynı metin tekrar gitmez, SMS izni kapalı veliye SMS gitmez
+ * - gelmedi kaldırılınca: gitmemiş bildirim kuyruktan silinir; gitmişse veliye bir kez düzeltme mesajı gider
  * Şube kapsamı yazmaDenetle() içinde denetlenir. `temiz` yerinde güncellenir.
  */
 export function yoklamaDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
@@ -509,19 +510,45 @@ export function yoklamaDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
     y.kayitZamani = zaman;
     if (eski) y.durumlar = { ...eski.durumlar, ...y.durumlar };
   }
+  const yoklamalar = (K.yoklamalar?.yaz ?? []) as unknown as Yoklama[];
+  const smsIzni = (g: Gonderim) => {
+    if (g.kanal === "sms" && onceki.veliler.find((v) => v.id === g.veliId)?.izinSms === false) {
+      g.kanal = "push";
+      g.maliyet = 0;
+    }
+  };
   if (K.gonderimler) {
     const mevcut: Gonderim[] = [...onceki.gonderimler];
     const yeniMi = (g: Gonderim) => !onceki.gonderimler.some((x) => x.id === g.id);
     K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
-      if (g.olay !== "devamsizlik" || !yeniMi(g)) return true;
+      if (!devamsizlikBildirimiMi(g.olay) || !yeniMi(g)) return true;
       if (devamsizlikYineleniyor(g, mevcut)) return false;
       mevcut.push(g);
-      if (g.kanal === "sms" && onceki.veliler.find((v) => v.id === g.veliId)?.izinSms === false) {
-        g.kanal = "push";
-        g.maliyet = 0;
-      }
+      g.oturumId = yoklamalar.find((y) => y.durumlar[String(g.ogrenciId)] === "gelmedi")?.oturumId;
+      smsIzni(g);
       return true;
     }) as unknown as Satir[];
+  }
+  // Gelmedi kaldırılan öğrenciler: gitmemiş bildirim silinir, gitmişse düzeltme mesajı
+  for (const y of yoklamalar) {
+    const eski = onceki.yoklamalar[y.oturumId];
+    if (!eski) continue;
+    const o = yoklamaOturumu(sonraki, y.oturumId)!;
+    for (const ogrId of kaldirilanGelmeyenler(y.durumlar, eski.durumlar)) {
+      const plan = duzeltmePlani(oturumBildirimleri(onceki.gonderimler, y.oturumId, y.tarih, ogrId, o.bas), onceki.gonderimler.filter((g) => g.olay === "devamsizlikDuzeltme" && g.oturumId === y.oturumId && g.ogrenciId === ogrId));
+      if (!plan.silinecek.length && !plan.veliler.length) continue;
+      const hedef = (K.gonderimler ??= { yaz: [], sil: [] });
+      hedef.sil.push(...plan.silinecek);
+      const kutu = { ...onceki, gonderimler: [] as Gonderim[] } as Db;
+      const ders = onceki.dersler.find((x) => x.id === o.satir.dersId)?.ad ?? "";
+      bildirimEkle(kutu, "devamsizlikDuzeltme", ogrId, { tarih: tarihMetni(y.tarih), saat: o.bas, ders }, zaman);
+      for (const g of kutu.gonderimler.filter((x) => plan.veliler.includes(String(x.veliId)))) {
+        g.oturumId = y.oturumId;
+        g.subeId = o.subeId;
+        smsIzni(g);
+        hedef.yaz.push(g as unknown as Satir);
+      }
+    }
   }
 }
 

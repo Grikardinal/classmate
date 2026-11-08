@@ -5,7 +5,7 @@ import { useOturum } from "@/context/AppContext";
 import { BUGUN, SIMDI, bildirimEkle, dersAdi, derslikAdi, grupEtiket, guncelle, islemYaz, konular, oturumlar, ogrenciYoklamalari, personelAdi, tamAd, useDb } from "@/data/store";
 import { haftaBasi, sonrakiDurum, tarihEkle, type YoklamaDurumu } from "@/lib/kurallar";
 import { cn } from "@/lib/utils";
-import { KONU_UZUNLUK, anindaBildirilir, ilkDurumlar, yeniGelmeyenler, yoklamaListesi, yoklamaZamanEngeli } from "./kurallar";
+import { KONU_UZUNLUK, devamsizlikOlayi, ilkDurumlar, tarihMetni, yeniGelmeyenler, yoklamaListesi, yoklamaZamanEngeli } from "./kurallar";
 import { durumlar, tarihUzun } from "./ortak";
 
 /* ---------- Yoklama ekranı (telefonda hızlı) ---------- */
@@ -25,6 +25,7 @@ export function YoklamaEkrani({ id, tarih, onKapat }: { id: string; tarih: strin
   // Sunucuyla aynı kural (kurallar.ts · yoklamaZamanEngeli)
   const kilit = yoklamaZamanEngeli({ tarih, bas: o.bas, kayitVar: !!mevcut, rol, bugun: BUGUN, simdi: SIMDI });
   const kilitli = !!kilit;
+  const olay = devamsizlikOlayi(tarih, BUGUN);
   const sayim = (k: YoklamaDurumu) => Object.values(durum).filter((x) => x === k).length;
   const oneriler = konular[o.satir.dersId] ?? [];
 
@@ -34,8 +35,8 @@ export function YoklamaEkrani({ id, tarih, onKapat }: { id: string; tarih: strin
     guncelle((x) => {
       x.yoklamalar = { ...x.yoklamalar, [id]: { oturumId: id, tarih, satirId: o.satir.id, grupId: o.satir.grupId, ogretmenId: o.satir.ogretmenId, durumlar: durum, konu: konu.trim(), kayitZamani: `${BUGUN}T${SIMDI}` } };
       for (const ogrId of yeniGelmeyenler(durum, mevcut?.durumlar)) {
-        // Şablon "bugün" der: yalnızca dersin gününde girilen devamsızlık veliye bildirilir
-        if (anindaBildirilir(tarih, BUGUN)) bildirilen += bildirimEkle(x, "devamsizlik", ogrId, { saat: o.bas, ders: dersAdi(o.satir.dersId) });
+        // Dersin günü "bugün", 7 güne kadar geç girişte tarihli mesaj; daha eskisine mesaj gitmez
+        if (olay) bildirilen += bildirimEkle(x, olay, ogrId, { saat: o.bas, ders: dersAdi(o.satir.dersId), tarih: tarihMetni(tarih) });
         const hafta = haftaBasi(tarih);
         const n = ogrenciYoklamalari(x, ogrId, hafta, tarihEkle(hafta, 6)).filter((y) => y.durum === "gelmedi").length;
         if (n >= x.ayarlar.devamsizlikEsigi) {
@@ -63,7 +64,7 @@ export function YoklamaEkrani({ id, tarih, onKapat }: { id: string; tarih: strin
       </div>
 
       {kilit && <Alert tone="warning" icon={<AlertTriangle />}>{kilit}</Alert>}
-      {!kilit && !anindaBildirilir(tarih, BUGUN) && <Alert icon={<AlertTriangle />}>Geçmiş tarihli kayıtta veliye otomatik bildirim gitmez.</Alert>}
+      {!kilit && !olay && <Alert icon={<AlertTriangle />}>7 günden eski kayıtta veliye yeni devamsızlık bildirimi gitmez.</Alert>}
 
       <div className="flex flex-wrap gap-2 text-sm">
         {durumlar.map((s) => (
@@ -133,7 +134,7 @@ export function YoklamaEkrani({ id, tarih, onKapat }: { id: string; tarih: strin
         <div className="sticky bottom-4 flex justify-end gap-2">
           <Button variant="outline" onClick={onKapat}>Vazgeç</Button>
           <Button onClick={kaydet} className="shadow-lg">
-            <CheckCircle2 /> Kaydet {anindaBildirilir(tarih, BUGUN) && sayim("gelmedi") > 0 && `· ${sayim("gelmedi")} gelmeyenin velisine bildir`}
+            <CheckCircle2 /> Kaydet {!!olay && sayim("gelmedi") > 0 && `· ${sayim("gelmedi")} gelmeyenin velisine bildir`}
           </Button>
         </div>
       )}
