@@ -9,6 +9,10 @@ import {
   grupAtamaEngeli,
   grupDoluMu,
   iptalPaketiMi,
+  kapsamDisiNakilEngeli,
+  nakilHedefGrubu,
+  ogrenciDurumu,
+  yenidenKayitEngeli,
   iptalSonrasiOgrenciDurumu,
   kayitDurumGecisEngeli,
   kayitYazmaEngeli,
@@ -121,8 +125,9 @@ describe("öğrenci alan kuralları", () => {
     x.ogrenciler.push(yeniOgrenci());
     x.kayitlar.push(yeniKayit());
     expect(ogrenciYazmaEngeli(yeniOgrenci(), undefined, x, sec)).toBeNull();
-    expect(ogrenciYazmaEngeli({ ...o3, durum: "ayrildi" }, o3, db, sec)).toMatch(/İptal edilmemiş/);
-    expect(ogrenciYazmaEngeli({ ...o3, durum: "aktif" }, { ...o3, durum: "ayrildi" }, db, sec)).toMatch(/yeniden aktifleştirilemez/);
+    expect(ogrenciYazmaEngeli({ ...o3, durum: "ayrildi" }, o3, db, sec)).toMatch(/Süren kaydı/);
+    const iptalli = { ...db, kayitlar: db.kayitlar.map((k) => (k.id === "k4" ? { ...k, durum: "iptal" as const } : k)) };
+    expect(ogrenciYazmaEngeli({ ...o3, durum: "aktif" }, { ...o3, durum: "ayrildi" }, iptalli, sec)).toMatch(/yalnızca yeni bir kayıtla/);
     expect(ogrenciYazmaEngeli({ ...o3, veliIds: ["v1", "yok"] }, o3, db, sec)).toMatch(/velisi bulunamadı/);
   });
   it("mükerrer ad değişikliği reddedilir; anonimleştirme yalnızca KVKK yetkisiyle", () => {
@@ -182,7 +187,7 @@ describe("kayıt durumu ve kayıt satırı", () => {
     expect(kayitDurumGecisEngeli("aktif", "dondurulmus")).toBeNull();
     expect(kayitDurumGecisEngeli("dondurulmus", "aktif")).toBeNull();
     expect(kayitDurumGecisEngeli("dondurulmus", "iptal")).toBeNull();
-    expect(kayitDurumGecisEngeli("aktif", "mezun" as Kayit["durum"])).toMatch(/Geçersiz/);
+    expect(kayitDurumGecisEngeli("aktif", "nakil" as Kayit["durum"])).toMatch(/Geçersiz/);
   });
   const sonrakiYeni = (k: Kayit) => {
     const x = kopya();
@@ -190,9 +195,10 @@ describe("kayıt durumu ve kayıt satırı", () => {
     x.kayitlar.push(k);
     return x;
   };
-  it("yeni kayıt: dolu grupta sekreter reddedilir, şube müdürü/genel yönetici onaylayabilir", () => {
+  it("yeni kayıt: dolu grupta sekreter, şube müdürü ve genel yönetici kapasite aşımını onaylayabilir", () => {
     const k = yeniKayit({ grupId: "g2", grupGecmisi: [{ grupId: "g2", tarih: BUGUN }] });
-    expect(kayitYazmaEngeli(k, undefined, sonrakiYeni(k), { rol: "sekreter" })).toMatch(/kontenjanı dolu/);
+    expect(kayitYazmaEngeli(k, undefined, sonrakiYeni(k), { rol: "ogretmen" })).toMatch(/kontenjanı dolu/);
+    expect(kayitYazmaEngeli(k, undefined, sonrakiYeni(k), { rol: "sekreter" })).toBeNull(); // karar 2026-11-07
     expect(kayitYazmaEngeli(k, undefined, sonrakiYeni(k), { rol: "sube-muduru" })).toBeNull();
     expect(kayitYazmaEngeli(yeniKayit(), undefined, sonrakiYeni(yeniKayit()), { rol: "sekreter" })).toBeNull();
   });
@@ -228,7 +234,7 @@ describe("kayıt durumu ve kayıt satırı", () => {
     const g2de = db.kayitlar.find((k) => k.grupId === "g2")!;
     const donmus = { ...g2de, durum: "dondurulmus" as const };
     const x = { ...db, kayitlar: db.kayitlar.map((k) => (k.id === g2de.id ? g2de : k)).concat([{ ...yeniKayit({ id: "k-fazla", grupId: "g2" }) }]) };
-    expect(kayitYazmaEngeli(g2de, donmus, x, { rol: "sekreter" })).toMatch(/kontenjanı dolu/);
+    expect(kayitYazmaEngeli(g2de, donmus, x, { rol: "ogretmen" })).toMatch(/kontenjanı dolu/);
   });
 });
 
@@ -275,5 +281,58 @@ describe("ödeme planı girdisi (bariz hatalar)", () => {
     expect(odemePlaniEngeli(10000, { pesinat: 3000, taksit: 0, ilkVade: BUGUN })).toMatch(/eşit/);
     expect(odemePlaniEngeli(10000, { pesinat: 10000, taksit: 0, ilkVade: BUGUN })).toBeNull();
     expect(odemePlaniEngeli(10000, { pesinat: 0, taksit: 4, ilkVade: "" })).toMatch(/vade/);
+  });
+});
+
+describe("ek kararlar (2026-11-07): yeniden kayıt, mezuniyet, kapsam dışına nakil", () => {
+  const iptalli = (): Db => ({ ...db, kayitlar: db.kayitlar.map((k) => (k.id === "k4" ? { ...k, durum: "iptal" as const } : k)) });
+  it("öğrenci durumu kayıtlardan çıkar: süren → aktif, yalnız mezun → mezun, hiçbiri → ayrıldı", () => {
+    expect(ogrenciDurumu("o3", db.kayitlar)).toBe("aktif");
+    expect(ogrenciDurumu("o3", iptalli().kayitlar)).toBe("ayrildi");
+    expect(ogrenciDurumu("o3", [{ ogrenciId: "o3", durum: "mezun" }, { ogrenciId: "o3", durum: "iptal" }])).toBe("mezun");
+    expect(ogrenciDurumu("o3", [{ ogrenciId: "o3", durum: "mezun" }, { ogrenciId: "o3", durum: "dondurulmus" }])).toBe("aktif");
+  });
+  it("yeniden kayıt yalnızca süren kaydı olmayan, anonim olmayan mevcut karttan", () => {
+    expect(yenidenKayitEngeli(o3, db.kayitlar)).toMatch(/süren bir kaydı/);
+    expect(yenidenKayitEngeli(o3, iptalli().kayitlar)).toBeNull();
+    expect(yenidenKayitEngeli({ ...o3, ad: "E***", soyad: "Y***" }, iptalli().kayitlar)).toMatch(/Anonim/);
+    // Ayrılan öğrenci aynı sezonda yeni kayıtla yeniden aktif olur
+    const x = iptalli();
+    const yeni = yeniKayit({ ogrenciId: "o3" });
+    x.kayitlar = [...x.kayitlar, yeni];
+    expect(kayitYazmaEngeli(yeni, undefined, x, { rol: "sekreter" })).toBeNull();
+    expect(ogrenciYazmaEngeli({ ...o3, durum: "aktif" }, { ...o3, durum: "ayrildi" }, x, { kvkkYetkisi: false, bugun: BUGUN })).toBeNull();
+    // Sezonda ikinci süren kayıt kuralı aynen
+    expect(kayitYazmaEngeli(yeni, undefined, { ...db, kayitlar: [...db.kayitlar, yeni] }, { rol: "sekreter" })).toMatch(/zaten bir kaydı/);
+  });
+  it("mezun: yalnızca genel yönetici, yalnızca en üst seviye; geri alınamaz", () => {
+    const g4 = db.kayitlar.find((k) => k.grupId === "g4")!; // 8. sınıf
+    expect(kayitYazmaEngeli({ ...g4, durum: "mezun" }, g4, db, { rol: "genel-yonetici" })).toBeNull();
+    expect(kayitYazmaEngeli({ ...g4, durum: "mezun" }, g4, db, { rol: "sube-muduru" })).toMatch(/genel yönetici/);
+    expect(kayitYazmaEngeli({ ...k4, durum: "mezun" }, k4, db, { rol: "genel-yonetici" })).toMatch(/8\. sınıf/);
+    const mezun = { ...g4, durum: "mezun" as const };
+    expect(kayitDurumGecisEngeli("mezun", "aktif")).toMatch(/geri alınamaz/);
+    expect(kayitYazmaEngeli({ ...mezun, ekHizmetler: ["Kitap seti"] }, mezun, db, { rol: "genel-yonetici" })).toMatch(/Mezun kayıt/);
+    expect(kayitYazmaEngeli({ ...mezun, durum: "iptal" }, mezun, db, { rol: "genel-yonetici" })).toMatch(/Mezun kayıt/); // anonimleştirme dışında
+  });
+  it("nakil hedef grubu: hedef şube, aynı sezon ve seviye, boş kontenjan; en boşu", () => {
+    const x = kopya();
+    x.gruplar.push({ ...x.gruplar.find((g) => g.id === "g6")!, id: "g6b", kapasite: 30 });
+    const k = { ...k4, grupId: "g6" }; // 7. sınıf kaydı gibi
+    expect(nakilHedefGrubu(x, k, "s2")?.id).toBe("g6b");
+    expect(nakilHedefGrubu(db, k4, "s2")).toBeNull(); // s2de 3. sınıf yok
+    const dolu = { ...db, gruplar: db.gruplar.map((g) => (g.id === "g6" ? { ...g, kapasite: 7 } : g)) };
+    expect(nakilHedefGrubu(dolu, k, "s2")).toBeNull();
+    expect(nakilHedefGrubu(dolu, { ...k, durum: "dondurulmus" }, "s2")?.id).toBe("g6"); // dondurulmuş doluluğa sayılmaz
+  });
+  it("kapsam dışına nakil: yalnızca şube/grup/geçmiş değişir; aktif sezon, aktif şube", () => {
+    const eski = { ...k4, grupId: "g6", grupGecmisi: [{ grupId: "g6", tarih: "2026-09-05" }] };
+    const nakil = { ...eski, subeId: "s2", grupId: "g6", grupGecmisi: [...eski.grupGecmisi, { grupId: "g6", tarih: BUGUN }] };
+    expect(kapsamDisiNakilEngeli(nakil, eski, db)).toBeNull();
+    expect(kapsamDisiNakilEngeli({ ...nakil, ekHizmetler: ["Yaz okulu"] }, eski, db)).toMatch(/diğer bilgileri/);
+    expect(kapsamDisiNakilEngeli({ ...nakil, subeId: "s3" }, eski, db)).toMatch(/Pasif/);
+    expect(kapsamDisiNakilEngeli({ ...nakil, grupId: "g5" }, eski, db)).toMatch(/uygun grubu/);
+    expect(kapsamDisiNakilEngeli(nakil, { ...eski, durum: "iptal" }, db)).toMatch(/süren/);
+    expect(kapsamDisiNakilEngeli({ ...nakil, sezonId: "z1" }, { ...eski, sezonId: "z1" }, { ...db, gruplar: db.gruplar.map((g) => ({ ...g, sezonId: "z1" })) })).toMatch(/aktif sezon/);
   });
 });

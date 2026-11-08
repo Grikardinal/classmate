@@ -44,7 +44,9 @@ Kural ihlali `YetkiHatasi` olarak döner (HTTP 403, mesaj kullanıcıya gösteri
 - **Sezon:** ad dolu ve benzersiz; bitiş başlangıçtan sonra; her zaman **tam bir** aktif sezon olur
   (ilk tanımlanan sezon otomatik aktif olur).
 - **Sezon geçişi:** hedef, aktif sezondan sonra başlayan bir sezondur ve hedefte grup olmamalıdır (iki kez yapılamaz).
-  3–7. sınıf grupları seviye +1 ile kopyalanır ("5-A" → "6-A"), 8. sınıflar mezun olur.
+  3–7. sınıf grupları seviye +1 ile kopyalanır ("5-A" → "6-A"), 8. sınıflar mezun olur: karar 2026-11-07 ile 8. sınıf
+  gruplarının aktif/dondurulmuş kayıtları `sezonGecisiPlani().mezunlar` ile "mezun" durumuna geçer (öğrenci taşınsın taşınmasın),
+  başka süren kaydı olmayan öğrencinin durumu da "mezun" olur (Bölüm 04 · `ogrenciDurumu`; sunucu: kayitDenetle).
   Pasif veya artık o şubede olmayan rehber öğretmen yeni gruba taşınmaz.
   Öğrenci taşıma seçilirse aktif kayıtlar yeni kayıt olarak açılır: **yeni sözleşme numarası** (hedef sezonun yılı,
   şube içinde sıralı, mevcut numaralarla çakışmaz), **KVKK onayı boş** (yeniden alınır), içe aktarma bağı kopyalanmaz.

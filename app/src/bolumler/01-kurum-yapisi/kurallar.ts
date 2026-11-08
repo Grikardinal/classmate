@@ -150,12 +150,15 @@ export type SezonGecisSonucu = {
   kayitlar: Kayit[];
   /** 8. sınıf grupları kopyalanmaz (mezun) */
   mezunGrupSayisi: number;
+  /** En üst seviye gruplardaki aktif / dondurulmuş kayıtların "mezun" hali (karar 2026-11-07, Bölüm 04) */
+  mezunlar: Kayit[];
 };
 
 /**
  * Yeni sezona geçiş: kaynak sezonun 3–7. sınıf grupları seviyesi bir artırılarak hedef sezona kopyalanır.
  * ogrenciTasi ise aktif kayıtlar yeni gruplara yeni kayıt olarak açılır:
  * yeni sözleşme numarası (hedef sezonun yılı), KVKK onayı yeniden alınmak üzere boş, içe aktarma bağı yok.
+ * En üst seviyedeki (8. sınıf) grupların aktif / dondurulmuş kayıtları öğrenci taşınsın taşınmasın "mezun" olur.
  */
 export function sezonGecisiPlani(
   d: Pick<Db, "gruplar" | "kayitlar" | "subeler" | "sezonlar" | "personel">,
@@ -203,7 +206,11 @@ export function sezonGecisiPlani(
       });
     }
   }
-  return { gruplar, kayitlar, mezunGrupSayisi: kaynakGruplar.length - gruplar.length };
+  const mezunGruplar = new Set(kaynakGruplar.filter((g) => g.seviye >= EN_YUKSEK_SEVIYE).map((g) => g.id));
+  const mezunlar = d.kayitlar
+    .filter((k) => k.sezonId === kaynakId && mezunGruplar.has(k.grupId) && (k.durum === "aktif" || k.durum === "dondurulmus"))
+    .map((k) => ({ ...k, durum: "mezun" as const }));
+  return { gruplar, kayitlar, mezunGrupSayisi: kaynakGruplar.length - gruplar.length, mezunlar };
 }
 
 /** Geçiş iki kez yapılamaz: hedef sezonda grup varsa engellenir. */

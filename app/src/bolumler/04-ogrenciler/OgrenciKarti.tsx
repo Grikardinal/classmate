@@ -1,14 +1,14 @@
 /** Öğrenci kartı (profil): üst bilgi, kayıt işlemleri ve sekmeler */
 import * as React from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRightLeft, Ban, GraduationCap, HeartPulse, PauseCircle, PlayCircle, Users } from "lucide-react";
-import { Alert, Avatar, Button, EmptyState, StatCard, Tabs, toast } from "@/components/ui";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, ArrowRightLeft, Ban, GraduationCap, HeartPulse, PauseCircle, PlayCircle, RotateCcw, Users } from "lucide-react";
+import { Alert, Avatar, Badge, Button, EmptyState, StatCard, Tabs, toast } from "@/components/ui";
 import { useApp, useOturum } from "@/context/AppContext";
 import { aktifKayit, grup, grupEtiket, guncelle, islemYaz, ogrenciYoklamalari, sube, taksitKalan, tamAd, useDb } from "@/data/store";
 import { devamsizlikOzeti, tl } from "@/lib/kurallar";
 import { BelgelerSekmesi, EtutSekmesi, GenelBilgi, KayitlarSekmesi, NotlarSekmesi, OdemelerSekmesi, OdevlerSekmesi, VelilerSekmesi, YoklamaSekmesi } from "./KartSekmeleri";
 import { GrupDegistir, KayitIptal } from "./KayitIslemleri";
-import { grupDoluMu, kapasiteOnaylayabilir } from "./kurallar";
+import { grupDoluMu, kapasiteOnaylayabilir, surenKayitMi, yenidenKayitEngeli } from "./kurallar";
 import { KayitDurumRozeti, tarihTR } from "./ortak";
 
 type KartSekme = "genel" | "veliler" | "kayitlar" | "odemeler" | "yoklama" | "odevler" | "etut" | "notlar" | "belgeler";
@@ -19,11 +19,12 @@ export function OgrenciKarti() {
   const { moduller } = useApp();
   const { ad, rol, subeGorunur } = useOturum();
   const [sekme, setSekme] = React.useState<KartSekme>("genel");
+  const navigate = useNavigate();
   const [islem, setIslem] = React.useState<null | "grup" | "nakil" | "iptal">(null);
   const o = d.ogrenciler.find((x) => x.id === id);
   const kayitlar = d.kayitlar.filter((k) => k.ogrenciId === id);
-  // Aktif sezonun kaydı; yoksa iptal olmayan son kayıt; yoksa son kayıt
-  const k = aktifKayit(d, id ?? "") ?? [...kayitlar].reverse().find((x) => x.durum !== "iptal") ?? kayitlar[kayitlar.length - 1];
+  // Aktif sezonun süren kaydı; yoksa süren son kayıt; yoksa son kayıt (iptal / mezun)
+  const k = aktifKayit(d, id ?? "") ?? [...kayitlar].reverse().find(surenKayitMi) ?? kayitlar[kayitlar.length - 1];
 
   if (!o || !k || !subeGorunur(k.subeId))
     return <EmptyState icon={<GraduationCap />} title="Öğrenci bulunamadı" text="Kayıt silinmiş veya şube kapsamınız dışında olabilir." />;
@@ -46,7 +47,7 @@ export function OgrenciKarti() {
     const yeni = k.durum === "dondurulmus" ? "aktif" : "dondurulmus";
     // Dondurulmuş kayıt doluluğa sayılmaz; aktife dönerken kontenjan denetlenir
     if (yeni === "aktif" && grupDoluMu(d, k.grupId) && !kapasiteOnaylayabilir(rol)) {
-      toast("Grubun kontenjanı dolu; kaydı aktifleştirmek için şube müdürü onayı gerekir.", "hata");
+      toast("Grubun kontenjanı dolu; kaydı aktifleştirmek için yetkili personel onayı gerekir.", "hata");
       return;
     }
     guncelle((x) => {
@@ -69,10 +70,14 @@ export function OgrenciKarti() {
             <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span>{g ? grupEtiket(d, g.id) : "—"}</span>·<span className="font-mono">{k.sozlesmeNo}</span>
               <KayitDurumRozeti durum={k.durum} />
+              {o.durum !== "aktif" && <Badge variant="outline">Öğrenci: {o.durum === "mezun" ? "Mezun" : "Ayrıldı"}</Badge>}
             </p>
           </div>
         </div>
-        {k.durum !== "iptal" && (
+        {!surenKayitMi(k) && !yenidenKayitEngeli(o, d.kayitlar) && (
+          <Button size="sm" onClick={() => navigate(`/ogrenciler/yeni?ogrenci=${o.id}`)}><RotateCcw /> Yeniden kayıt</Button>
+        )}
+        {surenKayitMi(k) && (
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => setIslem("grup")}><Users /> Grup değiştir</Button>
             <Button variant="outline" size="sm" onClick={() => setIslem("nakil")}><ArrowRightLeft /> Şube nakli</Button>

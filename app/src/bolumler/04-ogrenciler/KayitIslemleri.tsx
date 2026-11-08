@@ -3,31 +3,64 @@ import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Alert, Button, Checkbox, Dialog, Field, Select, Textarea, toast } from "@/components/ui";
 import { useApp, useOturum } from "@/context/AppContext";
-import { BUGUN, grupDoluluk, grupEtiket, guncelle, islemYaz, simdiZaman, sube, taksitKalan, tamAd, tanimlar, useDb, type Db, type Kayit, type Ogrenci } from "@/data/store";
+import { useNavigate } from "react-router-dom";
+import { AKTIF_SEZON, BUGUN, grupDoluluk, grupEtiket, guncelle, islemYaz, senkron, simdiZaman, sube, taksitKalan, tamAd, tanimlar, useDb, veriYukle, type Db, type Kayit, type Ogrenci } from "@/data/store";
 import { tl } from "@/lib/kurallar";
 import { adayYenidenAc, bagliAday, grupDoluMu, iptalSonrasiOgrenciDurumu, kapasiteOnaylayabilir } from "./kurallar";
 
 /* ---------- Grup değişikliği / şube nakli ---------- */
 export function GrupDegistir({ k, o, nakil, onClose }: { k: Kayit; o: Ogrenci; nakil: boolean; onClose: () => void }) {
   const d = useDb();
+  const navigate = useNavigate();
   const { moduller } = useApp();
   const { ad, kapsam, rol } = useOturum();
+  const [hedefSube, setHedefSube] = React.useState("");
   const [hedef, setHedef] = React.useState("");
   const [kapasiteOnay, setKapasiteOnay] = React.useState(false);
-  // Aynı sezonun grupları; nakilde kapsamdaki diğer aktif şubeler (iki şubede de yetki gerekir)
-  const aktifSube = (id: string) => !!tanimlar().subeler.find((s) => s.id === id)?.aktif;
-  const adaylar = d.gruplar.filter(
-    (g) => g.sezonId === k.sezonId && g.id !== k.grupId && aktifSube(g.subeId) && (nakil ? g.subeId !== k.subeId && kapsam.includes(g.subeId) : g.subeId === k.subeId),
-  );
+  const [disariOnay, setDisariOnay] = React.useState(false);
+  // Nakilde hedef: kaydın şubesi dışındaki aktif şubeler (karar 2026-11-07: kapsam dışındakiler de)
+  const subeler = tanimlar().subeler.filter((s) => s.aktif && s.id !== k.subeId);
+  const grupSubesi = nakil ? hedefSube : k.subeId;
+  // Kapsam dışına nakil: hedef şubenin grupları görünmez, grubu sunucu atar (aynı seviye, boş kontenjan)
+  const disari = nakil && !!hedefSube && !kapsam.includes(hedefSube);
+  const adaylar = disari ? [] : d.gruplar.filter((g) => g.sezonId === k.sezonId && g.id !== k.grupId && g.subeId === grupSubesi);
   const hedefGrup = adaylar.find((g) => g.id === hedef);
   const kalanTaksit = d.taksitler.filter((t) => t.kayitId === k.id && taksitKalan(t) > 0);
   // Dondurulmuş kayıt doluluğa sayılmaz
   const dolu = !!hedefGrup && k.durum === "aktif" && grupDoluMu(d, hedefGrup.id);
   const yonetici = kapasiteOnaylayabilir(rol);
-  const engel = !hedefGrup ? "Yeni grup seçin." : dolu && !yonetici ? "Grup dolu; kapasite aşımını yalnızca şube müdürü veya genel yönetici onaylayabilir." : dolu && !kapasiteOnay ? "Kapasite aşımını onaylayın." : null;
+  const engel = disari
+    ? k.sezonId !== AKTIF_SEZON
+      ? "Yalnızca aktif sezonun kaydı başka şubeye nakledilebilir."
+      : !disariOnay
+        ? "Nakilden sonra öğrenciyi göremeyeceğinizi onaylayın."
+        : null
+    : nakil && !hedefSube
+      ? "Hedef şube seçin."
+      : !hedefGrup
+        ? "Yeni grup seçin."
+        : dolu && !yonetici
+          ? "Grup dolu; kapasite aşımını yalnızca sekreter, şube müdürü veya genel yönetici onaylayabilir."
+          : dolu && !kapasiteOnay
+            ? "Kapasite aşımını onaylayın."
+            : null;
 
   const uygula = () => {
-    if (engel || !hedefGrup) return;
+    if (engel) return;
+    if (disari) {
+      // Yalnızca şube değişir; grup, grup geçmişi ve kalan taksitlerin devri sunucuda yapılır.
+      // İşlem kaydı devreden şubeye yazılır (Bölüm 03 aday devri gibi; devredenin kapsamında kalır).
+      guncelle((x) => {
+        x.kayitlar = x.kayitlar.map((y) => (y.id === k.id ? { ...y, subeId: hedefSube, grupId: "", grupGecmisi: [...y.grupGecmisi, { grupId: "", tarih: BUGUN }] } : y));
+        islemYaz(x, ad, "Şube nakli", `${tamAd(o)}: ${grupEtiket(x, k.grupId)} → ${sube(hedefSube)?.ad} (${sube(k.subeId)?.kod} → ${sube(hedefSube)?.kod})`, k.subeId);
+      });
+      void senkron().then(() => veriYukle()).catch(() => undefined);
+      toast(`Nakil tamamlandı: ${sube(hedefSube)?.ad}. Öğrenci artık kapsamınızda değil.`);
+      onClose();
+      navigate("/ogrenciler");
+      return;
+    }
+    if (!hedefGrup) return;
     guncelle((x) => {
       x.kayitlar = x.kayitlar.map((y) =>
         y.id === k.id ? { ...y, grupId: hedefGrup.id, subeId: hedefGrup.subeId, grupGecmisi: [...y.grupGecmisi, { grupId: hedefGrup.id, tarih: BUGUN }] } : y,
@@ -50,20 +83,42 @@ export function GrupDegistir({ k, o, nakil, onClose }: { k: Kayit; o: Ogrenci; n
       onClose={onClose}
       title={nakil ? "Şube nakli" : "Grup değiştir"}
       description={`${tamAd(o)} · şu an ${grupEtiket(d, k.grupId)}. Kayıt ve sözleşme numarası bozulmaz, tarihçe tutulur.`}
-      footer={<><Button variant="outline" onClick={onClose}>Vazgeç</Button><Button onClick={uygula} disabled={!!engel}>Uygula</Button></>}
+      footer={<><Button variant="outline" onClick={onClose}>Vazgeç</Button><Button onClick={uygula} disabled={!!engel}>{disari ? "Nakledin" : "Uygula"}</Button></>}
     >
-      <Field label="Yeni grup">
-        <Select value={hedef} onChange={(e) => { setHedef(e.target.value); setKapasiteOnay(false); }}>
-          <option value="">Seçiniz</option>
-          {adaylar.map((g) => (
-            <option key={g.id} value={g.id}>{grupEtiket(d, g.id)} · {g.seviye}. sınıf ({grupDoluluk(d, g.id)}/{g.kapasite})</option>
-          ))}
-        </Select>
-      </Field>
-      {adaylar.length === 0 && <p className="text-sm text-muted-foreground">{nakil ? "Nakil için yetkili olduğunuz başka aktif şubede grup yok." : "Uygun grup yok."}</p>}
+      {nakil && (
+        <Field label="Hedef şube">
+          <Select value={hedefSube} onChange={(e) => { setHedefSube(e.target.value); setHedef(""); setKapasiteOnay(false); setDisariOnay(false); }}>
+            <option value="">Seçiniz</option>
+            {subeler.map((s) => (
+              <option key={s.id} value={s.id}>{s.ad}{kapsam.includes(s.id) ? "" : " (kapsamınız dışında)"}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
+      {nakil && subeler.length === 0 && <p className="text-sm text-muted-foreground">Nakil için başka aktif şube yok.</p>}
+      {!disari && (!nakil || hedefSube) && (
+        <Field label="Yeni grup">
+          <Select value={hedef} onChange={(e) => { setHedef(e.target.value); setKapasiteOnay(false); }}>
+            <option value="">Seçiniz</option>
+            {adaylar.map((g) => (
+              <option key={g.id} value={g.id}>{grupEtiket(d, g.id)} · {g.seviye}. sınıf ({grupDoluluk(d, g.id)}/{g.kapasite})</option>
+            ))}
+          </Select>
+        </Field>
+      )}
+      {!disari && (!nakil || hedefSube) && adaylar.length === 0 && <p className="text-sm text-muted-foreground">Uygun grup yok.</p>}
+      {disari && (
+        <Alert tone="warning" icon={<AlertTriangle />}>
+          <p>
+            {sube(hedefSube)?.ad} şubesi yetki kapsamınız dışında: <b>nakilden sonra bu öğrenciyi göremeyeceksiniz.</b> Öğrenci hedef şubede aynı seviyedeki
+            boş kontenjanlı gruba yerleştirilir; uygun grup yoksa nakil reddedilir. Kayıtta şube ve grup dışında bir şey değişmez.
+          </p>
+          <div className="mt-2"><Checkbox checked={disariOnay} onChange={setDisariOnay} label="Anladım, öğrenciyi nakledin" /></div>
+        </Alert>
+      )}
       {dolu && (
         <Alert tone="warning" icon={<AlertTriangle />}>
-          <p>Bu grubun kontenjanı dolu. Kapasite üstü geçiş yalnızca şube müdürü veya genel yönetici onayıyla yapılır.</p>
+          <p>Bu grubun kontenjanı dolu. Kapasite üstü geçiş sekreter, şube müdürü veya genel yönetici onayıyla yapılır (işlem kaydına yazılır).</p>
           {yonetici && <div className="mt-2"><Checkbox checked={kapasiteOnay} onChange={setKapasiteOnay} label="Kapasite aşımını onaylıyorum (işlem kaydına yazılır)" /></div>}
         </Alert>
       )}

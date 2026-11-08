@@ -15,7 +15,7 @@ export function OgrenciListesi() {
   const navigate = useNavigate();
   const [ara, setAra] = React.useState("");
   const [grupId, setGrupId] = React.useState("all");
-  const [durum, setDurum] = React.useState<"aktif" | "dondurulmus" | "iptal" | "all">("aktif");
+  const [durum, setDurum] = React.useState<"aktif" | "dondurulmus" | "iptal" | "mezun" | "all">("aktif");
 
   const gruplar = d.gruplar.filter((g) => g.sezonId === AKTIF_SEZON && subeGorunur(g.subeId));
   const q = normalAd(ara).replace(/\s(?=\d)/g, "");
@@ -76,6 +76,7 @@ export function OgrenciListesi() {
             <option value="aktif">Aktif</option>
             <option value="dondurulmus">Dondurulmuş</option>
             <option value="iptal">İptal</option>
+            <option value="mezun">Mezun</option>
             <option value="all">Tümü</option>
           </Select>
         </CardContent>

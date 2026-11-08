@@ -3,18 +3,22 @@
  * Ekran (anında geri bildirim) ve sunucu (server/politika.ts · kayitDenetle, son söz) aynı fonksiyonları kullanır.
  * Bu yüzden yalnızca göreli içe aktarma ve tip içe aktarması yapılır. Testler: kurallar.test.ts
  */
-import type { Aday, AdayDurum, Db, Kayit, Ogrenci, Rol, Veli } from "../../data/model";
+import type { Aday, AdayDurum, Db, Grup, Kayit, Ogrenci, Rol, Veli } from "../../data/model";
 import { epostaGecerli, normalAd, sozlesmeNo, telefonNormalize } from "../../lib/kurallar";
+import { EN_YUKSEK_SEVIYE } from "../01-kurum-yapisi/kurallar";
 import { ANONIM_TELEFON, notlarEklemeMi } from "../03-on-kayit/kurallar";
 
 /** Doğrulama sonucu: null = geçerli, metin = kullanıcıya gösterilecek ilk hata */
 export type Hata = string | null;
 
-export const KAYIT_DURUMLARI: { key: Kayit["durum"]; ad: string; renk: "success" | "warning" | "danger" }[] = [
+export const KAYIT_DURUMLARI: { key: Kayit["durum"]; ad: string; renk: "success" | "warning" | "danger" | "secondary" }[] = [
   { key: "aktif", ad: "Aktif", renk: "success" },
   { key: "dondurulmus", ad: "Dondurulmuş", renk: "warning" },
   { key: "iptal", ad: "İptal", renk: "danger" },
+  { key: "mezun", ad: "Mezun", renk: "secondary" },
 ];
+/** Süren kayıt: öğrenci grupta sayılır (aktif) ya da geri dönebilir (dondurulmuş) */
+export const surenKayitMi = (k: Pick<Kayit, "durum">) => k.durum === "aktif" || k.durum === "dondurulmus";
 export const kayitDurumBilgisi = (k: Kayit["durum"]) => KAYIT_DURUMLARI.find((x) => x.key === k) ?? KAYIT_DURUMLARI[0];
 
 export const SEVIYELER = [3, 4, 5, 6, 7, 8] as const;
@@ -26,8 +30,8 @@ export const NOT_EN_FAZLA = 2000;
 export const EN_FAZLA_VELI = 3;
 /** KVKK aydınlatma metni sürümü (kayda yazılır) */
 export const KVKK_SURUM = "v1.2";
-/** Kapasite aşımını onaylayabilen roller (ekrandaki "yönetici onayı") */
-export const KAPASITE_ONAYLAYAN_ROLLER: Rol[] = ["genel-yonetici", "sube-muduru"];
+/** Kapasite aşımını onaylayabilen roller (karar 2026-11-07: sekreter de onaylayabilir) */
+export const KAPASITE_ONAYLAYAN_ROLLER: Rol[] = ["genel-yonetici", "sube-muduru", "sekreter"];
 /**
  * Kaydı iptal edilen öğrencinin adayı bu duruma döner (kullanıcı kararı 2026-11-07).
  * "Görüşüldü": aileyle daha önce görüşülmüş, yeniden aranması gereken açık aday. Gerekçe README'de.
@@ -106,7 +110,7 @@ export function ogrenciDogrula(o: Ogrenci, bugun: string): Hata {
   if (o.cinsiyet !== "K" && o.cinsiyet !== "E") return "Cinsiyet geçersiz.";
   if (!metinMi(o.okul, OKUL_EN_FAZLA) || !metinMi(o.okulSinifi, 20)) return "Okul bilgisi geçersiz.";
   if (!metinMi(o.saglikNotu, SAGLIK_EN_FAZLA)) return `Sağlık notu en fazla ${SAGLIK_EN_FAZLA} karakter olabilir.`;
-  if (o.durum !== "aktif" && o.durum !== "ayrildi") return "Öğrenci durumu geçersiz.";
+  if (o.durum !== "aktif" && o.durum !== "ayrildi" && o.durum !== "mezun") return "Öğrenci durumu geçersiz.";
   if (!Array.isArray(o.veliIds) || o.veliIds.length === 0) return "Öğrencinin en az bir velisi olmalı.";
   if (o.veliIds.length > EN_FAZLA_VELI) return `Bir öğrenciye en fazla ${EN_FAZLA_VELI} veli bağlanabilir.`;
   if (new Set(o.veliIds).size !== o.veliIds.length) return "Aynı veli iki kez bağlanamaz.";
@@ -203,12 +207,65 @@ export function kayitDurumGecisEngeli(eski: Kayit["durum"] | null, yeni: Kayit["
   if (!KAYIT_DURUMLARI.some((d) => d.key === yeni)) return "Geçersiz kayıt durumu.";
   if (eski === null) return yeni === "aktif" ? null : "Yeni kayıt aktif durumda açılır.";
   if (eski === "iptal" && yeni !== "iptal") return "İptal edilen kayıt geri alınamaz.";
+  if (eski === "mezun" && yeni !== "mezun" && yeni !== "iptal") return "Mezun kayıt geri alınamaz.";
   return null;
 }
 
-/** Kayıt iptalinden sonra öğrencinin durumu: iptal olmayan kaydı kalmadıysa "ayrıldı" */
-export function iptalSonrasiOgrenciDurumu(ogrenciId: string, kayitlar: Pick<Kayit, "ogrenciId" | "durum">[]): Ogrenci["durum"] {
-  return kayitlar.some((k) => k.ogrenciId === ogrenciId && k.durum !== "iptal") ? "aktif" : "ayrildi";
+/**
+ * Öğrencinin durumu kayıtlarından çıkar: süren (aktif/dondurulmuş) kaydı varsa "aktif";
+ * yoksa mezun kaydı varsa "mezun"; yoksa "ayrıldı". Yeniden kayıt (mevcut kart) öğrenciyi yeniden aktif yapar.
+ */
+export function ogrenciDurumu(ogrenciId: string, kayitlar: Pick<Kayit, "ogrenciId" | "durum">[]): Ogrenci["durum"] {
+  const l = kayitlar.filter((k) => k.ogrenciId === ogrenciId);
+  if (l.some(surenKayitMi)) return "aktif";
+  return l.some((k) => k.durum === "mezun") ? "mezun" : "ayrildi";
+}
+/** Kayıt iptalinden sonra öğrencinin durumu (ogrenciDurumu ile aynı) */
+export const iptalSonrasiOgrenciDurumu = ogrenciDurumu;
+
+/** Mevcut karttan yeniden kayıt: süren kaydı olmayan (ayrılmış / mezun), anonim olmayan öğrenci */
+export function yenidenKayitEngeli(o: Ogrenci | undefined, kayitlar: Pick<Kayit, "ogrenciId" | "durum">[]): Hata {
+  if (!o) return "Öğrenci bulunamadı.";
+  if (ogrenciAnonimMi(o)) return "Anonimleştirilmiş öğrenci yeniden kaydedilemez.";
+  if (kayitlar.some((k) => k.ogrenciId === o.id && surenKayitMi(k))) return "Öğrencinin süren bir kaydı var; yeniden kayıt gerekmez.";
+  return null;
+}
+
+/* ---------- Kapsam dışındaki şubeye nakil (karar 2026-11-07) ---------- */
+/**
+ * Nakilde hedef grup: hedef şubede, kaydın sezonunda, mevcut grubun seviyesinde ve (aktif kayıt için) boş kontenjanı olan grup;
+ * birden çoksa en boş olanı. Kapsam dışındaki şubenin gruplarını ekran göremediği için grubu sunucu atar.
+ */
+export function nakilHedefGrubu(d: Pick<Db, "gruplar" | "kayitlar">, kayit: Kayit, hedefSubeId: string): Grup | null {
+  const seviye = d.gruplar.find((g) => g.id === kayit.grupId)?.seviye;
+  const dolu = (g: Grup) => d.kayitlar.filter((k) => k.id !== kayit.id && k.grupId === g.id && k.durum === "aktif").length;
+  const l = d.gruplar
+    .filter((g) => g.subeId === hedefSubeId && g.sezonId === kayit.sezonId && g.seviye === seviye && (kayit.durum !== "aktif" || dolu(g) < g.kapasite))
+    .sort((a, b) => b.kapasite - dolu(b) - (a.kapasite - dolu(a)));
+  return l[0] ?? null;
+}
+
+/**
+ * Kapsamı dışındaki aktif şubeye nakil (Bölüm 03 aday devri deseni): eski hal kullanıcının kapsamındadır
+ * (yazmaDenetle), aynı pakette kayıtta yalnızca şube, grup ve grup geçmişi (sona bir satır) değişir;
+ * kayıt aktif sezonda ve sürüyor olmalı; grup nakilHedefGrubu() ile atanır (kapasite aşımı yok).
+ */
+export function kapsamDisiNakilEngeli(k: Kayit, eski: Kayit, sonraki: Pick<Db, "gruplar" | "kayitlar" | "subeler" | "sezonlar">): Hata {
+  if (!surenKayitMi(eski)) return "Yalnızca süren (aktif / dondurulmuş) kayıt nakledilebilir.";
+  if (k.durum !== eski.durum) return "Nakille birlikte kayıt durumu değiştirilemez.";
+  const hedef = sonraki.subeler.find((s) => s.id === k.subeId);
+  if (!hedef) return "Hedef şube bulunamadı.";
+  if (!hedef.aktif) return "Pasif şubeye kayıt yapılamaz / nakledilemez.";
+  if (!sonraki.sezonlar.find((z) => z.id === k.sezonId)?.aktif) return "Yalnızca aktif sezonun kaydı başka şubeye nakledilebilir.";
+  const disi = (x: Kayit) => ({ ...x, subeId: "", grupId: "", grupGecmisi: [] });
+  if (!ayni(disi(k), disi(eski))) return "Başka şubeye nakilde kaydın diğer bilgileri değiştirilemez.";
+  const g = nakilHedefGrubu(sonraki, eski, k.subeId);
+  if (!g) return "Hedef şubede aynı seviyede boş kontenjanlı grup yok.";
+  if (k.grupId !== g.id) return "Nakilde grup, hedef şubenin uygun grubu olmalı.";
+  const son = k.grupGecmisi[k.grupGecmisi.length - 1];
+  if (k.grupGecmisi.length !== eski.grupGecmisi.length + 1 || JSON.stringify(k.grupGecmisi.slice(0, -1)) !== JSON.stringify(eski.grupGecmisi) || son?.grupId !== g.id)
+    return "Grup değişikliği grup geçmişine eklenmeli; geçmiş silinemez.";
+  return null;
 }
 
 const KILITLI_ALANLAR = ["ogrenciId", "sezonId", "sozlesmeNo", "tarih", "iceAktarmaId"] as const;
@@ -243,6 +300,17 @@ export function kayitYazmaEngeli(
       return "Öğrencinin bu sezonda zaten bir kaydı var; ek hizmetler mevcut kayda eklenir.";
   } else {
     if (eski.durum === "iptal" && !ayni(eski, k)) return "İptal edilen kayıt değiştirilemez.";
+    if (eski.durum === "mezun") {
+      // Tek istisna: KVKK anonimleştirmesinde (Bölüm 14) mezun kayıt da iptal edilir
+      const anonim = sonraki.ogrenciler.find((o) => o.id === k.ogrenciId);
+      if (!(k.durum === "iptal" && anonim && ogrenciAnonimMi(anonim) && ayni({ ...eski, durum: "iptal" }, k))) return "Mezun kayıt değiştirilemez.";
+    }
+    if (k.durum === "mezun" && eski.durum !== "mezun") {
+      if (!genel) return "Mezuniyet sezon geçişinde genel yönetici tarafından işaretlenir.";
+      const g = sonraki.gruplar.find((x) => x.id === k.grupId);
+      if (!g || g.seviye < EN_YUKSEK_SEVIYE) return `Yalnızca ${EN_YUKSEK_SEVIYE}. sınıf kaydı mezun olur.`;
+      if (!ayni({ ...eski, durum: "mezun" }, k)) return "Mezun işaretlenirken kaydın diğer bilgileri değiştirilemez.";
+    }
     for (const a of KILITLI_ALANLAR) if (eski[a] !== k[a]) return "Kaydın öğrencisi, sezonu, sözleşme numarası ve tarihi değiştirilemez.";
     if (eski.kvkkOnay && JSON.stringify(eski.kvkkOnay) !== JSON.stringify(k.kvkkOnay)) return "Alınmış KVKK onayı değiştirilemez.";
     const yerDegisti = eski.grupId !== k.grupId || eski.subeId !== k.subeId;
@@ -266,7 +334,7 @@ export function kayitYazmaEngeli(
   if (giriyor && !kapasiteOnaylayabilir(secenek.rol)) {
     const g = sonraki.gruplar.find((x) => x.id === k.grupId);
     if (g && grupAktifSayisi(sonraki, g.id) > g.kapasite)
-      return "Grubun kontenjanı dolu; kapasite aşımını yalnızca şube müdürü veya genel yönetici onaylayabilir.";
+      return "Grubun kontenjanı dolu; kapasite aşımını yalnızca sekreter, şube müdürü veya genel yönetici onaylayabilir.";
   }
   return null;
 }
@@ -275,8 +343,8 @@ export function kayitYazmaEngeli(
 /**
  * Öğrenci kartının yazılması.
  * - yeni kart aynı pakette bir kayıtla gelmeli (kayıtsız öğrenci hiçbir şubeye ait olmaz)
- * - notlar yalnızca başa eklenir; ayrılan öğrenci yeniden aktifleştirilmez
- * - "ayrıldı" yalnızca tüm kayıtları iptal edilince
+ * - notlar yalnızca başa eklenir
+ * - durum değişirse kayıtlarıyla uyumlu olmalı (ogrenciDurumu): ayrılan / mezun öğrenci yalnızca yeni kayıtla aktifleşir
  * - mükerrer öğrenci (aynı ad + veli telefonu) kurum genelinde engellenir
  * - KVKK anonimleştirmesi (Bölüm 14) yalnızca 14 yetkisiyle; anonim kart değiştirilemez
  */
@@ -302,9 +370,16 @@ export function ogrenciYazmaEngeli(
     if (o.durum !== "aktif") return "Yeni öğrenci aktif durumda açılır.";
   } else {
     if (!notlarBasaEklemeMi(eski.notlar, o.notlar)) return "Notlar silinemez veya değiştirilemez; yalnızca yeni not eklenir.";
-    if (eski.durum === "ayrildi" && o.durum === "aktif") return "Ayrılan öğrenci yeniden aktifleştirilemez.";
   }
-  if (o.durum === "ayrildi" && kayitlar.some((k) => k.durum !== "iptal")) return "İptal edilmemiş kaydı olan öğrenci 'ayrıldı' yapılamaz.";
+  if (!eski || eski.durum !== o.durum) {
+    const hesap = ogrenciDurumu(o.id, kayitlar);
+    if (o.durum !== hesap)
+      return o.durum === "aktif"
+        ? "Ayrılan / mezun öğrenci yalnızca yeni bir kayıtla yeniden aktif olur (öğrenci kartı → Yeniden kayıt)."
+        : hesap === "aktif"
+          ? "Süren kaydı olan öğrenci 'ayrıldı' / 'mezun' yapılamaz."
+          : "Öğrencinin durumu kayıtlarıyla uyumlu olmalı.";
+  }
   const kimlikDegisti = !eski || eski.ad !== o.ad || eski.soyad !== o.soyad || JSON.stringify(eski.veliIds) !== JSON.stringify(o.veliIds);
   if (kimlikDegisti) {
     const tel = o.veliIds.map((id) => sonraki.veliler.find((v) => v.id === id)?.telefon ?? "");
@@ -368,7 +443,7 @@ export function iptalPaketiMi(
   const iptalEdildi = yazilanKayitlar.some(
     (k) => k.ogrenciId === ogrenciId && k.durum === "iptal" && oncekiKayitlar.find((x) => x.id === k.id)?.durum !== "iptal",
   );
-  return iptalEdildi && iptalSonrasiOgrenciDurumu(ogrenciId, sonrakiKayitlar) === "ayrildi";
+  return iptalEdildi && ogrenciDurumu(ogrenciId, sonrakiKayitlar) !== "aktif";
 }
 
 /** Kayıt iptalinde adayın yeni hali: açık duruma döner, öğrenci bağı kalkar, sonraki aksiyon bugün, not eklenir */

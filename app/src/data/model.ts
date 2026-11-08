@@ -119,7 +119,8 @@ export type Ogrenci = {
   saglikNotu: string;
   veliIds: string[];
   birincilVeliId: string;
-  durum: "aktif" | "ayrildi";
+  /** mezun: son kaydı sezon geçişinde mezun oldu (Bölüm 04) */
+  durum: "aktif" | "ayrildi" | "mezun";
   notlar: { tarih: string; yazar: string; metin: string }[];
   iceAktarmaId?: string;
 };
@@ -131,7 +132,8 @@ export type Kayit = {
   subeId: string;
   grupId: string;
   sozlesmeNo: string;
-  durum: "aktif" | "dondurulmus" | "iptal";
+  /** mezun: en üst seviye, sezon geçişinde işaretlenir (Bölüm 01/04) */
+  durum: "aktif" | "dondurulmus" | "iptal" | "mezun";
   tarih: string;
   grupGecmisi: { grupId: string; tarih: string }[];
   ekHizmetler: string[];
@@ -807,7 +809,7 @@ export function personelAdi(d: Db, id: string) {
 }
 
 export function aktifKayit(d: Db, ogrenciId: string) {
-  return d.kayitlar.find((k) => k.ogrenciId === ogrenciId && k.sezonId === AKTIF_SEZON && k.durum !== "iptal");
+  return d.kayitlar.find((k) => k.ogrenciId === ogrenciId && k.sezonId === AKTIF_SEZON && k.durum !== "iptal" && k.durum !== "mezun");
 }
 
 export function grupOgrencileri(d: Db, grupId: string, _tarih?: string) {

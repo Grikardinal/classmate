@@ -41,6 +41,12 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-07 | Programda kullanılmış derslik / ders saati | **Sil + pasif** ikisi de olsun: kullanılmamış kayıt silinir, kullanılmış kayıt pasife alınır (geçmiş korunur, yeni programda seçilemez) | Bölüm 01 ek iş ✅ |
 | 2026-11-07 | Aday şube devri | Tek şubeden sorumlu müdür de adayı **başka şubeye devredebilir** (devirden sonra aday onun kapsamından çıkar) | Bölüm 03 ek iş ✅ |
 | 2026-11-07 | Kaydı iptal edilen öğrencinin adayı | Aday **yeniden açılır** (kayda dönüşmüş durumundan çıkar, "Görüşüldü") | Bölüm 04 ✅ |
+| 2026-11-07 | İptal sonrası geri dönen öğrenci | Yeni kart açılmaz; **mevcut kart üzerinden yeni kayıt** açılır | Bölüm 04 ek iş ✅ |
+| 2026-11-07 | Öğrenci nakli | Tek şubeye yetkili kullanıcı da öğrenciyi **başka aktif şubeye nakledebilir** | Bölüm 04 ek iş ✅ |
+| 2026-11-07 | Kapasite aşımı onayı | **Sekreter de** onaylayabilir | Bölüm 04 ek iş ✅ |
+| 2026-11-07 | Öğretmenin gördüğü öğrenci alanları | Personel notları ve doğum tarihi **görünür kalır** (değişiklik yok) | — |
+| 2026-11-07 | Sezon sonunda en üst seviye | Kaydı **"mezun"** olarak işaretlenir | Bölüm 04 ek iş ✅ |
+| 2026-11-07 | Yeniden açılan aday durumu | **"Görüşüldü"** kalır (değişiklik yok) | — |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

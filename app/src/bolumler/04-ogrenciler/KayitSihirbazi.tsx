@@ -44,6 +44,7 @@ import {
   telefonSahibiVeli,
   veliDogrula,
   yeniSozlesmeNo,
+  yenidenKayitEngeli,
 } from "./kurallar";
 import { bosVeli, tarihTR, type VeliForm } from "./ortak";
 
@@ -53,23 +54,34 @@ export function KayitSihirbazi() {
   const { ad: oturumAd, kapsam, rol } = useOturum();
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  // Mevcut karttan yeniden kayıt (karar 2026-11-07): süren kaydı olmayan öğrencinin kartı ve veli bağları hazır gelir
+  const mevcut = (() => {
+    const o = d.ogrenciler.find((x) => x.id === params.get("ogrenci"));
+    return o && !yenidenKayitEngeli(o, d.kayitlar) ? o : undefined;
+  })();
   // Kayda dönüşmüş veya anonimleştirilmiş aday ikinci kez kayda çevrilmez (Bölüm 03 · kesinKayitEngeli)
-  const aday = d.adaylar.find((a) => a.id === params.get("aday") && !kesinKayitEngeli(a));
+  const aday = mevcut ? undefined : d.adaylar.find((a) => a.id === params.get("aday") && !kesinKayitEngeli(a));
   // Yalnızca kapsamdaki aktif şubelere kayıt yapılır (pasif şubeye kayıt sunucuda da reddedilir)
   const subeler = tanimlar().subeler.filter((s) => s.aktif && kapsam.includes(s.id));
   const ilkSube = [aday?.subeId, seciliSube].find((id) => id && subeler.some((s) => s.id === id)) ?? subeler[0]?.id ?? "";
 
   const [adim, setAdim] = React.useState(0);
   const [ogr, setOgr] = React.useState(() => {
+    if (mevcut) {
+      const son = d.kayitlar.filter((k) => k.ogrenciId === mevcut.id).at(-1);
+      const seviye = d.gruplar.find((g) => g.id === son?.grupId)?.seviye ?? 5;
+      return { ad: mevcut.ad, soyad: mevcut.soyad, dogum: mevcut.dogum, cinsiyet: mevcut.cinsiyet, seviye, okul: mevcut.okul, okulSinifi: mevcut.okulSinifi, saglikNotu: mevcut.saglikNotu };
+    }
     const p = adSoyadBol((aday?.ogrenciAd ?? "").replace("—", ""));
     return { ad: p.ad, soyad: p.soyad, dogum: "", cinsiyet: "K" as "K" | "E", seviye: aday?.seviye ?? 5, okul: aday?.okul ?? "", okulSinifi: "", saglikNotu: "" };
   });
   const [veliler, setVeliler] = React.useState<VeliForm[]>(() => {
+    if (mevcut) return mevcut.veliIds.filter((id) => d.veliler.some((v) => v.id === id)).map((id) => ({ ...bosVeli(), mevcutId: id }));
     if (!aday) return [bosVeli()];
     const p = adSoyadBol(aday.veliAd);
     return [{ ...bosVeli(), ad: p.ad, soyad: p.soyad, telefon: aday.veliTelefon }];
   });
-  const [birincil, setBirincil] = React.useState(0);
+  const [birincil, setBirincil] = React.useState(() => Math.max(0, veliler.findIndex((v) => v.mevcutId && v.mevcutId === mevcut?.birincilVeliId)));
   const [subeId, setSubeId] = React.useState(ilkSube);
   const [grupId, setGrupId] = React.useState("");
   const [hizmetler, setHizmetler] = React.useState<string[]>([]);
@@ -87,7 +99,8 @@ export function KayitSihirbazi() {
   const veliTelefonu = (v: VeliForm) => (v.mevcutId ? d.veliler.find((x) => x.id === v.mevcutId)?.telefon ?? "" : v.telefon);
   const kardesler = [...new Set(veliler.map((v) => v.mevcutId).filter(Boolean))].flatMap((vid) => d.ogrenciler.filter((o) => o.veliIds.includes(vid!) && o.durum === "aktif"));
   // Mükerrer öğrenci: aynı ad (Türkçe harf duyarsız) + velilerden birinin telefonu
-  const mukerrerOgr = mukerrerOgrenci({ ad: ogr.ad, soyad: ogr.soyad }, veliler.map(veliTelefonu), d);
+  const mukerrerOgr = mukerrerOgrenci({ id: mevcut?.id, ad: ogr.ad, soyad: ogr.soyad }, veliler.map(veliTelefonu), d);
+  const mukerrerYenidenKayit = !!mukerrerOgr && !yenidenKayitEngeli(mukerrerOgr, d.kayitlar);
 
   React.useEffect(() => {
     if (kardesler.length && !indirimler.includes("Kardeş indirimi")) setIndirimler((x) => [...x, "Kardeş indirimi"]);
@@ -135,7 +148,7 @@ export function KayitSihirbazi() {
     if (a === "Şube ve grup") {
       if (!subeId) return "Kayıt yapılabilecek aktif şube yok.";
       if (!grupId || !secGrup) return "Grup seçin.";
-      if (dolu && !yonetici) return "Grup dolu; kapasite aşımını yalnızca şube müdürü veya genel yönetici onaylayabilir.";
+      if (dolu && !yonetici) return "Grup dolu; kapasite aşımını yalnızca sekreter, şube müdürü veya genel yönetici onaylayabilir.";
       if (dolu && !kapasiteOnay) return "Grup dolu; devam etmek için kapasite aşımını onaylayın.";
       return null;
     }
@@ -185,7 +198,7 @@ export function KayitSihirbazi() {
   const tamamla = () => {
     if (tumHata || !secGrup) return;
     const no = sozNo;
-    const ogrId = yeniId("o");
+    const ogrId = mevcut?.id ?? yeniId("o");
     const kayitId = yeniId("k");
     const veliIds: string[] = [];
     guncelle((x) => {
@@ -199,7 +212,14 @@ export function KayitSihirbazi() {
         x.veliler.push({ ...taslakVeli(v), id });
       }
       const birincilId = veliIds[Math.min(birincil, veliIds.length - 1)];
-      x.ogrenciler.push({ ...taslakOgrenci(), id: ogrId, veliIds: [birincilId, ...veliIds.filter((v) => v !== birincilId)], birincilVeliId: birincilId });
+      const veliBag = { veliIds: [birincilId, ...veliIds.filter((v) => v !== birincilId)], birincilVeliId: birincilId };
+      const t = taslakOgrenci();
+      if (mevcut)
+        // Yeniden kayıt: mevcut kart güncellenir (notlar korunur), öğrenci yeniden aktif olur
+        x.ogrenciler = x.ogrenciler.map((y) =>
+          y.id === mevcut.id ? { ...y, ad: t.ad, soyad: t.soyad, dogum: t.dogum, cinsiyet: t.cinsiyet, okul: t.okul, okulSinifi: t.okulSinifi, saglikNotu: t.saglikNotu, ...veliBag, durum: "aktif" } : y,
+        );
+      else x.ogrenciler.push({ ...t, id: ogrId, ...veliBag });
       x.kayitlar.push({
         id: kayitId, ogrenciId: ogrId, sezonId: AKTIF_SEZON, subeId, grupId, sozlesmeNo: no, durum: "aktif", tarih: BUGUN,
         grupGecmisi: [{ grupId, tarih: BUGUN }], ekHizmetler: hizmetler, kvkkOnay: { tarih: BUGUN, surum: KVKK_SURUM },
@@ -229,7 +249,7 @@ export function KayitSihirbazi() {
         <Link to="/ogrenciler" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft className="size-4" /> Öğrenciler
         </Link>
-        <PageHeader code="04" title="Yeni kayıt" description={aday ? `Ön kayıttan aktarılıyor: ${aday.veliAd}` : "Tek ekranda adım adım kayıt."} />
+        <PageHeader code="04" title="Yeni kayıt" description={mevcut ? `Mevcut karttan yeniden kayıt: ${tamAd(mevcut)}` : aday ? `Ön kayıttan aktarılıyor: ${aday.veliAd}` : "Tek ekranda adım adım kayıt."} />
       </div>
 
       <ol className="flex flex-wrap gap-2">
@@ -342,9 +362,12 @@ export function KayitSihirbazi() {
               )}
               {mukerrerOgr && (
                 <Alert tone="danger" icon={<AlertTriangle />}>
-                  Aynı ad ve veli telefonuyla kayıtlı bir öğrenci var.{" "}
-                  <Link className="font-medium underline" to={`/ogrenciler/${mukerrerOgr.id}`}>Mevcut kaydı aç</Link>
-                  . Öğrenci kurum genelinde tektir; başka şubeye geçiş için öğrenci kartındaki “Şube nakli”ni kullanın.
+                  Aynı ad ve veli telefonuyla kayıtlı bir öğrenci var. Öğrenci kurum genelinde tektir; yeni kart açılmaz.{" "}
+                  {mukerrerYenidenKayit ? (
+                    <><Link className="font-medium underline" to={`/ogrenciler/yeni?ogrenci=${mukerrerOgr.id}`}>Mevcut karttan yeniden kayıt</Link> (öğrencinin süren kaydı yok).</>
+                  ) : (
+                    <><Link className="font-medium underline" to={`/ogrenciler/${mukerrerOgr.id}`}>Mevcut kaydı aç</Link>; başka şubeye geçiş için öğrenci kartındaki “Şube nakli”ni kullanın.</>
+                  )}
                 </Alert>
               )}
               <p className="text-xs text-muted-foreground">
@@ -395,7 +418,7 @@ export function KayitSihirbazi() {
               )}
               {dolu && (
                 <Alert tone="warning" icon={<AlertTriangle />}>
-                  <p>Bu grubun kontenjanı dolu. Kapasite üstü kayıt yalnızca şube müdürü veya genel yönetici onayıyla yapılır.</p>
+                  <p>Bu grubun kontenjanı dolu. Kapasite üstü kayıt sekreter, şube müdürü veya genel yönetici onayıyla yapılır (işlem kaydına yazılır).</p>
                   {yonetici && (
                     <div className="mt-2"><Checkbox checked={kapasiteOnay} onChange={setKapasiteOnay} label="Kapasite aşımını onaylıyorum (işlem kaydına yazılır)" /></div>
                   )}

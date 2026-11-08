@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { ornekVeriUret, type Aday, type Db, type Kayit, type Ogrenci, type Veli } from "@/data/model";
 import { farkHesapla, farkUygula, type Degisiklik } from "@/data/fark";
 import { YetkiHatasi, okumaSuz, yazmaDenetle, type Aktor } from "../../../server/politika";
-import { adayYenidenAc } from "./kurallar";
+import { sezonGecisiPlani } from "../01-kurum-yapisi/kurallar";
+import { adayYenidenAc, ogrenciDurumu } from "./kurallar";
 
 const db = ornekVeriUret();
 const aktor = (kullaniciId: string, kaynak: Db = db): Aktor => {
@@ -74,8 +75,8 @@ describe("yeni kayıt (sihirbaz paketi)", () => {
     reddedilir(dene(sihirbaz({ kayit: { grupId: "g5" } })), /şubesine/);
     reddedilir(dene(sihirbaz({ kayit: { sezonId: "z1" } })), /sezonuna/);
   });
-  it("dolu gruba sekreter kayıt yapamaz; şube müdürü onaylayabilir", () => {
-    reddedilir(dene(sihirbaz({ kayit: { grupId: "g2" } }), GUL), /kontenjanı dolu/);
+  it("dolu gruba sekreter de, şube müdürü de kapasite aşımıyla kayıt yapabilir (karar 2026-11-07)", () => {
+    expect(dene(sihirbaz({ kayit: { grupId: "g2" } }), GUL)).not.toThrow();
     expect(dene(sihirbaz({ kayit: { grupId: "g2" } }), MUDUR_S1)).not.toThrow();
   });
   it("başka şubeye kayıt yazma kapsam dışıdır", () => {
@@ -128,20 +129,20 @@ describe("kayıt durumu, grup değişikliği ve nakil", () => {
     v.kayitlar = v.kayitlar.map((k) => (k.id === "k4" ? { ...k, durum: "iptal" } : k));
     v.ogrenciler = v.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "ayrildi" } : o));
     reddedilir(dene(kayitDegistir("k4", { durum: "aktif" }), YONETICI, v), /geri alınamaz/);
-    reddedilir(dene((x) => void (x.ogrenciler = x.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "aktif" } : o))), YONETICI, v), /yeniden aktifleştirilemez/);
+    reddedilir(dene((x) => void (x.ogrenciler = x.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "aktif" } : o))), YONETICI, v), /yalnızca yeni bir kayıtla/);
   });
   it("iptalde öğrenci 'ayrıldı' olmalı; iptal olmayan kaydı varken öğrenci ayrılamaz", () => {
     reddedilir(dene(kayitDegistir("k4", { durum: "iptal" })), /ayrıldı/);
-    reddedilir(dene((x) => void (x.ogrenciler = x.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "ayrildi" } : o)))), /İptal edilmemiş/);
+    reddedilir(dene((x) => void (x.ogrenciler = x.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "ayrildi" } : o)))), /Süren kaydı/);
   });
-  it("grup değişikliği grup geçmişine eklenmeli; dolu gruba sekreter geçiremez", () => {
+  it("grup değişikliği grup geçmişine eklenmeli; dolu gruba sekreter onayla geçirebilir", () => {
     reddedilir(dene(kayitDegistir("k4", { grupId: "g3" })), /grup geçmişine/);
     expect(dene(kayitDegistir("k4", { grupId: "g3", grupGecmisi: [...k4.grupGecmisi, { grupId: "g3", tarih: BUGUN }] }))).not.toThrow();
-    reddedilir(dene(kayitDegistir("k4", { grupId: "g2", grupGecmisi: [...k4.grupGecmisi, { grupId: "g2", tarih: BUGUN }] })), /kontenjanı dolu/);
+    expect(dene(kayitDegistir("k4", { grupId: "g2", grupGecmisi: [...k4.grupGecmisi, { grupId: "g2", tarih: BUGUN }] }))).not.toThrow();
   });
-  it("nakil iki şubede de yetki ister; grup yeni şubeye ait olmalı", () => {
+  it("nakil: eski hal kapsamda olmalı; grup yeni şubeye ait olmalı", () => {
     const nakil = { subeId: "s2", grupId: "g5", grupGecmisi: [...k4.grupGecmisi, { grupId: "g5", tarih: BUGUN }] };
-    reddedilir(dene(kayitDegistir("k4", nakil), GUL), /kapsam/);
+    reddedilir(dene(kayitDegistir("k4", nakil), GUL), /boş kontenjanlı grup yok/); // kapsam dışı: s2de 3. sınıf grubu yok
     reddedilir(dene(kayitDegistir(s2Kayit.id, { subeId: "s1", grupId: "g1", grupGecmisi: [...s2Kayit.grupGecmisi, { grupId: "g1", tarih: BUGUN }] }), GUL), /kapsam/);
     expect(dene(kayitDegistir("k4", nakil), aktor("u10"))).not.toThrow(); // s1 + s2 sekreteri
     reddedilir(dene(kayitDegistir("k4", { ...nakil, grupId: "g1" }), YONETICI), /şubesine/);
@@ -241,5 +242,105 @@ describe("kayıt iptali → aday yeniden açılır (karar 2026-11-07)", () => {
     v.kayitlar.push({ ...k4, id: "k-z3", sezonId: "z3", grupId: "g-z3", sozlesmeNo: "MRK-2027-0001", grupGecmisi: [{ grupId: "g-z3", tarih: BUGUN }] });
     const t = dene(kayitDegistir("k4", { durum: "iptal" }), YONETICI, v)();
     expect(t.koleksiyonlar.adaylar).toBeUndefined();
+  });
+});
+
+describe("ek kararlar (2026-11-07)", () => {
+  const iptalli = () => {
+    const v = structuredClone(db);
+    v.kayitlar = v.kayitlar.map((k) => (k.id === "k4" ? { ...k, durum: "iptal" } : k));
+    v.ogrenciler = v.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "ayrildi" } : o));
+    return v;
+  };
+  const yenidenKayit = (p: Partial<Kayit> = {}, ogrAktif = true) => (x: Db) => {
+    if (ogrAktif) x.ogrenciler = x.ogrenciler.map((o) => (o.id === "o3" ? { ...o, durum: "aktif" } : o));
+    x.kayitlar.push({ ...k4, id: "k-geri", sozlesmeNo: "MRK-2026-0950", tarih: BUGUN, durum: "aktif", grupGecmisi: [{ grupId: "g1", tarih: BUGUN }], kvkkOnay: { tarih: BUGUN, surum: "v1.2" }, ...p });
+  };
+  it("iptal sonrası geri dönen öğrenci: mevcut karta yeni kayıt açılır, öğrenci yeniden aktif olur", () => {
+    const v = iptalli();
+    const t = dene(yenidenKayit(), aktor("u9", v), v)();
+    expect(yaz<Ogrenci>(t, "ogrenciler")[0]).toMatchObject({ id: "o3", durum: "aktif" });
+    reddedilir(dene(yenidenKayit({}, false), aktor("u9", v), v), /“aktif” durumuna/); // kart aktifleşmeden
+    reddedilir(dene(yenidenKayit(), GUL), /zaten bir kaydı/); // süren kaydı varken aynı sezona ikinci kayıt
+  });
+  it("sekreter kapasite aşımını onaylayabilir; öğretmen hiçbir yoldan kayıt yazamaz", () => {
+    expect(dene(kayitDegistir("k4", { grupId: "g2", grupGecmisi: [...k4.grupGecmisi, { grupId: "g2", tarih: BUGUN }] }), GUL)).not.toThrow();
+    reddedilir(dene(kayitDegistir("k4", { durum: "dondurulmus" }), OGRETMEN), /yetkiniz yok/);
+  });
+  it("şube tanımları her personele görünür (nakil hedefi seçilebilsin); kapsam değişmez", () => {
+    expect(okumaSuz(db, GUL).subeler).toHaveLength(db.subeler.length);
+    expect(okumaSuz(db, GUL).gruplar.every((g) => g.subeId === "s1")).toBe(true);
+  });
+
+  describe("kapsam dışındaki aktif şubeye nakil", () => {
+    // k4'ü 7. sınıf grubuna alalım: s2'de 7. sınıf grubu g6 var (7/12)
+    const hazir = () => {
+      const v = structuredClone(db);
+      v.gruplar.push({ ...v.gruplar.find((g) => g.id === "g1")!, id: "g-s1-7", seviye: 7, ad: "7-X" });
+      v.kayitlar = v.kayitlar.map((k) => (k.id === "k4" ? { ...k, grupId: "g-s1-7", grupGecmisi: [{ grupId: "g-s1-7", tarih: "2026-09-05" }] } : k));
+      v.taksitler.push({ id: "tk-nakil", kayitId: "k4", ogrenciId: "o3", veliId: "v1", subeId: "s1", no: 1, vade: "2026-12-05", tutar: 1000, odenen: 0 });
+      return v;
+    };
+    const nakil = (p: Partial<Kayit> = {}, ek?: (x: Db) => void) => (x: Db) => {
+      x.kayitlar = x.kayitlar.map((k) => (k.id === "k4" ? { ...k, subeId: "s2", grupId: "", grupGecmisi: [...k.grupGecmisi, { grupId: "", tarih: BUGUN }], ...p } : k));
+      ek?.(x);
+    };
+    const islem = (subeId: string) => (x: Db) => void x.islemler.unshift({ id: "is-nakil", zaman: ZAMAN, kullanici: "", islem: "Şube nakli", detay: "", subeId });
+    it("tek şubeye yetkili sekreter nakleder; grup, geçmiş ve taksit devri sunucuda; öğrenci kapsamından çıkar", () => {
+      const v = hazir();
+      const t = dene(nakil({}, islem("s1")), aktor("u9", v), v)();
+      const [k] = yaz<Kayit>(t, "kayitlar");
+      expect(k).toMatchObject({ subeId: "s2", grupId: "g6" });
+      expect(k.grupGecmisi.at(-1)).toEqual({ grupId: "g6", tarih: BUGUN });
+      expect(yaz<{ id: string; subeId: string }>(t, "taksitler")).toContainEqual(expect.objectContaining({ id: "tk-nakil", subeId: "s2" }));
+      const sonra = farkUygula(v, t);
+      expect(okumaSuz(sonra, aktor("u9", sonra)).ogrenciler.some((o) => o.id === "o3")).toBe(false);
+      expect(okumaSuz(sonra, aktor("u2", sonra)).ogrenciler.some((o) => o.id === "o3")).toBe(true);
+    });
+    it("istisna yalnızca kayıt satırı içindir: işlem kaydı / taksit hedef şubeye yazılamaz", () => {
+      const v = hazir();
+      reddedilir(dene(nakil({}, islem("s2")), aktor("u9", v), v), /kapsam/);
+      reddedilir(dene(nakil({}, (x) => void (x.taksitler = x.taksitler.map((t) => (t.id === "tk-nakil" ? { ...t, subeId: "s2" } : t)))), aktor("u9", v), v), /kapsam/);
+    });
+    it("başka alan değişemez; pasif şube, dolu hedef, kapsam dışı eski hal reddedilir", () => {
+      const v = hazir();
+      reddedilir(dene(nakil({ ekHizmetler: ["Yaz okulu"] }), aktor("u9", v), v), /diğer bilgileri/);
+      reddedilir(dene(nakil({ subeId: "s3" }), aktor("u9", v), v), /Pasif/);
+      const dolu = hazir();
+      dolu.gruplar = dolu.gruplar.map((g) => (g.id === "g6" ? { ...g, kapasite: 7 } : g));
+      reddedilir(dene(nakil(), aktor("u9", dolu), dolu), /boş kontenjanlı/);
+      reddedilir(dene(kayitDegistir(s2Kayit.id, { subeId: "s1" }), GUL), /kapsam/);
+    });
+  });
+
+  describe("sezon geçişinde mezuniyet", () => {
+    it("Bölüm 01 sezon geçişi paketi: 8. sınıf kaydı ve öğrencisi mezun olur, diğerleri yeni sezona taşınır", () => {
+      const g4 = db.kayitlar.filter((k) => k.grupId === "g4");
+      const t = dene((x) => {
+        const plan = sezonGecisiPlani(x, "z2", "z3", true, (p) => `${p}-gecis-${Math.random().toString(36).slice(2, 8)}`);
+        x.gruplar.push(...plan.gruplar);
+        x.kayitlar.push(...plan.kayitlar);
+        const mezun = new Map(plan.mezunlar.map((k) => [k.id, k]));
+        x.kayitlar = x.kayitlar.map((k) => mezun.get(k.id) ?? k);
+        const ids = new Set(plan.mezunlar.map((k) => k.ogrenciId));
+        x.ogrenciler = x.ogrenciler.map((o) => (ids.has(o.id) ? { ...o, durum: ogrenciDurumu(o.id, x.kayitlar) } : o));
+      }, YONETICI)();
+      const mezunlar = yaz<Kayit>(t, "kayitlar").filter((k) => k.durum === "mezun");
+      expect(mezunlar.map((k) => k.id).sort()).toEqual(g4.map((k) => k.id).sort());
+      expect(yaz<Ogrenci>(t, "ogrenciler").every((o) => o.durum === "mezun")).toBe(true);
+    });
+    it("mezuniyeti yalnızca genel yönetici işaretler; öğrenci durumu uyumlu olmalı; mezun geri alınamaz", () => {
+      const g4 = db.kayitlar.find((k) => k.grupId === "g4")!;
+      const mezunEt = (ogr: boolean) => (x: Db) => {
+        kayitDegistir(g4.id, { durum: "mezun" })(x);
+        if (ogr) x.ogrenciler = x.ogrenciler.map((o) => (o.id === g4.ogrenciId ? { ...o, durum: "mezun" } : o));
+      };
+      expect(dene(mezunEt(true), YONETICI)).not.toThrow();
+      reddedilir(dene(mezunEt(true), MUDUR_S1), /genel yönetici/);
+      reddedilir(dene(mezunEt(false), YONETICI), /mezun/);
+      const v = structuredClone(db);
+      mezunEt(true)(v);
+      reddedilir(dene(kayitDegistir(g4.id, { durum: "aktif" }), YONETICI, v), /geri alınamaz/);
+    });
   });
 });

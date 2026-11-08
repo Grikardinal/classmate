@@ -8,16 +8,22 @@
  *
  * İş kuralları: kurallar.ts (ekran ve sunucu ortak; sunucu: server/politika.ts · kayitDenetle)
  */
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { KayitSihirbazi } from "./KayitSihirbazi";
 import { OgrenciKarti } from "./OgrenciKarti";
 import { OgrenciListesi } from "./OgrenciListesi";
+
+/** ?ogrenci= / ?aday= değişince sihirbaz baştan kurulur (mükerrer uyarısındaki "yeniden kayıt" bağlantısı) */
+function SihirbazSayfasi() {
+  const { search } = useLocation();
+  return <KayitSihirbazi key={search} />;
+}
 
 export default function Ogrenciler() {
   return (
     <Routes>
       <Route index element={<OgrenciListesi />} />
-      <Route path="yeni" element={<KayitSihirbazi />} />
+      <Route path="yeni" element={<SihirbazSayfasi />} />
       <Route path=":id" element={<OgrenciKarti />} />
     </Routes>
   );

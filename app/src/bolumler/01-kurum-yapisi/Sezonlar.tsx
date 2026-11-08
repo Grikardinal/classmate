@@ -5,6 +5,7 @@ import { useOturum } from "@/context/AppContext";
 import { grupDoluluk, grupEtiket, guncelle, islemYaz, useDb, yeniId } from "@/data/store";
 import { EN_YUKSEK_SEVIYE, grupAdiGecisi, sezonDogrula, sezonGecisEngeli, sezonGecisHedefleri, sezonGecisiPlani } from "./kurallar";
 import { HataMetni, tarihGoster, useGenel } from "./ortak";
+import { ogrenciDurumu } from "../04-ogrenciler/kurallar";
 
 const BOS_FORM = { ad: "", baslangic: "", bitis: "" };
 
@@ -108,9 +109,14 @@ function SezonGecisi({ onClose }: { onClose: () => void }) {
       const plan = sezonGecisiPlani(x, kaynak.id, hedef, ogrenciTasi, yeniId);
       x.gruplar.push(...plan.gruplar);
       x.kayitlar.push(...plan.kayitlar);
+      // En üst seviye mezun olur; başka sürmekte olan kaydı yoksa öğrenci de "mezun" (Bölüm 04 · ogrenciDurumu)
+      const mezun = new Map(plan.mezunlar.map((k) => [k.id, k]));
+      x.kayitlar = x.kayitlar.map((k) => mezun.get(k.id) ?? k);
+      const mezunOgr = new Set(plan.mezunlar.map((k) => k.ogrenciId));
+      x.ogrenciler = x.ogrenciler.map((o) => (mezunOgr.has(o.id) ? { ...o, durum: ogrenciDurumu(o.id, x.kayitlar) } : o));
       if (aktifYap) x.sezonlar = x.sezonlar.map((s) => ({ ...s, aktif: s.id === hedef }));
       sonuc = { grup: plan.gruplar.length, ogrenci: plan.kayitlar.length };
-      islemYaz(x, ad, "Sezon geçişi", `${kaynak.ad} → ${hedefAd}: ${sonuc.grup} grup, ${sonuc.ogrenci} öğrenci`);
+      islemYaz(x, ad, "Sezon geçişi", `${kaynak.ad} → ${hedefAd}: ${sonuc.grup} grup, ${sonuc.ogrenci} öğrenci, ${plan.mezunlar.length} mezun`);
     });
     toast(`Sezon geçişi tamamlandı: ${sonuc.grup} grup${ogrenciTasi ? `, ${sonuc.ogrenci} öğrenci` : ""}.`);
     onClose();
@@ -148,6 +154,7 @@ function SezonGecisi({ onClose }: { onClose: () => void }) {
           </div>
           <Checkbox checked={ogrenciTasi} onChange={setOgrenciTasi} label="Aktif öğrencilerin kayıtlarını yeni gruplara taşı" description="Yeni sözleşme numarası verilir. Ödeme planı ve KVKK onayı yeni sezonda yeniden alınmalıdır." />
           <Checkbox checked={aktifYap} onChange={setAktifYap} label="Hedef sezonu aktif sezon yap" />
+          <p className="text-xs text-muted-foreground">{EN_YUKSEK_SEVIYE}. sınıf gruplarındaki kayıtlar “mezun” olarak işaretlenir; mezun kayıt geri alınamaz.</p>
         </>
       )}
     </Dialog>

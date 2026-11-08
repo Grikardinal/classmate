@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { aktifKayit, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Veli } from "../src/data/model";
+import { aktifKayit, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Veli } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -37,8 +37,10 @@ import {
   adayYenidenAcmaEngeli,
   bagliAday,
   iptalPaketiMi,
-  iptalSonrasiOgrenciDurumu,
+  kapsamDisiNakilEngeli,
   kayitYazmaEngeli,
+  nakilHedefGrubu,
+  ogrenciDurumu,
   ogrenciAnonimMi,
   ogrenciYazmaEngeli,
   veliAnonimMi,
@@ -140,6 +142,8 @@ export function okumaSuz(db: Db, a: Aktor): Db {
     if (k === "kullanicilar" && !yetki(db, a, "02")) return s.id === a.kullanici.id;
     // Aday kişisel verisi (KVKK): yalnızca ön kayıt (03) veya kesin kayıt (04) yetkisi olan görür
     if (k === "adaylar" && !genel && !yetki(db, a, "03") && !yetki(db, a, "04")) return false;
+    // Şube tanımları kişisel veri içermez; nakil / devir hedefi seçilebilsin diye her personel görür (kapsam değişmez)
+    if (k === "subeler") return true;
     if (k === "islemler" && !s.subeId) return genel;
     if (k === "giderler" && s.subeId === "merkez") return genel;
     const l = satirSubeleri(db, k, s);
@@ -247,7 +251,9 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
       if (eski && !kapsamda(satirSubeleri(onceki, k, eski), k)) hata("Bu kayıt şube kapsamınız dışında.");
       // Tek istisna (karar 2026-11-07): kapsamdaki adayın kapsam dışındaki şubeye devri; ayrıntı onKayitDenetle · adayDevirEngeli
       const adayDevri = k === "adaylar" && !!eski && eski.subeId !== s.subeId && !!s.subeId;
-      if (!adayDevri && !kapsamda(satirSubeleri(sonrakiDb, k, s), k)) hata("Kayıt şube kapsamınız dışında.");
+      // İkinci istisna (karar 2026-11-07): kapsamdaki kaydın kapsam dışındaki aktif şubeye nakli; ayrıntı kayitDenetle · kapsamDisiNakilEngeli
+      const kayitNakli = k === "kayitlar" && !!eski && eski.subeId !== s.subeId && !!s.subeId;
+      if (!adayDevri && !kayitNakli && !kapsamda(satirSubeleri(sonrakiDb, k, s), k)) hata("Kayıt şube kapsamınız dışında.");
 
       switch (k) {
         case "islemler":
@@ -299,6 +305,16 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
             s.sorumluId = varsayilanSorumlu(sonrakiDb.personel, String(s.subeId)) ?? s.sorumluId;
           if (eski && Array.isArray(s.notlar) && Array.isArray(eski.notlar))
             s.notlar = (s.notlar as Aday["notlar"]).map((n, i) => (i < (eski.notlar as unknown[]).length ? n : { ...n, yazar: ad, tarih: zaman }));
+          break;
+        case "kayitlar":
+          // Kapsam dışına nakil: ekran hedef şubenin gruplarını göremez; grubu sunucu atar (aynı seviye, boş kontenjan)
+          if (eski && eski.subeId !== s.subeId && !genel && !kap.has(String(s.subeId))) {
+            const g = nakilHedefGrubu(sonrakiDb, eski as unknown as Kayit, String(s.subeId));
+            if (g) {
+              s.grupId = g.id;
+              s.grupGecmisi = [...((eski.grupGecmisi as Kayit["grupGecmisi"]) ?? []), { grupId: g.id, tarih: zaman.slice(0, 10) }];
+            }
+          }
           break;
         case "veliler":
           // Ayrıntılı kurallar: kayitDenetle() (Bölüm 04). Telefon tek biçime çevrilir (veli portalı girişi telefonla eşleşir).
@@ -358,7 +374,10 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
  * - öğrenci: alan kuralları, kayıtla birlikte oluşturulur, notlar yalnızca eklenir, mükerrer öğrenci kurum genelinde engellenir,
  *   "ayrıldı" yalnızca tüm kayıtlar iptal edilince; KVKK anonimleştirmesi yalnızca 14 yetkisiyle
  * - kayıt: benzersiz sözleşme no (şube koduyla), aktif şube, grubun şube/sezon uyumu, aktif sezon (genel yönetici hariç),
- *   sezonda tek ana kayıt, durum geçişi (iptal geri alınamaz), grup geçmişi yalnızca eklenir, kapasite aşımı yalnızca yönetici
+ *   sezonda tek ana kayıt, durum geçişi (iptal ve mezuniyet geri alınamaz; mezuniyeti genel yönetici işaretler), grup geçmişi
+ *   yalnızca eklenir, kapasite aşımını sekreter / şube müdürü / genel yönetici onaylar
+ * - öğrencinin durumu kayıtlarıyla uyumlu olmalı (ogrenciDurumu); ayrılan / mezun öğrenci mevcut karttan yeni kayıtla aktifleşir
+ * - kapsam dışındaki aktif şubeye nakil (karar 2026-11-07): kapsamDisiNakilEngeli; grup ve kalan taksit devri sunucudan
  * - kayıt iptali öğrencinin son kaydıysa bağlı aday aynı pakette yeniden açılır (karar 2026-11-07; aday başka şubede olsa da)
  * Şube kapsamı (nakilde eski ve yeni şube) yazmaDenetle() içinde denetlenir. `temiz` yerinde güncellenir.
  */
@@ -406,15 +425,34 @@ export function kayitDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Akto
 
   for (const v of veliYaz) reddet(veliYazmaEngeli(v, onceki.veliler.find((x) => x.id === v.id), son, { kvkkYetkisi }));
   for (const o of ogrYaz) reddet(ogrenciYazmaEngeli(o, onceki.ogrenciler.find((x) => x.id === o.id), son, { kvkkYetkisi, bugun }));
-  for (const k of kayitYaz) reddet(kayitYazmaEngeli(k, onceki.kayitlar.find((x) => x.id === k.id), son, { rol: a.kullanici.rol }));
+  const genel = a.kullanici.rol === "genel-yonetici";
+  const kap = kapsam(onceki, a.kullanici);
+  for (const k of kayitYaz) {
+    const eski = onceki.kayitlar.find((x) => x.id === k.id);
+    // Kapsam dışındaki aktif şubeye nakil: yalnızca şube/grup/grup geçmişi değişir, grup sunucuca atanır, kontenjan aşılmaz
+    if (eski && eski.subeId !== k.subeId && !genel && !kap.includes(k.subeId)) {
+      reddet(kapsamDisiNakilEngeli(k, eski, son));
+      // Kalan taksitler yeni şubeye devredilir (ekran kapsam dışına taksit yazamaz; devri sunucu ekler)
+      const tk = (K.taksitler ??= { yaz: [], sil: [] });
+      for (const t of onceki.taksitler)
+        if (t.kayitId === k.id && taksitKalan(t) > 0 && t.subeId !== k.subeId && !tk.yaz.some((x) => x.id === t.id)) tk.yaz.push({ ...t, subeId: k.subeId } as unknown as Satir);
+    }
+    reddet(kayitYazmaEngeli(k, eski, son, { rol: a.kullanici.rol }));
+  }
+  // Öğrencinin durumu kayıtlarıyla uyumlu olmalı (iptal → ayrıldı, mezuniyet → mezun, yeniden kayıt → aktif)
+  for (const id of new Set(kayitYaz.map((k) => k.ogrenciId))) {
+    const o = son.ogrenciler.find((x) => x.id === id);
+    const hesap = ogrenciDurumu(id, son.kayitlar);
+    if (o && !ogrenciAnonimMi(o) && o.durum !== hesap)
+      reddet(`Öğrencinin durumu kayıtlarıyla uyumlu olmalı: “${{ aktif: "aktif", ayrildi: "ayrıldı", mezun: "mezun" }[hesap]}” durumuna alınmalı.`);
+  }
 
-  // 2) Kayıt iptali: öğrenci ayrılır, bağlı aday yeniden açılır
+  // 2) Kayıt iptali: bağlı aday yeniden açılır
   const ad = `${a.personel.ad} ${a.personel.soyad}`;
   for (const k of kayitYaz) {
     if (k.durum !== "iptal" || onceki.kayitlar.find((x) => x.id === k.id)?.durum === "iptal") continue;
     if (!iptalPaketiMi(k.ogrenciId, onceki.kayitlar, kayitYaz, son.kayitlar)) continue;
     const o = son.ogrenciler.find((x) => x.id === k.ogrenciId);
-    if (o && o.durum !== iptalSonrasiOgrenciDurumu(o.id, son.kayitlar)) reddet("Tüm kayıtları iptal edilen öğrenci “ayrıldı” durumuna alınmalı.");
     if (!o || ogrenciAnonimMi(o)) continue; // KVKK silmesinde aday takibe açılmaz
     const aday = bagliAday(k.ogrenciId, onceki.adaylar);
     if (!aday) continue;

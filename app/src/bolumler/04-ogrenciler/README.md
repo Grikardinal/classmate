@@ -20,8 +20,8 @@ kayıt şubeye bağlıdır. Kurallar ekranda anında gösterilir, sunucu aynı k
 | `KayitIslemleri.tsx` | Grup değişikliği, şube nakli, kayıt iptali pencereleri |
 | `ortak.tsx` | Tarih biçimi, kayıt durumu rozeti, veli formu tipi |
 | `kurallar.ts` | **Saf iş kuralları** (ekran + sunucu ortak; yalnızca göreli içe aktarma) |
-| `kurallar.test.ts` | Saf kural testleri (24) |
-| `sunucu.test.ts` | `server/politika.ts · yazmaDenetle → kayitDenetle` ve `okumaSuz` testleri (26) |
+| `kurallar.test.ts` | Saf kural testleri (29) |
+| `sunucu.test.ts` | `server/politika.ts · yazmaDenetle → kayitDenetle` ve `okumaSuz` testleri (34) |
 
 Sunucu: `app/server/politika.ts` içinde `kayitDenetle()` (yazmaDenetle sonunda, `onKayitDenetle`'den önce çağrılır),
 `veliler` / `ogrenciler` satırlarının sunucu temizliği ve `satirSubeleri()` içindeki öğrenci kapsamı.
@@ -50,18 +50,33 @@ Sunucu: `app/server/politika.ts` içinde `kayitDenetle()` (yazmaDenetle sonunda,
 - Var olan velinin telefonu başka bir veliye ait numaraya çevrilemez.
 
 ### Kayıt
-- Durumlar: `aktif`, `dondurulmus`, `iptal`. Yeni kayıt aktif açılır; aktif ⇄ dondurulmuş serbest; her ikisinden iptal;
-  **iptal geri alınamaz** ve iptal edilen kayıt hiçbir alanıyla değiştirilemez. "Mezun" ayrı durum değildir (sezon geçişinde
-  en üst seviye yeni sezona taşınmaz, Bölüm 01); "nakil" ayrı durum değildir (kayıt bozulmadan şube + grup değişir).
+- Durumlar: `aktif`, `dondurulmus`, `iptal`, `mezun`. Yeni kayıt aktif açılır; aktif ⇄ dondurulmuş serbest; her ikisinden iptal;
+  **iptal ve mezuniyet geri alınamaz**, bu kayıtlar hiçbir alanıyla değiştirilemez (tek istisna: KVKK anonimleştirmesinde mezun kayıt da iptal edilir).
+  "Nakil" ayrı durum değildir (kayıt bozulmadan şube + grup değişir).
+- **Mezuniyet (karar 2026-11-07):** sezon geçişinde (Bölüm 01 · `sezonGecisiPlani().mezunlar`) en üst seviye (8. sınıf) gruplarının
+  aktif/dondurulmuş kayıtları "mezun" olur; öğrenci taşınsın taşınmasın. Sunucu: yalnızca genel yönetici, yalnızca 8. sınıf grubunun kaydı,
+  başka alan değişmeden. Mezun kayıt doluluğa ve `aktifKayit()`'a sayılmaz.
+- **Öğrenci durumu kayıtlarından çıkar** (`ogrenciDurumu`): süren (aktif/dondurulmuş) kaydı varsa "aktif", yoksa mezun kaydı varsa "mezun",
+  yoksa "ayrıldı". Kaydı değişen öğrencinin durumu bununla uyumlu değilse sunucu paketi reddeder. Öğrenci kartı mezun/ayrıldı rozetini gösterir.
+- **Mevcut karttan yeniden kayıt (karar 2026-11-07):** süren kaydı olmayan (ayrılmış / mezun), anonim olmayan öğrencinin kartında
+  "Yeniden kayıt" düğmesi sihirbazı `?ogrenci=` ile açar; öğrenci bilgileri ve veli bağları hazır gelir, yeni kart açılmaz, kart güncellenir
+  ve öğrenci yeni kayıtla yeniden "aktif" olur. Sihirbazdaki mükerrer uyarısı süren kaydı olmayan karta "Mevcut karttan yeniden kayıt"
+  bağlantısı verir. Sezonda tek süren/mezun ana kayıt kuralı aynen geçerli (iptal edilen kaydın sezonuna yeniden kayıt olur).
 - Kaydın öğrencisi, sezonu, sözleşme numarası, tarihi ve içe aktarma bağı değişmez; alınmış KVKK onayı değişmez.
 - Atama: şube var ve **aktif**, grup var, grubun şubesi ve sezonu kaydınkiyle aynı. Yeni kayıt yalnızca **aktif sezona**
   (sezon geçişi için genel yönetici hariç). Bir öğrencinin sezonda tek ana kaydı olur.
 - Grup değişikliği / nakil grup geçmişine bir satır ekler; geçmiş silinemez. İptal ederken grup/şube değiştirilemez.
-- Nakil: hedef şube aktif ve kullanıcının kapsamında olmalı (sunucu eski ve yeni şubeyi denetler); kalan taksitler yeni
-  şubeye geçer, ödenmiş tutarlar eski şubede kalır.
-- **Kapasite:** gruba yeni giren aktif öğrenci (yeni kayıt, grup değişikliği/nakil, dondurmadan dönüş) kontenjanı aşarsa
-  yalnızca **şube müdürü veya genel yönetici** onaylayabilir (ekrandaki "yönetici onayı" artık gerçekten yöneticiye bağlı;
-  onay kutusu sekretere gösterilmez). Dondurulmuş kayıt doluluğa sayılmaz.
+- Nakil: hedef şube aktif olmalı; kalan taksitler yeni şubeye geçer, ödenmiş tutarlar eski şubede kalır. Hedef kapsamdaysa
+  kullanıcı grubu seçer (sunucu eski ve yeni hali denetler).
+- **Kapsam dışındaki aktif şubeye nakil (karar 2026-11-07)**, Bölüm 03 aday devri deseniyle: `yazmaDenetle` yalnızca kayıt
+  satırında yeni halin kapsamını atlar (`kayitNakli`), eski hal kapsamda olmalı. `kapsamDisiNakilEngeli`: kayıt sürüyor ve aktif sezonda,
+  hedef şube aktif, kayıtta yalnızca şube / grup / grup geçmişi (sona bir satır) değişir. Ekran hedef şubenin gruplarını göremediği için
+  grubu **sunucu atar** (`nakilHedefGrubu`: aynı seviye, boş kontenjanlı, en boş grup; yoksa ret — kapsam dışına kapasite aşımı yok).
+  Kalan taksitlerin devrini de sunucu ekler; paketin diğer koleksiyonlarında (işlem kaydı, taksit, gönderim) kapsam denetimi aynen
+  geçerlidir, işlem kaydı devreden şubeye yazılır. Ekran "nakilden sonra bu öğrenciyi göremeyeceksiniz" uyarısını onaylatır, sonra
+  veriyi yeniden yükler. Şube tanımları (kişisel veri yok) artık her personele görünür, böylece hedef seçilebilir; kapsam değişmez.
+- **Kapasite (karar 2026-11-07):** gruba yeni giren aktif öğrenci (yeni kayıt, grup değişikliği/nakil, dondurmadan dönüş) kontenjanı
+  aşarsa **sekreter, şube müdürü veya genel yönetici** onaylar (onay işlem kaydına yazılır). Dondurulmuş kayıt doluluğa sayılmaz.
 - **Seviye uyumu:** öğrenci modelinde seviye alanı yok, seviye grubun seviyesidir. Sihirbaz farklı seviyede grup seçilince uyarır (engel değil).
 - **Sözleşme numarası:** `ŞUBEKODU-YIL-SIRA` (örn. `MRK-2026-0042`); yıl **sezonun başlangıç yılı**; şube koduyla başlamalı ve
   kurum genelinde benzersiz. Ekran nakledilmiş kayıtları göremediği için aynı numarayı üretirse sunucu yeni kayda sıradaki
@@ -106,12 +121,15 @@ Sunucu: `app/server/politika.ts` içinde `kayitDenetle()` (yazmaDenetle sonunda,
 - Kaydı olmayan öğrenci kartı tüm kullanıcılara "kurum geneli" olarak görünüyordu.
 
 ## Testler
-- `kurallar.test.ts` (24): ad anahtarı ve mükerrer, veli eşleştirme/birleştirme, alan kuralları, notlar, sözleşme no,
-  grup/şube/sezon atama, kapasite, durum geçişleri, kayıt satırı, aday yeniden açma, ödeme planı girdisi.
-- `sunucu.test.ts` (26): sihirbaz paketi, başka şubedeki mükerrer öğrenci, başka şubedeki veliye bağlama, sözleşme no çakışması,
-  pasif şube / başka şube grubu / aktif olmayan sezon, kapasite (sekreter ↔ şube müdürü), iptal geri alınamaz, grup geçmişi,
-  nakilde iki şube kapsamı, not yazarı, kayıtsız öğrencinin görünürlüğü, KVKK anonimleştirme, Excel içe aktarma paketi,
-  kayıt iptalinde adayın yeniden açılması (ekran göndermese de, modül kapalıyken, aday başka şubedeyken; iptalsiz geri alma yasak).
+- `kurallar.test.ts` (29): ad anahtarı ve mükerrer, veli eşleştirme/birleştirme, alan kuralları, notlar, sözleşme no,
+  grup/şube/sezon atama, kapasite, durum geçişleri, kayıt satırı, aday yeniden açma, ödeme planı girdisi;
+  ek kararlar: öğrenci durumu (aktif/mezun/ayrıldı), yeniden kayıt, mezuniyet, nakil hedef grubu, kapsam dışına nakil.
+- `sunucu.test.ts` (34): sihirbaz paketi, başka şubedeki mükerrer öğrenci, başka şubedeki veliye bağlama, sözleşme no çakışması,
+  pasif şube / başka şube grubu / aktif olmayan sezon, kapasite (sekreter onaylar, öğretmen yazamaz), iptal geri alınamaz, grup geçmişi,
+  not yazarı, kayıtsız öğrencinin görünürlüğü, KVKK anonimleştirme, Excel içe aktarma paketi, kayıt iptalinde adayın yeniden açılması;
+  ek kararlar: mevcut karttan yeniden kayıt, şube tanımlarının görünürlüğü, kapsam dışına nakil (sunucu grup + taksit devri, öğrenci
+  kapsamdan çıkar; işlem kaydı / taksit hedefe yazılamaz; başka alan, pasif şube, dolu hedef reddedilir), Bölüm 01 sezon geçişi paketiyle
+  mezuniyet, mezuniyetin yetkisi ve geri alınamazlığı.
 - Bölüm 03 `sunucu.test.ts` kesin kayıt paketindeki sözleşme no örneği şube koduyla başlayacak biçimde güncellendi (`TEST-1` → `MRK-2026-9001`).
 
 ## Bilinen sınırlar
@@ -119,16 +137,18 @@ Sunucu: `app/server/politika.ts` içinde `kayitDenetle()` (yazmaDenetle sonunda,
 - Sihirbaz kayıt formunu ekrandaki numarayla hemen yazdırır; nadir bir çakışmada (nakledilmiş kaydın numarası) sunucu numarayı değiştirir,
   doğru form öğrenci kartı → Belgeler'den yeniden yazdırılmalı.
 - Yeniden açılan aday için "yinelenen açık aday" denetimi yapılmaz (aynı çocuk için açık başka aday varsa iki açık aday olur).
-- Bölüm 14 Excel içe aktarma sözleşme yılını `2026` sabitiyle üretir ve kapasiteyi denetlemez; sunucu artık kapasiteyi denetlediği için
-  14 yetkili yönetici olmayan biri dolu gruba aktaramaz. (Bölüm 14'ün işi; burada değiştirilmedi.)
+- Bölüm 14 Excel içe aktarma sözleşme yılını `2026` sabitiyle üretir ve kapasiteyi denetlemez (Bölüm 14'ün işi; burada değiştirilmedi).
+- Kapsam dışına nakilde hedef grup otomatik seçilir (aynı seviye, en boş); kullanıcı grubu seçemez, hedef şube sonra grubu değiştirebilir.
+- Öğrenci listesi yalnızca aktif sezonu gösterir; sezon geçişinden sonra eski sezonun mezun kayıtları listede değil, öğrenci kartında görünür.
 - Kayıt durumu değişiklikleri (dondurma/aktifleştirme) için ayrı tarihçe tutulmaz; yalnızca işlem kaydına yazılır.
 - Kardeş indirimi kardeş eşleşmesi yalnızca ekranın gördüğü velilerle yapılır (fiyat modeli Bölüm 05).
 
 ## Açık sorular
-1. **Ayrılan öğrencinin yeniden kaydı:** iptal edilen öğrenci tekrar gelirse mevcut kart nasıl yeniden açılsın? Şu an kart "ayrıldı"da kalır,
-   mükerrer kontrolü yeni kart açılmasını engeller; yeniden kayıt için bir "yeniden kaydet" akışı gerekiyor.
-2. **Kapsam dışına nakil:** Bölüm 03'teki aday devri gibi, tek şubeye yetkili kullanıcı öğrenciyi başka şubeye nakledebilsin mi? Şu an iki şubede de yetki gerekir.
-3. **Kapasite onayı:** kapasite aşımını sekreter de onaylayabilmeli mi, yoksa yalnızca şube müdürü/genel yönetici mi (şu anki uygulama)?
-4. **Öğretmen görünürlüğü:** öğretmen öğrencinin personel notlarını ve doğum tarihini görmeli mi? Şu an görüyor (sağlık notu güvenlik gereği açık kalmalı).
-5. **Mezun durumu:** sezon sonunda en üst seviyedeki öğrencinin kaydı "mezun" olarak işaretlensin mi (şu an kayıt aktif kalır, yeni sezona taşınmaz)?
-6. Yeniden açılan aday için "Görüşüldü" yerine başka bir durum (ör. yeni bir "Ayrıldı" aşaması) istenir mi?
+Şu an açık soru yok. Kapanan sorular:
+
+1. **Ayrılan öğrencinin yeniden kaydı:** Kapandı (2026-11-07): yeni kart açılmaz, mevcut karttan yeniden kayıt (uygulandı).
+2. **Kapsam dışına nakil:** Kapandı (2026-11-07): tek şubeye yetkili kullanıcı da başka aktif şubeye nakleder (uygulandı).
+3. **Kapasite onayı:** Kapandı (2026-11-07): sekreter de onaylayabilir (uygulandı).
+4. **Öğretmen görünürlüğü:** Kapandı (2026-11-07): değişiklik yok, öğretmen personel notlarını ve doğum tarihini görmeye devam eder.
+5. **Mezun durumu:** Kapandı (2026-11-07): sezon geçişinde en üst seviye kaydı "mezun" olur (uygulandı).
+6. **Yeniden açılan adayın durumu:** Kapandı (2026-11-07): değişiklik yok, "Görüşüldü" kalır.
