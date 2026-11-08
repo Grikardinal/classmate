@@ -1,0 +1,293 @@
+/**
+ * Bölüm 06 · Ders programı: saf iş kuralları.
+ * Ekran (index.tsx ve alt dosyalar) ve sunucu (server/politika.ts · programDenetle) aynı kuralları kullanır.
+ * Sunucu da içe aktardığı için burada yalnızca göreli içe aktarma kullanılır.
+ * Hata dönen fonksiyonlar Türkçe mesaj, sorun yoksa null döndürür.
+ */
+import type { Db, Iptal, Personel, ProgramSatiri, Tatil } from "../../data/model";
+import { cakismaBul, dakika, haftaGunu, subeGecisUyarisi, tarihEkle, type Cakisma, type Slot } from "../../lib/kurallar";
+import { programAtamaEngeli, tanimAktif, type Hata } from "../01-kurum-yapisi/kurallar";
+
+type Tanimlar = Pick<Db, "gruplar" | "dersSaatleri">;
+type Kayitlar = Pick<Db, "yoklamalar" | "iptaller">;
+
+export const OGRETMEN_SECILMELI = "Öğretmen seçilmeli.";
+
+/* ---------- Tarih ---------- */
+
+/** Gerçek bir takvim günü mü (YYYY-MM-DD)? */
+export function tarihGecerli(t: unknown): t is string {
+  if (typeof t !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return false;
+  const d = new Date(`${t}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === t;
+}
+
+const tarihYaz = (t: string) => t.split("-").reverse().join(".");
+
+/** Oturum kimliği "<satırId>_<tarih>" biçimindedir */
+export function oturumKimligi(oturumId: unknown): { satirId: string; tarih: string } | null {
+  if (typeof oturumId !== "string") return null;
+  const i = oturumId.lastIndexOf("_");
+  if (i <= 0 || !tarihGecerli(oturumId.slice(i + 1))) return null;
+  return { satirId: oturumId.slice(0, i), tarih: oturumId.slice(i + 1) };
+}
+
+/** Satır o tarihte yürürlükte mi? (haftanın gününe bakmaz) */
+export function satirGecerliMi(p: Pick<ProgramSatiri, "baslangic" | "bitis">, tarih: string): boolean {
+  return p.baslangic <= tarih && (!p.bitis || p.bitis >= tarih);
+}
+
+export function gecerliSatirlar(program: ProgramSatiri[], tarih: string): ProgramSatiri[] {
+  return program.filter((p) => satirGecerliMi(p, tarih));
+}
+
+/** O haftada (hafta = pazartesi) kendi gününde yürürlükte olan satırlar */
+export function haftaSatirlari(program: ProgramSatiri[], hafta: string): ProgramSatiri[] {
+  return program.filter((p) => satirGecerliMi(p, tarihEkle(hafta, p.gun - 1)));
+}
+
+/** İki satırın yürürlük aralıkları, verilen haftanın gününe denk gelen ortak bir tarih içeriyor mu? */
+export function aralikGunuOrtusur(a: Pick<ProgramSatiri, "baslangic" | "bitis">, b: Pick<ProgramSatiri, "baslangic" | "bitis">, gun: number): boolean {
+  const bas = a.baslangic > b.baslangic ? a.baslangic : b.baslangic;
+  const bit = !a.bitis ? b.bitis : !b.bitis ? a.bitis : a.bitis < b.bitis ? a.bitis : b.bitis;
+  for (let i = 0; i < 7; i++) {
+    const t = tarihEkle(bas, i);
+    if (bit && t > bit) return false;
+    if (haftaGunu(t) === gun) return true;
+  }
+  return false;
+}
+
+/* ---------- Çakışma ---------- */
+
+/** Görünmeyen / silinmiş grup veya ders saatine bağlı satırda null */
+export function satirSlotu(d: Tanimlar, p: ProgramSatiri): Slot | null {
+  const h = d.dersSaatleri.find((x) => x.id === p.saatId);
+  const g = d.gruplar.find((x) => x.id === p.grupId);
+  if (!h || !g) return null;
+  return { id: p.id, gun: p.gun, bas: dakika(h.baslangic), bit: dakika(h.bitis), ogretmenId: p.ogretmenId, derslikId: p.derslikId, grupId: p.grupId, subeId: g.subeId };
+}
+
+/** Satırla aynı günde ve örtüşen tarih aralığında yürürlükte olan diğer satırların slotları */
+function ortusenSlotlar(yeni: ProgramSatiri, program: ProgramSatiri[], d: Tanimlar): Slot[] {
+  return program
+    .filter((p) => p.id !== yeni.id && p.gun === yeni.gun && aralikGunuOrtusur(p, yeni, yeni.gun))
+    .map((p) => satirSlotu(d, p))
+    .filter((s): s is Slot => !!s);
+}
+
+/** Aynı öğretmen / derslik / grup, yürürlük tarihleri kesişiyorsa aynı saatte iki yerde olamaz */
+export function programCakismalari(yeni: ProgramSatiri, program: ProgramSatiri[], d: Tanimlar): Cakisma[] {
+  const slot = satirSlotu(d, yeni);
+  return slot ? cakismaBul(slot, ortusenSlotlar(yeni, program, d)) : [];
+}
+
+/** Öğretmenin farklı şubedeki dersiyle arasında yeterli süre kalmayan dersler (uyarı; onayla geçilir) */
+export function programGecisleri(yeni: ProgramSatiri, program: ProgramSatiri[], d: Tanimlar, minDakika: number): Slot[] {
+  const slot = satirSlotu(d, yeni);
+  return slot ? subeGecisUyarisi(slot, ortusenSlotlar(yeni, program, d), minDakika) : [];
+}
+
+/** Sunucu mesajı: başka şubenin dersini ele vermez */
+export function cakismaMesaji(c: Cakisma): string {
+  const ad = c.tur === "ogretmen" ? "Öğretmen" : c.tur === "derslik" ? "Derslik" : "Grup";
+  return `${ad} bu saatte dolu.`;
+}
+
+/* ---------- Değişiklik tarihi: geçmiş korunur ---------- */
+
+/** Satırın yoklaması veya iptali olan son oturumunun tarihi; bu oturumlar satıra kimlikle bağlıdır */
+export function sonKilitliOturum(p: Pick<ProgramSatiri, "id">, d: Kayitlar): string | null {
+  const tarihler = [
+    ...Object.values(d.yoklamalar ?? {}).filter((y) => y.satirId === p.id).map((y) => y.tarih),
+    ...(d.iptaller ?? []).map((i) => oturumKimligi(i.oturumId)).filter((k) => k?.satirId === p.id).map((k) => k!.tarih),
+  ];
+  return tarihler.length ? tarihler.reduce((a, b) => (a > b ? a : b)) : null;
+}
+
+/** Değişikliğin uygulanabileceği ilk tarih: bugün veya yoklaması/iptali olan son oturumun ertesi */
+export function enErkenGecerlilik(p: Pick<ProgramSatiri, "id">, d: Kayitlar, bugun: string): string {
+  const kilit = sonKilitliOturum(p, d);
+  const sonraki = kilit ? tarihEkle(kilit, 1) : bugun;
+  return sonraki > bugun ? sonraki : bugun;
+}
+
+export function degisiklikTarihiEngeli(p: ProgramSatiri, gecerlilik: string, d: Kayitlar, bugun: string): Hata {
+  if (!tarihGecerli(gecerlilik)) return "Geçerlilik tarihi hatalı.";
+  if (gecerlilik < bugun) return "Program değişikliği geçmişe uygulanamaz.";
+  const kilit = sonKilitliOturum(p, d);
+  if (kilit && gecerlilik <= kilit) return `${tarihYaz(kilit)} tarihli dersin yoklaması veya iptali var; değişiklik ${tarihYaz(tarihEkle(kilit, 1))} ve sonrası için yapılabilir.`;
+  if (p.bitis && gecerlilik > p.bitis) return `Bu ders ${tarihYaz(p.bitis)} tarihinde sona eriyor; bu tarihten sonra değiştirilemez.`;
+  return null;
+}
+
+/**
+ * Değişiklik belirtilen tarihten itibaren geçerli olur (doküman: geçmiş oturumlar etkilenmez).
+ * Satır henüz başlamadıysa yerinde değişir veya silinir; başladıysa kapatılır ve yeni satır açılır.
+ * Kapatılan satırın kimliği korunduğu için yoklama ve iptaller geçmiş oturumlara bağlı kalır.
+ */
+export function programDegistir(program: ProgramSatiri[], eski: ProgramSatiri, yeni: ProgramSatiri | null, gecerlilik: string, idUret: () => string): ProgramSatiri[] {
+  if (eski.baslangic >= gecerlilik) return yeni ? program.map((p) => (p.id === eski.id ? { ...yeni, id: eski.id, bitis: eski.bitis } : p)) : program.filter((p) => p.id !== eski.id);
+  const kapali = program.map((p) => (p.id === eski.id ? { ...p, bitis: tarihEkle(gecerlilik, -1) } : p));
+  return yeni ? [...kapali, { ...yeni, id: idUret(), baslangic: gecerlilik, bitis: eski.bitis }] : kapali;
+}
+
+/* ---------- Satır doğrulama ---------- */
+
+/** Bu şubede görevli, aktif ve bu dersi verebilen öğretmenler */
+export function uygunOgretmenler(personel: Personel[], dersId: string, subeId: string): Personel[] {
+  return personel.filter((p) => p.gorev === "ogretmen" && p.aktif && p.subeIds.includes(subeId) && p.dersIds.includes(dersId));
+}
+
+export function ogretmenUygunlukEngeli(ogretmenId: string, dersId: string, subeId: string, personel: Personel[]): Hata {
+  if (!ogretmenId) return OGRETMEN_SECILMELI;
+  const p = personel.find((x) => x.id === ogretmenId);
+  if (!p || p.gorev !== "ogretmen") return "Seçilen kişi öğretmen değil.";
+  if (!p.aktif) return "Seçilen öğretmen pasif.";
+  if (!p.subeIds.includes(subeId)) return "Seçilen öğretmen bu şubede görevli değil.";
+  if (!p.dersIds.includes(dersId)) return "Seçilen öğretmen bu dersi vermiyor; personel kartından ders eklenebilir.";
+  return null;
+}
+
+type SatirTanimlari = Pick<Db, "gruplar" | "dersSaatleri" | "derslikler" | "dersler" | "personel" | "subeler" | "sezonlar">;
+
+/** Alan, şube uyumu, sezon ve öğretmen kuralları. Var olan satırda yalnızca değişen alan denetlenir (eski atama kaydı kilitlemesin). */
+export function programSatirEngeli(p: ProgramSatiri, eski: ProgramSatiri | undefined, d: SatirTanimlari): Hata {
+  const degisti = (...alanlar: (keyof ProgramSatiri)[]) => !eski || alanlar.some((a) => p[a] !== eski[a]);
+  const g = d.gruplar.find((x) => x.id === p.grupId);
+  if (!g) return "Grup bulunamadı.";
+  if (!Number.isInteger(p.gun) || p.gun < 1 || p.gun > 7) return "Gün hatalı.";
+  if (!tarihGecerli(p.baslangic)) return "Başlangıç tarihi hatalı.";
+  if (p.bitis !== null && !tarihGecerli(p.bitis)) return "Bitiş tarihi hatalı.";
+  if (p.bitis && p.bitis < p.baslangic) return "Bitiş tarihi başlangıçtan önce olamaz.";
+  if (degisti("grupId") && d.subeler.find((s) => s.id === g.subeId)?.aktif === false) return "Grubun şubesi pasif.";
+
+  if (degisti("saatId", "grupId", "gun")) {
+    const h = d.dersSaatleri.find((x) => x.id === p.saatId);
+    if (!h) return "Ders saati bulunamadı.";
+    if (h.subeId !== g.subeId) return "Ders saati grubun şubesine ait değil.";
+    if ((h.gunTipi === "hafta-sonu") !== p.gun >= 6) return "Ders saati bu günün tipine (hafta içi / hafta sonu) uymuyor.";
+  }
+  if (degisti("derslikId", "grupId")) {
+    const dl = d.derslikler.find((x) => x.id === p.derslikId);
+    if (!dl) return "Derslik bulunamadı.";
+    if (dl.subeId !== g.subeId) return "Derslik grubun şubesine ait değil.";
+  }
+  if (degisti("dersId")) {
+    const ds = d.dersler.find((x) => x.id === p.dersId);
+    if (!ds) return "Ders bulunamadı.";
+    if (!tanimAktif(ds)) return "Seçilen ders pasif.";
+  }
+  if (degisti("baslangic", "bitis", "grupId")) {
+    const z = d.sezonlar.find((x) => x.id === g.sezonId);
+    if (z && (p.baslangic < z.baslangic || p.baslangic > z.bitis)) return `Başlangıç tarihi grubun sezonu içinde olmalı (${tarihYaz(z.baslangic)} – ${tarihYaz(z.bitis)}).`;
+    if (z && p.bitis && p.bitis > z.bitis) return `Bitiş tarihi grubun sezonunu aşamaz (${tarihYaz(z.bitis)}).`;
+  }
+  if (degisti("ogretmenId", "dersId", "grupId")) return ogretmenUygunlukEngeli(p.ogretmenId, p.dersId, g.subeId, d.personel);
+  return null;
+}
+
+export type DegisiklikSonucu = {
+  /** Değişiklikten sonraki hali */
+  satir: ProgramSatiri;
+  liste: ProgramSatiri[];
+  tarihEngeli: Hata;
+  atamaEngeli: Hata;
+  cakismalar: Cakisma[];
+  gecisler: Slot[];
+};
+
+/** Pencere ve sürükle-bırak aynı denetimden geçer. eski yoksa yeni satır eklenir. */
+export function degisiklikDenetle(d: Db, eski: ProgramSatiri | undefined, yeni: ProgramSatiri, gecerlilik: string, bugun: string): DegisiklikSonucu {
+  const taslakId = "__yeni";
+  const yerinde = !!eski && eski.baslangic >= gecerlilik;
+  const liste = eski ? programDegistir(d.program, eski, yeni, gecerlilik, () => taslakId) : [...d.program, { ...yeni, id: taslakId }];
+  const satir = liste.find((p) => p.id === (yerinde ? eski!.id : taslakId))!;
+  const karsilastirma = yerinde ? eski : undefined;
+  return {
+    satir,
+    liste,
+    tarihEngeli: eski ? degisiklikTarihiEngeli(eski, gecerlilik, d, bugun) : !tarihGecerli(gecerlilik) ? "Geçerlilik tarihi hatalı." : gecerlilik < bugun ? "Ders geçmiş tarihten başlatılamaz." : null,
+    atamaEngeli: programAtamaEngeli(satir, karsilastirma, d) ?? programSatirEngeli(satir, karsilastirma, d),
+    cakismalar: programCakismalari(satir, liste, d),
+    gecisler: programGecisleri(satir, liste, d, d.ayarlar.subeGecisDk),
+  };
+}
+
+/* ---------- Sunucu: satır yazma / silme ---------- */
+
+type DenetimVerisi = SatirTanimlari & Kayitlar & Pick<Db, "program">;
+
+const ALANLAR: (keyof ProgramSatiri)[] = ["grupId", "gun", "saatId", "dersId", "ogretmenId", "derslikId", "baslangic"];
+
+/** Var olan satırın yalnızca bitişi öne çekildi veya hiç değişmedi mi (bölme / kapatma)? */
+function yalnizKapatma(s: ProgramSatiri, eski: ProgramSatiri): boolean {
+  return ALANLAR.every((a) => s[a] === eski[a]) && (s.bitis === eski.bitis || (!!s.bitis && (!eski.bitis || s.bitis <= eski.bitis)));
+}
+
+export function programYazmaEngeli(s: ProgramSatiri, eski: ProgramSatiri | undefined, d: DenetimVerisi, bugun: string): Hata {
+  if (eski && yalnizKapatma(s, eski)) {
+    if (s.bitis === eski.bitis) return null;
+    if (!tarihGecerli(s.bitis)) return "Bitiş tarihi hatalı.";
+    if (s.bitis < tarihEkle(bugun, -1)) return "Geçmiş oturumlar etkilenemez; ders en erken dün itibarıyla kapatılabilir.";
+    if (s.bitis < s.baslangic) return "Bitiş tarihi başlangıçtan önce olamaz.";
+    const kilit = sonKilitliOturum(eski, d);
+    if (kilit && s.bitis < kilit) return `${tarihYaz(kilit)} tarihli dersin yoklaması veya iptali var; ders bu tarihten önce kapatılamaz.`;
+    return null;
+  }
+  if (eski) {
+    if (eski.baslangic < bugun) return "Başlamış ders satırı değiştirilemez; değişiklik yeni satırla belirtilen tarihten itibaren yapılır.";
+    if (sonKilitliOturum(eski, d)) return "Yoklaması veya iptali olan ders satırı değiştirilemez.";
+  }
+  if (!tarihGecerli(s.baslangic)) return "Başlangıç tarihi hatalı.";
+  if (s.baslangic < bugun) return "Ders geçmiş tarihten başlatılamaz.";
+  const m = programSatirEngeli(s, eski, d);
+  if (m) return m;
+  const c = programCakismalari(s, d.program, d);
+  return c.length ? cakismaMesaji(c[0]) : null;
+}
+
+export function programSilmeEngeli(eski: ProgramSatiri, d: Kayitlar, bugun: string): Hata {
+  if (eski.baslangic < bugun) return "Geçmişi olan ders silinemez; belirtilen tarihten itibaren kapatılır.";
+  if (sonKilitliOturum(eski, d)) return "Yoklaması veya iptali olan ders silinemez.";
+  return null;
+}
+
+/* ---------- Tatil ---------- */
+
+export function tatilYazmaEngeli(t: Tatil, eski: Tatil | undefined, d: Pick<Db, "tatiller" | "subeler" | "yoklamalar" | "gruplar">, bugun: string): Hata {
+  if (!tarihGecerli(t.tarih)) return "Tarih hatalı.";
+  if (typeof t.ad !== "string" || !t.ad.trim()) return "Tatil adı boş olamaz.";
+  if (t.subeId && !d.subeler.some((s) => s.id === t.subeId)) return "Şube bulunamadı.";
+  if (t.tarih < bugun || (eski && eski.tarih < bugun)) return "Geçmiş tarihli tatil eklenemez veya değiştirilemez.";
+  if (d.tatiller.some((x) => x.id !== t.id && x.tarih === t.tarih && (x.subeId ?? null) === (t.subeId ?? null))) return "Bu tarihte aynı kapsamda tatil zaten var.";
+  const yoklamali = Object.values(d.yoklamalar ?? {}).some((y) => y.tarih === t.tarih && (!t.subeId || d.gruplar.find((g) => g.id === y.grupId)?.subeId === t.subeId));
+  if (yoklamali) return "Bu tarihte yoklaması alınmış ders var; tatil eklenemez.";
+  return null;
+}
+
+/** Geçmiş oturumların durumu (yoklama, hak ediş) sonradan değişmesin */
+export function tatilSilmeEngeli(t: Tatil, bugun: string): Hata {
+  return t.tarih < bugun ? "Geçmiş tarihli tatil kaldırılamaz." : null;
+}
+
+/* ---------- Tek seferlik iptal ve telafi ---------- */
+
+export function iptalYazmaEngeli(i: Iptal, eski: Iptal | undefined, d: Pick<Db, "program" | "gruplar" | "tatiller" | "yoklamalar">, bugun: string): Hata {
+  if (eski) return "Ders iptali sonradan değiştirilemez.";
+  const k = oturumKimligi(i.oturumId);
+  const p = k && d.program.find((x) => x.id === k.satirId);
+  if (!k || !p || p.gun !== haftaGunu(k.tarih) || !satirGecerliMi(p, k.tarih)) return "İptal edilecek ders bulunamadı.";
+  if (k.tarih < bugun) return "Geçmiş tarihli ders iptal edilemez.";
+  if (typeof i.neden !== "string" || !i.neden.trim()) return "İptal nedeni yazılmalı.";
+  if (d.yoklamalar?.[i.oturumId]) return "Yoklaması alınmış ders iptal edilemez.";
+  const subeId = d.gruplar.find((g) => g.id === p.grupId)?.subeId;
+  const tatilMi = (t: string) => d.tatiller.some((x) => x.tarih === t && (!x.subeId || x.subeId === subeId));
+  if (tatilMi(k.tarih)) return "Bu tarih tatil; ders zaten yapılmıyor.";
+  if (i.telafi !== undefined) {
+    if (!tarihGecerli(i.telafi)) return "Telafi tarihi hatalı.";
+    if (i.telafi < k.tarih) return "Telafi tarihi iptal edilen dersten önce olamaz.";
+    if (tatilMi(i.telafi)) return "Telafi tarihi tatil gününe denk geliyor.";
+  }
+  return null;
+}

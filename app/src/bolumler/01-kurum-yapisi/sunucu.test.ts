@@ -98,7 +98,12 @@ describe("pasif derslik ve ders saati", () => {
   pasifli.derslikler = pasifli.derslikler.map((x) => (x.id === "d1" ? { ...x, aktif: false } : x));
   pasifli.dersSaatleri = pasifli.dersSaatleri.map((h) => (h.id === "h1" ? { ...h, aktif: false } : h));
   const kullanilan = pasifli.program.find((p) => p.derslikId === "d1" && p.saatId === "h1")!;
-  const yeniSatir = { ...kullanilan, id: "ps999", gun: 7, saatId: "h6", derslikId: "d2" };
+  // Bölüm 06: yeni satır geçmişten başlayamaz; başlamamış (yoklamasız) satır yerinde değişebilir
+  const yeniSatir = { ...kullanilan, id: "ps999", gun: 7, saatId: "h6", derslikId: "d2", baslangic: "2026-11-09" };
+  const baslamamis = structuredClone(pasifli);
+  baslamamis.yoklamalar = {};
+  baslamamis.iptaller = [];
+  baslamamis.program = baslamamis.program.map((p) => (p.id === kullanilan.id ? { ...p, baslangic: "2026-12-07" } : p));
 
   it("kullanılmış derslik ve ders saati pasife alınır, tekrar aktife alınır", () => {
     expect(dene((x) => (x.derslikler = x.derslikler.map((d) => (d.id === "d1" ? { ...d, aktif: false } : d))))).not.toThrow();
@@ -120,7 +125,7 @@ describe("pasif derslik ve ders saati", () => {
   it("var olan satır pasif kayda taşınamaz ama değişmemiş ataması kilitlenmez", () => {
     reddedilir(dene((x) => (x.program = x.program.map((p) => (p.derslikId === "d2" && p.saatId !== "h1" ? { ...p, saatId: "h1" } : p))), YONETICI, pasifli), /saati pasif/);
     expect(dene((x) => (x.program = x.program.map((p) => (p.id === kullanilan.id ? { ...p, bitis: "2026-12-31" } : p))), YONETICI, pasifli)).not.toThrow();
-    expect(dene((x) => (x.program = x.program.map((p) => (p.id === kullanilan.id ? { ...p, dersId: "l3" } : p))), YONETICI, pasifli)).not.toThrow();
+    expect(dene((x) => (x.program = x.program.map((p) => (p.id === kullanilan.id ? { ...p, baslangic: "2026-12-14" } : p))), YONETICI, baslamamis)).not.toThrow();
   });
   it("gruba pasif derslik atanamaz; pasif dersliği olan grup başka alanı değişince kilitlenmez", () => {
     reddedilir(dene((x) => (x.gruplar = x.gruplar.map((g) => (g.id === "g1" ? { ...g, derslikId: "d1" } : g))), YONETICI, pasifli), /pasif/);

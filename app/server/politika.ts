@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { aktifKayit, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Veli } from "../src/data/model";
+import { aktifKayit, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -70,6 +70,7 @@ import {
   virmanEngeli,
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
+import { iptalYazmaEngeli, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Iade, Tahsilat, Taksit, Virman } from "../src/data/model";
 
@@ -424,11 +425,49 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
     temiz.koleksiyonlar[k] = { yaz, sil };
   }
   tanimDenetle(onceki, sonrakiDb, temiz);
+  programDenetle(onceki, sonrakiDb, temiz, a, zaman);
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   finansDenetle(onceki, temiz, a, zaman);
   onKayitDenetle(onceki, sonrakiDb, temiz, a);
   return temiz;
+}
+
+/* =========================== Bölüm 06 ders programı =========================== */
+/**
+ * Program, tatil ve iptal kuralları (ekranla ortak: src/bolumler/06-ders-programi/kurallar.ts):
+ * - öğretmen 06'yı görür ama programı, tatili, iptali değiştiremez
+ * - çakışma tüm şubelerde aranır: ekran kapsam dışındaki şubenin programını göremez
+ * - başlamış satır yalnızca kapatılır; değişiklik yeni satırla, yoklama / iptal kayıtlarından sonra başlar
+ * Şube kapsamı yazmaDenetle() içinde denetlenir. İptal tarihi sunucudan yazılır (`temiz` yerinde güncellenir).
+ */
+export function programDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  const programYaz = (K.program?.yaz ?? []) as unknown as ProgramSatiri[];
+  const tatilYaz = (K.tatiller?.yaz ?? []) as unknown as Tatil[];
+  const iptalYaz = (K.iptaller?.yaz ?? []) as unknown as Iptal[];
+  const programSil = K.program?.sil ?? [];
+  const tatilSil = K.tatiller?.sil ?? [];
+  if (!programYaz.length && !tatilYaz.length && !iptalYaz.length && !programSil.length && !tatilSil.length) return;
+  if (a.kullanici.rol === "ogretmen") reddet("Ders programını yalnızca yönetim değiştirebilir.");
+  const bugun = zaman.slice(0, 10);
+  for (const id of programSil) {
+    const eski = onceki.program.find((x) => x.id === id);
+    if (eski) reddet(programSilmeEngeli(eski, onceki, bugun));
+  }
+  for (const s of programYaz) reddet(programYazmaEngeli(s, onceki.program.find((x) => x.id === s.id), sonraki, bugun));
+  for (const id of tatilSil) {
+    const eski = onceki.tatiller.find((x) => x.id === id);
+    if (eski) reddet(tatilSilmeEngeli(eski, bugun));
+  }
+  for (const t of tatilYaz) reddet(tatilYazmaEngeli(t, onceki.tatiller.find((x) => x.id === t.id), sonraki, bugun));
+  for (const i of iptalYaz) {
+    reddet(iptalYazmaEngeli(i, onceki.iptaller.find((x) => x.oturumId === i.oturumId), sonraki, bugun));
+    i.tarih = bugun;
+  }
 }
 
 /* =========================== Bölüm 05 finans =========================== */

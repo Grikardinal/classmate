@@ -189,7 +189,7 @@ describe("parola işlemleri", () => {
 describe("kalıcılık", () => {
   it("yazılan değişiklik veritabanında kalır; sunucu yeniden açılınca geri yüklenir", async () => {
     const iste = await personelGiris("elif@ornekkurum.com");
-    const r = await iste("/api/degisiklik", { koleksiyonlar: { tatiller: { yaz: [{ id: "tKALICI", tarih: "2026-12-31", ad: "Yılbaşı (test)", subeId: "s1" }], sil: [] } }, tekil: {} });
+    const r = await iste("/api/degisiklik", { koleksiyonlar: { tatiller: { yaz: [{ id: "tKALICI", tarih: "2099-12-31", ad: "Yılbaşı (test)", subeId: "s1" }], sil: [] } }, tekil: {} });
     expect(r.durum).toBe(200);
     const yeniden = await uygulamaOlustur({ vt: vtOrtak, sms, push: null, demo: true, uretim: false });
     expect(yeniden.durum.db.tatiller.some((t) => t.id === "tKALICI")).toBe(true);
