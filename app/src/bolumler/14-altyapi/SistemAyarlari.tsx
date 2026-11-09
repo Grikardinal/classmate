@@ -21,7 +21,7 @@ export function SistemAyarlari() {
     if (engel) return toast(engel, "hata");
     guncelle((x) => {
       // Bu formda olmayan ayarlar (ör. gönderim saatleri, SMS fiyatı) başka ekranda değişmiş olabilir: üzerine yazılmaz
-      x.ayarlar = { ...x.ayarlar, devamsizlikEsigi: f.devamsizlikEsigi, yoklamaHatirlatmaDk: f.yoklamaHatirlatmaDk, subeGecisDk: f.subeGecisDk, etutIptalSaat: f.etutIptalSaat, etutGrupKontenjan: f.etutGrupKontenjan, saklamaAyAday: f.saklamaAyAday, saklamaAyOgrenci: f.saklamaAyOgrenci, oturumGun: f.oturumGun, hatirlatmaGunleri: f.hatirlatmaGunleri, gelmeyenHakDussun: f.gelmeyenHakDussun };
+      x.ayarlar = { ...x.ayarlar, devamsizlikEsigi: f.devamsizlikEsigi, yoklamaHatirlatmaDk: f.yoklamaHatirlatmaDk, subeGecisDk: f.subeGecisDk, etutIptalSaat: f.etutIptalSaat, etutGrupKontenjan: f.etutGrupKontenjan, saklamaAyAday: f.saklamaAyAday, saklamaAyOgrenci: f.saklamaAyOgrenci, oturumGun: f.oturumGun, hatirlatmaGunleri: f.hatirlatmaGunleri, gelmeyenHakDussun: f.gelmeyenHakDussun, kvkkOtomatik: f.kvkkOtomatik !== false };
       islemYaz(x, ad, "Sistem ayarları", "Ayarlar güncellendi");
     });
     toast("Ayarlar kaydedildi.");
@@ -45,6 +45,10 @@ export function SistemAyarlari() {
           <div className="flex items-center justify-between rounded-md border p-3 sm:col-span-2">
             <div><p className="text-sm font-medium">Gelmeyen öğrencinin özel ders hakkı düşsün</p><p className="text-xs text-muted-foreground">09 · kurum politikası</p></div>
             <Switch label="Hak düşsün" disabled={!duzenler} checked={f.gelmeyenHakDussun} onCheckedChange={(v) => setF({ ...f, gelmeyenHakDussun: v })} />
+          </div>
+          <div className="flex items-center justify-between rounded-md border p-3 sm:col-span-2">
+            <div><p className="text-sm font-medium">Saklama süresi dolanları haftalık otomatik anonimleştir</p><p className="text-xs text-muted-foreground">14 · KVKK. Önce yedek alınır; borçlu öğrenci işlenmez. Geri alınamaz.</p></div>
+            <Switch label="Otomatik anonimleştirme" disabled={!duzenler} checked={f.kvkkOtomatik !== false} onCheckedChange={(v) => setF({ ...f, kvkkOtomatik: v })} />
           </div>
           {duzenler && <Button className="justify-self-start" onClick={kaydet}>Kaydet</Button>}
         </CardContent>

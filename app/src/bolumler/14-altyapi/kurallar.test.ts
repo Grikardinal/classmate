@@ -4,6 +4,13 @@ import { ANONIM_TELEFON, anonimMi } from "../03-on-kayit/kurallar";
 import { ogrenciAnonimMi, veliAnonimMi } from "../04-ogrenciler/kurallar";
 import {
   AKTARIM_EN_FAZLA_SATIR,
+  FINANS_SAKLAMA_YIL,
+  kvkkOtomatikAcik,
+  kvkkOtomatikUygula,
+  kvkkOtomatikZamani,
+  otomatikAnonimlestirmePlani,
+  acikBorc,
+  finansSaklamaDoldu,
   KVKK_SILINDI,
   aktarimTablosuEngeli,
   anonimlestirmeEngeli,
@@ -292,6 +299,121 @@ describe("KVKK anonimleştirme", () => {
     const o = d.ogrenciler[0];
     expect(kisiDokumu(d, "ogrenci", o.id)).toMatchObject({ ogrenci: { id: o.id } });
     expect(kisiDokumu(d, "veli", o.veliIds[0])).toMatchObject({ veli: { id: o.veliIds[0] } });
+  });
+});
+
+describe("açık borç ve finans saklama (karar 2026-11-09)", () => {
+  const borclu = () => {
+    const d = yeni();
+    const o = d.ogrenciler.find((x) => x.durum === "aktif")!;
+    d.moduller = { ...d.moduller, finans: true };
+    d.taksitler = [
+      { id: "t1", kayitId: "k", ogrenciId: o.id, veliId: o.veliIds[0], subeId: "s1", no: 1, vade: "2026-10-01", tutar: 1000.5, odenen: 250 },
+      { id: "t2", kayitId: "k", ogrenciId: o.id, veliId: o.veliIds[0], subeId: "s1", no: 2, vade: "2026-11-01", tutar: 500, odenen: 500 },
+    ];
+    return { d, o };
+  };
+  it("kalan taksitler toplanır; finans kapalıysa borç sayılmaz", () => {
+    const { d, o } = borclu();
+    expect(acikBorc(d, [o.id])).toBe(750.5);
+    expect(acikBorc({ ...d, moduller: { ...d.moduller, finans: false } }, [o.id])).toBe(0);
+    expect(acikBorc(d, ["yok"])).toBe(0);
+  });
+  it("onaysız reddedilir, taslağa dokunulmaz", () => {
+    const { d, o } = borclu();
+    const r = kvkkAnonimlestir(d, "ogrenci", [o.id], baglam);
+    expect(r.sayi).toBe(0);
+    expect(r.engel).toMatch(/Açık borç.*750,5/);
+    expect(ogrenciAnonimMi(d.ogrenciler.find((x) => x.id === o.id)!)).toBe(false);
+  });
+  it("onayla sürer; tutar korunur, işlem kaydına yazılır", () => {
+    const { d, o } = borclu();
+    const once = JSON.stringify(d.taksitler);
+    expect(kvkkAnonimlestir(d, "ogrenci", [o.id], { ...baglam, borcOnay: true }).engel).toBeNull();
+    expect(ogrenciAnonimMi(d.ogrenciler.find((x) => x.id === o.id)!)).toBe(true);
+    expect(JSON.stringify(d.taksitler)).toBe(once);
+    expect(d.islemler[0].detay).toMatch(/açık borç yönetici onayıyla/);
+  });
+  it("saklama süresi 10 yıl; tarihi okunamayan kayıt dolmuş sayılmaz", () => {
+    expect(FINANS_SAKLAMA_YIL).toBe(10);
+    expect(finansSaklamaDoldu({ vade: "2016-11-10" }, BUGUN)).toBe(false);
+    expect(finansSaklamaDoldu({ zaman: "2016-11-09T10:00" }, BUGUN)).toBe(true);
+    expect(finansSaklamaDoldu({ tarih: "2010-01-01" }, BUGUN)).toBe(true);
+    expect(finansSaklamaDoldu({}, BUGUN)).toBe(false);
+  });
+});
+
+describe("otomatik anonimleştirme planı", () => {
+  /** Tek veli + iki çocuk: biri süresi dolmuş ayrılan */
+  const kur = () => {
+    const d = yeni();
+    d.adaylar = [];
+    d.taksitler = [];
+    d.ayarlar = { ...d.ayarlar, saklamaAyOgrenci: 24, saklamaAyAday: 12 };
+    const k = d.kayitlar[0];
+    const taban = d.ogrenciler.find((o) => o.id === k.ogrenciId)!;
+    const veli = d.veliler.find((v) => v.id === taban.veliIds[0])!;
+    const ogr = (id: string, durum: "ayrildi" | "aktif") => ({ ...taban, id, ad: "Ali", soyad: id, durum, veliIds: [veli.id], birincilVeliId: veli.id });
+    const kay = (id: string, ogrenciId: string, durum: "iptal" | "aktif" | "dondurulmus", tarih: string) => ({ ...k, id, ogrenciId, durum, tarih, grupGecmisi: [{ grupId: k.grupId, tarih }], iptalHesabi: undefined });
+    d.ogrenciler = [ogr("eski", "ayrildi")];
+    d.kayitlar = [kay("k1", "eski", "iptal", "2023-01-01")];
+    return { d, veli, ogr, kay };
+  };
+  it("süresi dolan öğrenci ve çocuğu kalmayan veli işlenir", () => {
+    const { d, veli } = kur();
+    const p = otomatikAnonimlestirmePlani(d, BUGUN);
+    expect(p.ogrenciIds).toEqual(["eski"]);
+    expect(p.veliIds).toEqual([veli.id]);
+    const r = kvkkOtomatikUygula(d, p, { bugun: BUGUN, zaman: ZAMAN });
+    expect(r).toEqual({ ogrenci: 1, aday: 0, veli: 1 });
+    expect(d.kvkk.slice(0, 2).every((k) => /^\d+ /.test(k.kisi))).toBe(true);
+    expect(d.islemler[0].detay).not.toMatch(/eski/);
+    expect(d.islemler[0].kullanici).toBe("Sistem");
+    expect(otomatikAnonimlestirmePlani(d, BUGUN)).toMatchObject({ ogrenciIds: [], veliIds: [] });
+  });
+  it("süresi dolmamış öğrenci işlenmez", () => {
+    const { d, kay } = kur();
+    d.kayitlar = [kay("k1", "eski", "iptal", "2026-01-01")];
+    expect(otomatikAnonimlestirmePlani(d, BUGUN).ogrenciIds).toEqual([]);
+  });
+  it("süren kaydı olan öğrenci işlenmez", () => {
+    const { d, kay } = kur();
+    d.kayitlar.push(kay("k2", "eski", "dondurulmus", "2023-02-01"));
+    expect(otomatikAnonimlestirmePlani(d, BUGUN).ogrenciIds).toEqual([]);
+  });
+  it("borçlu öğrenci elle karar listesine düşer (finans kapalı olsa da), velisi de kalır", () => {
+    const { d, veli } = kur();
+    d.moduller = { ...d.moduller, finans: false };
+    d.taksitler = [{ id: "t", kayitId: "k1", ogrenciId: "eski", veliId: veli.id, subeId: "s1", no: 1, vade: "2023-02-01", tutar: 200, odenen: 50 }];
+    const p = otomatikAnonimlestirmePlani(d, BUGUN);
+    expect(p.ogrenciIds).toEqual([]);
+    expect(p.veliIds).toEqual([]);
+    expect(p.elleBekleyen).toEqual([{ id: "eski", ad: "Ali eski", borc: 150 }]);
+  });
+  it("kardeşi süren veli anonimleşmez, süresi dolan kardeş işlenir", () => {
+    const { d, ogr, kay } = kur();
+    d.ogrenciler.push(ogr("kardes", "aktif"));
+    d.kayitlar.push(kay("k2", "kardes", "aktif", "2026-09-01"));
+    const p = otomatikAnonimlestirmePlani(d, BUGUN);
+    expect(p.ogrenciIds).toEqual(["eski"]);
+    expect(p.veliIds).toEqual([]);
+  });
+  it("yalnızca vazgeçen ve süresi dolan aday; üst sınır uygulanır", () => {
+    const { d } = kur();
+    const a = yeni().adaylar[0];
+    d.adaylar = [{ ...a, id: "a1", durum: "vazgecti", olusturma: "2025-01-01" }, { ...a, id: "a2", durum: "vazgecti", olusturma: "2026-10-01" }, { ...a, id: "a3", durum: "yeni", olusturma: "2020-01-01" }];
+    expect(otomatikAnonimlestirmePlani(d, BUGUN).adayIds).toEqual(["a1"]);
+    expect(otomatikAnonimlestirmePlani(d, BUGUN, 1)).toMatchObject({ ogrenciIds: ["eski"], adayIds: [], veliIds: [] });
+  });
+  it("ayar ve hafta denetimi", () => {
+    const { d } = kur();
+    delete d.ayarlar.kvkkOtomatik;
+    expect(kvkkOtomatikAcik(d)).toBe(true);
+    expect(kvkkOtomatikAcik({ ayarlar: { ...d.ayarlar, kvkkOtomatik: false } })).toBe(false);
+    expect(kvkkOtomatikZamani({ otomasyon: {} }, BUGUN)).toBe(true);
+    expect(kvkkOtomatikZamani({ otomasyon: { kvkkOtomatik: "2026-11-03" } }, BUGUN)).toBe(false);
+    expect(kvkkOtomatikZamani({ otomasyon: { kvkkOtomatik: "2026-11-02" } }, BUGUN)).toBe(true);
+    expect(ayarlarEngeli({ ...varsayilanAyarlar, kvkkOtomatik: "evet" }, varsayilanAyarlar)).toBeTruthy();
   });
 });
 

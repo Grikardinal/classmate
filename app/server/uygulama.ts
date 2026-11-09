@@ -55,7 +55,7 @@ import { TAKILI_HATA, pushAbonelikTemizle, takiliSatirlar } from "../src/bolumle
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
-import { anonimlikleriKoru, degisiklikPaketiEngeli, ilkParolaEngeli, jsonIcerikMi, kvkkAnonimlestir, yedekDogrula, yedekTamamla, YEDEK_EN_BUYUK_BAYT, type KvkkTur } from "../src/bolumler/14-altyapi/kurallar";
+import { KVKK_OTOMATIK_ANAHTAR, anonimlikleriKoru, kvkkOtomatikAcik, kvkkOtomatikUygula, kvkkOtomatikZamani, otomatikAnonimlestirmePlani, degisiklikPaketiEngeli, ilkParolaEngeli, jsonIcerikMi, kvkkAnonimlestir, yedekDogrula, yedekTamamla, YEDEK_EN_BUYUK_BAYT, type KvkkTur } from "../src/bolumler/14-altyapi/kurallar";
 import { hepsiniYukle, semaKur, tamamenYaz, veriyiOnar, yaz, type Veritabani } from "./veritabani";
 import { yedekAl, yedekOku, yedekleriListele } from "./yedek";
 
@@ -242,12 +242,12 @@ export async function uygulamaOlustur(s: Secenekler) {
     "*",
     secureHeaders({
       crossOriginEmbedderPolicy: false,
-      // Yazdırma penceresi satır içi stil kullanır; Google Fonts açık (KVKK notu: README). Veli önizlemesi aynı kökten iframe açar.
+      // Yazdırma penceresi satır içi stil kullanır; yazı tipi uygulamayla paketlidir. Veli önizlemesi aynı kökten iframe açar.
       contentSecurityPolicy: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        fontSrc: ["'self'", "data:"],
         imgSrc: ["'self'", "data:", "blob:", "https:"],
         connectSrc: ["'self'"],
         workerSrc: ["'self'"],
@@ -504,22 +504,26 @@ export async function uygulamaOlustur(s: Secenekler) {
   });
 
   /* ---------- KVKK (Bölüm 14) ---------- */
+  /** Anonimleşen velinin veritabanındaki cihaz aboneliği ve oturumları (elle ve otomatik yol ortak) */
+  async function veliIzleriniSil(ids: string[]) {
+    for (const id of ids) {
+      await vt.q("delete from push_abonelik where veli_id = $1", [id]);
+      await tumOturumlariKapat(vt, "veli", id);
+    }
+  }
+
   // Gönderim, işlem kaydı ve cihaz aboneliği istemciden yazılamadığı için anonimleştirme sunucuda yapılır
   app.post("/api/kvkk/anonimlestir", personelGerekli, async (c) => {
     const a = c.get("aktor");
     if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Anonimleştirmeyi yalnızca genel yönetici yapabilir.", 403);
-    const { tur, ids } = await c.req.json<{ tur: KvkkTur; ids: string[] }>();
+    const { tur, ids, borcOnay } = await c.req.json<{ tur: KvkkTur; ids: string[]; borcOnay?: unknown }>();
     if (!["ogrenci", "veli", "aday"].includes(tur) || !Array.isArray(ids) || !ids.length || ids.length > 5000 || !ids.every((x) => typeof x === "string")) return hata(c, "Geçersiz istek.");
     let sonuc: ReturnType<typeof kvkkAnonimlestir> = { engel: null, sayi: 0 };
     await sunucuDegisikligi((x) => {
-      sonuc = kvkkAnonimlestir(x, tur, ids, { kullanici: tamAd(a.personel), bugun: BUGUN, zaman: simdiZaman() });
+      sonuc = kvkkAnonimlestir(x, tur, ids, { kullanici: tamAd(a.personel), bugun: BUGUN, zaman: simdiZaman(), borcOnay: borcOnay === true });
     });
     if (sonuc.engel) return hata(c, sonuc.engel, 409);
-    if (tur === "veli")
-      for (const id of ids) {
-        await vt.q("delete from push_abonelik where veli_id = $1", [id]);
-        await tumOturumlariKapat(vt, "veli", id);
-      }
+    if (tur === "veli") await veliIzleriniSil(ids);
     return c.json({ sayi: sonuc.sayi });
   });
 
@@ -721,5 +725,39 @@ export async function uygulamaOlustur(s: Secenekler) {
     sonYedekGunu = BUGUN;
   }
 
-  return { app, durum, kuyrukCalistir, otomasyonCalistir, kaydet, gunlukYedek };
+  /**
+   * Haftalık KVKK işi: demoda çalışmaz, önce yedek alır; yedek alınamazsa o hafta işlem yapılmaz.
+   * Haftanın işareti veritabanındadır (yeniden başlatmada tekrar çalışmaz). Kayıt ve günlükte kişisel veri yok.
+   * Tarih, demo bayrağı ve yedek işlevi testler için verilebilir.
+   */
+  async function kvkkHaftalik(t: { bugun?: string; simdi?: string; zaman?: string; demo?: boolean; yedek?: (d: Db) => Promise<unknown> } = {}) {
+    const bugun = t.bugun ?? BUGUN;
+    if ((t.demo ?? demo) || (t.simdi ?? SIMDI) < "03:00") return null;
+    if (!kvkkOtomatikAcik(durum.db) || !kvkkOtomatikZamani(durum.db, bugun)) return null;
+    const zaman = t.zaman ?? simdiZaman();
+    const isaretle = (x: Db) => (x.otomasyon = { ...(x.otomasyon ?? {}), [KVKK_OTOMATIK_ANAHTAR]: bugun });
+    try {
+      await (t.yedek ?? yedekAl)(durum.db);
+    } catch {
+      console.error("KVKK otomatik işi: yedek alınamadı, bu hafta çalışmadı");
+      await sunucuDegisikligi((x) => {
+        isaretle(x);
+        islemYaz(x, "Sistem", "KVKK otomatik", "Yedek alınamadı; bu hafta anonimleştirme yapılmadı");
+      });
+      return { calisti: false as const, ogrenci: 0, aday: 0, veli: 0 };
+    }
+    let veliIds: string[] = [];
+    let sonuc = { ogrenci: 0, aday: 0, veli: 0 };
+    await sunucuDegisikligi((x) => {
+      const plan = otomatikAnonimlestirmePlani(x, bugun);
+      veliIds = plan.veliIds;
+      sonuc = kvkkOtomatikUygula(x, plan, { bugun, zaman });
+      isaretle(x);
+      islemYaz(x, "Sistem", "KVKK otomatik", `Süresi dolan ${sonuc.ogrenci} öğrenci, ${sonuc.aday} aday, ${sonuc.veli} veli anonimleştirildi; ${plan.elleBekleyen.length} öğrenci borç nedeniyle yönetici kararı bekliyor`);
+    });
+    await veliIzleriniSil(veliIds);
+    return { calisti: true as const, ...sonuc };
+  }
+
+  return { app, durum, kuyrukCalistir, otomasyonCalistir, kaydet, gunlukYedek, kvkkHaftalik };
 }

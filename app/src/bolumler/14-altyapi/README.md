@@ -54,7 +54,10 @@ Sunucu: `app/server/uygulama.ts` (HTTP güvenliği, `/api/yedek*`, `/api/kvkk/an
 - Anonimleştirme sunucuda yapılır (`/api/kvkk/anonimlestir`, hepsi ya da hiçbiri, yalnızca genel yönetici). Kapsam: kimlik alanları, sağlık notu, notlar, izin ve ödev notu, bağlı aday, gelecekteki etüt, gönderim metinleri (bekleyenler gönderilmez), işlem kaydındaki ad, veli için push aboneliği ve oturumlar.
 - Korunan: kimliksiz yoklama, kayıt satırları ve finans satırları (finans satırında ad yoktur).
 - Aktif öğrencisi olan veli anonimleştirilemez.
-- Saklama süresi dolan aday ve ayrılan öğrenci sayısı gösterilir; yönetici tek tuşla anonimleştirir.
+- Finans açıkken açık taksiti olan öğrenci: ekranda toplam tutar gösterilir; sunucu `borcOnay: true` olmadan 409 döner. Borç satırı ve tutar kalır, kişi bilgisi anonimleşir, onay işlem kaydına yazılır.
+- Finans kayıtları (taksit, tahsilat, iade, gider) `FINANS_SAKLAMA_YIL` = 10 yıl dolmadan silinemez. **Mali müşavir onayı gerekiyor.** Süre dolsa da uygulamada silme aracı yoktur.
+- Saklama süresi dolan aday ve ayrılan öğrenci sayısı gösterilir; yönetici tek tuşla da anonimleştirebilir.
+- **Haftalık otomatik iş** (`kvkkHaftalik`, `otomatikAnonimlestirmePlani`): `kvkkOtomatik` ayarı (yalnızca genel yönetici; alan yoksa açık). Gece 03:00 sonrası, haftada bir; demoda çalışmaz. Önce yedek alır, yedek alınamazsa o hafta işlem yapmaz. Tek çalıştırmada en çok 500 kişi. Süren kaydı olan öğrenci işlenmez; borçlu öğrenci KVKK ekranında "Elle karar bekliyor"da kalır. Veli yalnızca tüm çocukları anonimse, kendisine bağlı borç ve açık adayı yoksa işlenir. İşlem kaydı `Sistem` adıyla ve yalnızca sayı içerir.
 
 **İşlem kaydı**: kullanıcı ve zaman sunucudan; değiştirilemez, silinemez, şube kapsamı sunucuda. "Sistem" adı yalnızca devamsızlık uyarısında kabul edilir. KVKK başvuru kaydı da değiştirilemez.
 
@@ -84,14 +87,19 @@ Sunucu: `app/server/uygulama.ts` (HTTP güvenliği, `/api/yedek*`, `/api/kvkk/an
 6. `YEDEK_DIZIN` kalıcı diskte, yalnızca sunucu kullanıcısı erişebilir; yedeği ayrıca şifreli olarak başka yere kopyalayın.
 7. Ayda bir yedekten dönüş testi (doküman gereği): yedeği ayrı kurulumda geri yükleyin.
 8. Tek kopya çalıştırın (otomatik ölçeklemeyi kapatın).
-9. Aydınlatma metni sürümü, yurt dışı aktarım (Google Fonts, Render, web push, WhatsApp) değerlendirmesi.
+9. Aydınlatma metni sürümü, yurt dışı aktarım (Render, web push, WhatsApp) değerlendirmesi.
 10. Sunucu günlüklerine erişimi sınırlayın.
+11. **Yedek dosyası şifreleme** devreye alınmalı (karar 2026-11-09; anahtar yönetimiyle birlikte).
+12. Finans modülü açılınca "aylık beklenen ve tahsil edilen" grafiği eklenmeli (Bölüm 12 kararı).
+13. **Mali müşavir onayı:** finans kayıtlarının 10 yıl saklanması.
+14. **Hukuk danışmanı onayı:** açık borçlu öğrencinin anonimleştirilmesi, aydınlatma ve rıza metinleri.
 
-## Açık sorular (öneriyle)
-1. **Saklama süresi dolunca otomatik anonimleştirme?** Şu an yönetici tuşla yapar. Öneri: ilk yıl elle, hatalı silme geri alınamaz; sonra haftalık otomatik işe bağlanır.
-2. **Borcu olan öğrenci anonimleştirilsin mi?** Şu an engel yok; finans satırı kimliksiz kalır, takip edilemez. Öneri: açık borçta uyarı gösterilsin, karar yöneticide kalsın; hukuk danışmanına sorulsun.
-3. **Finans ve sözleşme kayıtlarının yasal saklama süresi.** Öneri: mali müşavir/hukuk onayıyla 10 yıl yazılsın; kayıtta ad bulunmadığı için anonimleştirme bunu engellemiyor.
-4. **Şube müdürüne içe aktarma açılsın mı?** Öneri: açılmasın; kurumun tek seferlik geçişi, genel yönetici yapar. İstenirse parti ve işlem satırına şube eklenir.
-5. **Yedek dosyası şifrelensin mi?** Öneri: evet, canlıya geçişte `YEDEK_ANAHTAR` ile; anahtar yönetimi kararı gerektirdiği için eklenmedi.
-6. **Google Fonts** IP adresini yurt dışına aktarır. Öneri: fontu `public/` altına alıp CSP'den çıkarın.
-7. **Render demo DEMO varsayılanı:** `render.yaml` `DEMO: "1"` taşıdığı için etkilenmez. Tarifsiz elle kurulan bir Render hizmetinde `DEMO` tanımsızsa artık gerçek kurulum olarak açılır ve `ILK_YONETICI_PAROLA` ister. Öneri: bu davranış korunsun.
+## Kapandı (2026-11-09)
+Kararlar: `docs/PROFESYONELLESME.md`.
+1. **Saklama süresi dolunca anonimleştirme:** haftalık otomatik, varsayılan açık; ayardan kapatılabilir.
+2. **Borcu olan öğrenci:** uyarı ve açık onay, karar yöneticide; hukuk danışmanına sorulacak (kontrol listesi 14).
+3. **Finans kayıtları saklama:** 10 yıl; mali müşavir onayı gerekiyor (kontrol listesi 13).
+4. **Şube müdürüne içe aktarma:** açılmaz (değişiklik yok).
+5. **Yedek dosyası şifreleme:** canlıya geçerken yapılır (kontrol listesi 11).
+6. **Yazı tipi:** uygulamanın içine alındı (`@fontsource/plus-jakarta-sans`, OFL-1.1, latin + latin-ext); CSP'de Google alan adı yok.
+7. **`DEMO` varsayılanı:** yeni davranış korunur (değişiklik yok).

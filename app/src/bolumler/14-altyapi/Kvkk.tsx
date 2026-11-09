@@ -1,20 +1,22 @@
 /** Bölüm 14 · KVKK araçları: veri sahibi başvurusu, saklama süreleri, başvuru kayıtları */
 import * as React from "react";
 import { AlertTriangle, Download, Lock, Search, UserX } from "lucide-react";
-import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, Input, StatCard, Table, Td, Th, toast } from "@/components/ui";
+import { Alert, Badge, Button, Checkbox, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, Input, StatCard, Table, Td, Th, toast } from "@/components/ui";
 import { useOturum } from "@/context/AppContext";
 import { BUGUN, getDb, guncelle, islemYaz, senkron, simdiZaman, tamAd, useDb, veriYukle, yeniId } from "@/data/store";
 import { normalAd } from "@/lib/kurallar";
 import { api } from "@/lib/api";
 import { dosyaIndir } from "@/lib/yazdir";
-import { anonimlestirmeEngeli, kisiDokumu, saklamasiDolanAdaylar, saklamasiDolanOgrenciler, type KvkkTur } from "./kurallar";
+import { FINANS_SAKLAMA_YIL, acikBorc, kvkkOtomatikAcik, otomatikAnonimlestirmePlani, anonimlestirmeEngeli, kisiDokumu, tutarYazi, saklamasiDolanAdaylar, saklamasiDolanOgrenciler, type KvkkTur } from "./kurallar";
 import { anonimMi } from "../03-on-kayit/kurallar";
 
 export function Kvkk() {
   const d = useDb();
   const { ad, rol } = useOturum();
   const [ara, setAra] = React.useState("");
-  const [onay, setOnay] = React.useState<{ tur: "veli" | "ogrenci"; id: string } | null>(null);
+  const [onay, setOnay] = React.useState<{ tur: "veli" | "ogrenci"; ids: string[] } | null>(null);
+  const [borcOnay, setBorcOnay] = React.useState(false);
+  const borc = onay?.tur === "ogrenci" ? acikBorc(d, onay.ids) : 0;
   const q = normalAd(ara);
   const sonuc =
     q.length >= 2
@@ -25,6 +27,7 @@ export function Kvkk() {
       : [];
   const eskiAdaylar = saklamasiDolanAdaylar(d, BUGUN);
   const eskiOgrenciler = saklamasiDolanOgrenciler(d, BUGUN);
+  const elleBekleyen = otomatikAnonimlestirmePlani(d, BUGUN).elleBekleyen;
   const vazgecenler = d.adaylar.filter((a) => a.durum === "vazgecti" && !anonimMi(a));
 
   const bilgiVer = (tur: "veli" | "ogrenci", id: string) => {
@@ -37,10 +40,10 @@ export function Kvkk() {
     });
   };
   /** Gönderim metni, işlem kaydı ve cihaz aboneliği de silindiği için sunucuda yapılır */
-  const anonimlestir = async (tur: KvkkTur, ids: string[]) => {
+  const anonimlestir = async (tur: KvkkTur, ids: string[], onayli = false) => {
     try {
       await senkron();
-      const r = await api<{ sayi: number }>("/api/kvkk/anonimlestir", { tur, ids });
+      const r = await api<{ sayi: number }>("/api/kvkk/anonimlestir", { tur, ids, borcOnay: onayli });
       await veriYukle();
       toast(`${r.sayi} kişinin verisi anonimleştirildi.`);
       return true;
@@ -51,12 +54,20 @@ export function Kvkk() {
   };
   const anonim = async () => {
     if (!onay) return;
-    const engel = anonimlestirmeEngeli(getDb(), onay.tur, onay.id);
-    if (engel) return toast(engel, "uyari");
-    if (await anonimlestir(onay.tur, [onay.id])) {
+    for (const id of onay.ids) {
+      const engel = anonimlestirmeEngeli(getDb(), onay.tur, id);
+      if (engel) return toast(engel, "uyari");
+    }
+    if (await anonimlestir(onay.tur, onay.ids, borcOnay)) {
       setOnay(null);
+      setBorcOnay(false);
       setAra("");
     }
+  };
+
+  const onayKapat = () => {
+    setOnay(null);
+    setBorcOnay(false);
   };
 
   return (
@@ -73,14 +84,14 @@ export function Kvkk() {
               <div><p className="font-medium">{s.ad}</p><p className="text-xs text-muted-foreground">{s.alt}</p></div>
               <div className="flex gap-1">
                 <Button size="sm" variant="outline" onClick={() => bilgiVer(s.tur, s.id)}><Download /> Döküm</Button>
-                {rol === "genel-yonetici" && <Button size="sm" variant="ghost" className="text-danger" onClick={() => setOnay({ tur: s.tur, id: s.id })}><UserX /> Anonimleştir</Button>}
+                {rol === "genel-yonetici" && <Button size="sm" variant="ghost" className="text-danger" onClick={() => setOnay({ tur: s.tur, ids: [s.id] })}><UserX /> Anonimleştir</Button>}
               </div>
             </div>
           ))}
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle className="text-base">Saklama süreleri</CardTitle><CardDescription>Vazgeçen adaylar {d.ayarlar.saklamaAyAday} ay, ayrılan öğrenciler {d.ayarlar.saklamaAyOgrenci} ay sonra anonimleştirilir.</CardDescription></CardHeader>
+        <CardHeader><CardTitle className="text-base">Saklama süreleri</CardTitle><CardDescription>Vazgeçen adaylar {d.ayarlar.saklamaAyAday} ay, ayrılan öğrenciler {d.ayarlar.saklamaAyOgrenci} ay sonra anonimleştirilir. Finans kayıtları {FINANS_SAKLAMA_YIL} yıl saklanır; anonimleştirme kişiyi kaldırır, tutarı korur.</CardDescription></CardHeader>
         <CardContent className="grid gap-3">
           <div className="grid grid-cols-2 gap-3">
             <StatCard label="Süresi dolan aday" value={eskiAdaylar.length} tone={eskiAdaylar.length ? "warning" : "default"} />
@@ -89,11 +100,29 @@ export function Kvkk() {
           {rol === "genel-yonetici" ? (
             <>
               <Button variant="outline" disabled={!eskiAdaylar.length} onClick={() => anonimlestir("aday", eskiAdaylar.map((a) => a.id))}>Süresi dolan adayları anonimleştir</Button>
-              <Button variant="outline" disabled={!eskiOgrenciler.length} onClick={() => anonimlestir("ogrenci", eskiOgrenciler.map((o) => o.id))}>Süresi dolan öğrencileri anonimleştir</Button>
+              <Button variant="outline" disabled={!eskiOgrenciler.length} onClick={() => {
+                const ids = eskiOgrenciler.map((o) => o.id);
+                if (acikBorc(d, ids) > 0) setOnay({ tur: "ogrenci", ids });
+                else void anonimlestir("ogrenci", ids);
+              }}>Süresi dolan öğrencileri anonimleştir</Button>
               {vazgecenler.length > 0 && <Button variant="ghost" onClick={() => anonimlestir("aday", vazgecenler.map((a) => a.id))}>Tüm vazgeçen adayları ({vazgecenler.length}) şimdi anonimleştir</Button>}
             </>
           ) : (
             <Alert icon={<Lock />}>Anonimleştirmeyi genel yönetici yapar.</Alert>
+          )}
+          <p className="text-xs text-muted-foreground">Otomatik anonimleştirme haftada bir çalışır: {kvkkOtomatikAcik(d) ? "açık" : "kapalı"} (Sistem ayarları).</p>
+          {rol === "genel-yonetici" && elleBekleyen.length > 0 && (
+            <div className="grid gap-2 rounded-md border p-3">
+              <p className="text-sm font-medium">Elle karar bekliyor (açık borç)</p>
+              <ul className="grid gap-1 text-sm">
+                {elleBekleyen.map((b) => (
+                  <li key={b.id} className="flex items-center justify-between gap-2">
+                    <span>{b.ad} · {tutarYazi(b.borc)}</span>
+                    <Button size="sm" variant="ghost" className="text-danger" onClick={() => setOnay({ tur: "ogrenci", ids: [b.id] })}><UserX /> Karar ver</Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           <Alert icon={<Lock />}>
             Veri minimizasyonu: TCKN istenmez; sağlık notu yalnızca gerekirse girilir. Aydınlatma ve açık rıza kayıtta alınır, sürümü ve tarihi saklanır.
@@ -120,12 +149,18 @@ export function Kvkk() {
       </Card>
       <Dialog
         open={!!onay}
-        onClose={() => setOnay(null)}
+        onClose={onayKapat}
         title="Kişisel veriyi anonimleştir"
         description="Ad, telefon, doğum tarihi, sağlık notu, notlar, gönderim metinleri ve işlem kayıtlarındaki ad kalıcı olarak silinir; yoklama ve ödeme istatistikleri kimliksiz olarak korunur. Geri alınamaz. Eski yedeklerdeki kopyalar saklama süresi dolunca silinir."
-        footer={<><Button variant="outline" onClick={() => setOnay(null)}>Vazgeç</Button><Button variant="destructive" onClick={anonim}>Anonimleştir</Button></>}
+        footer={<><Button variant="outline" onClick={onayKapat}>Vazgeç</Button><Button variant="destructive" disabled={borc > 0 && !borcOnay} onClick={anonim}>Anonimleştir</Button></>}
       >
         <Alert tone="warning" icon={<AlertTriangle />}>Aktif kaydı olan öğrencinin kaydı iptal edilir. Aktif öğrencisi olan veli anonimleştirilemez.</Alert>
+        {borc > 0 && (
+          <div className="mt-3 grid gap-2">
+            <Alert tone="warning" icon={<AlertTriangle />}>Açık borç: <strong>{tutarYazi(borc)}</strong>. Tutar kayıtlarda kalır, ancak kişi bilgisi silindiği için borç kime ait olduğu üzerinden takip edilemez.</Alert>
+            <Checkbox checked={borcOnay} onChange={setBorcOnay} label="Açık borcu gördüm, anonimleştirmeyi onaylıyorum" />
+          </div>
+        )}
       </Dialog>
     </div>
   );

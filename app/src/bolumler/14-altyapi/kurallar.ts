@@ -2,7 +2,7 @@
  * Bölüm 14 · Saf iş kuralları (ekran ve sunucu ortak; yalnızca göreli içe aktarma).
  * Yedek biçimi, üretim yapılandırması, ayar sınırları, Excel içe aktarma ve KVKK anonimleştirme.
  */
-import { islemYaz, yeniId, type Aday, type Ayarlar, type Db, type IceAktarma, type Ogrenci, type Rol, type Veli } from "../../data/model";
+import { islemYaz, taksitKalan, yeniId, type Aday, type Ayarlar, type Db, type IceAktarma, type Ogrenci, type Rol, type Veli } from "../../data/model";
 import { KOLEKSIYONLAR, anahtar, type Degisiklik, type Koleksiyon } from "../../data/fark";
 import {
   adSoyadBol,
@@ -171,6 +171,7 @@ export function ayarlarEngeli(yeni: unknown, eski: Ayarlar): Hata {
     if (typeof v !== "number" || !Number.isInteger(v) || v < s.en || v > s.enCok) return `${s.ad} ${s.en} ile ${s.enCok} arasında tam sayı olmalı.`;
   }
   if (typeof yeni.gelmeyenHakDussun !== "boolean") return "Geçersiz ayar.";
+  if (yeni.kvkkOtomatik !== undefined && typeof yeni.kvkkOtomatik !== "boolean") return "Geçersiz ayar.";
   const g = yeni.hatirlatmaGunleri;
   if (JSON.stringify(g) !== JSON.stringify(eski.hatirlatmaGunleri)) {
     if (!Array.isArray(g) || !g.length || g.length > 10 || !g.every((x) => Number.isInteger(x) && x >= -60 && x <= 365)) return "Taksit hatırlatma günleri −60 ile 365 arasında, en çok 10 tam sayı olmalı.";
@@ -453,6 +454,27 @@ function veliMaskele(x: Db, id: string): string {
   return maske;
 }
 
+/** Finansı açık kurumda öğrencilerin kalan taksit toplamı (anonimleştirme öncesi uyarı) */
+export function acikBorc(d: Pick<Db, "moduller" | "taksitler">, ogrenciIds: string[]): number {
+  if (d.moduller?.finans !== true) return 0;
+  const ids = new Set(ogrenciIds);
+  const toplam = d.taksitler.filter((t) => ids.has(t.ogrenciId)).reduce((a, t) => a + Math.max(0, taksitKalan(t)), 0);
+  return Math.round(toplam * 100) / 100;
+}
+export const tutarYazi = (n: number) => `${n.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺`;
+
+/** Karar 2026-11-09: taksit, tahsilat, iade ve gider 10 yıl saklanır (mali müşavir onayı gerekiyor). Anonimleştirme tutara dokunmaz. */
+export const FINANS_SAKLAMA_YIL = 10;
+export type FinansSaklamaKoleksiyonu = "taksitler" | "tahsilatlar" | "iadeler" | "giderler";
+export const FINANS_SAKLAMA_KOLEKSIYONLARI: readonly string[] = ["taksitler", "tahsilatlar", "iadeler", "giderler"];
+/** Kaydın tarihi: taksitte vade, diğerlerinde zaman/tarih; tarihi okunamayan kayıt süresi dolmamış sayılır */
+export function finansSaklamaDoldu(s: { vade?: unknown; zaman?: unknown; tarih?: unknown }, bugun: string): boolean {
+  const t = String(s.vade ?? s.zaman ?? s.tarih ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return false;
+  return `${Number(t.slice(0, 4)) + FINANS_SAKLAMA_YIL}${t.slice(4)}` <= bugun;
+}
+export const FINANS_SAKLAMA_MESAJI = `Finans kaydı ${FINANS_SAKLAMA_YIL} yıllık saklama süresi dolmadan silinemez.`;
+
 export type KvkkTur = "ogrenci" | "veli" | "aday";
 
 /** Sürmekte olan öğrenciye bağlı veli anonimleşirse devamsızlık ve ödeme bildirimleri kişisiz kalır: önce öğrenci sonlandırılır */
@@ -477,17 +499,76 @@ export function anonimlestirmeEngeli(d: Pick<Db, "ogrenciler" | "veliler" | "ada
 const KVKK_TUR_ADI: Record<KvkkTur, string> = { ogrenci: "Öğrenci", veli: "Veli", aday: "Aday" };
 
 /** Hepsi ya da hiçbiri: engel varsa taslağa dokunulmaz. Sunucuda çalışır (gönderim ve işlem kaydını yalnızca sunucu değiştirebilir). */
-export function kvkkAnonimlestir(x: Db, tur: KvkkTur, ids: string[], b: { kullanici: string; bugun: string; zaman: string }): { engel: Hata; sayi: number } {
+export function kvkkAnonimlestir(x: Db, tur: KvkkTur, ids: string[], b: { kullanici: string; bugun: string; zaman: string; borcOnay?: boolean; yalnizSayi?: boolean }): { engel: Hata; sayi: number } {
   const tekil = [...new Set(ids)];
   for (const id of tekil) {
     const engel = anonimlestirmeEngeli(x, tur, id);
     if (engel) return { engel, sayi: 0 };
   }
+  const borc = tur === "ogrenci" ? acikBorc(x, tekil) : 0;
+  if (borc > 0 && b.borcOnay !== true) return { engel: `Açık borç var (${tutarYazi(borc)}). Devam etmek için borcu görüp açıkça onaylamalısınız.`, sayi: 0 };
   let son = "";
   for (const id of tekil) son = tur === "ogrenci" ? ogrenciMaskele(x, id, b.bugun) : tur === "veli" ? veliMaskele(x, id) : adayMaskele(x, id);
-  x.kvkk.unshift({ id: yeniId("kv"), zaman: b.zaman, kisi: tekil.length === 1 ? son : `${tekil.length} ${KVKK_TUR_ADI[tur].toLocaleLowerCase("tr-TR")}`, tur: "silme", durum: "tamamlandi", not: "Kişisel veriler anonimleştirildi; istatistikler korundu." });
-  islemYaz(x, b.kullanici, "KVKK silme", `${tekil.length} ${KVKK_TUR_ADI[tur].toLocaleLowerCase("tr-TR")} verisi anonimleştirildi`);
+  x.kvkk.unshift({ id: yeniId("kv"), zaman: b.zaman, kisi: tekil.length === 1 && !b.yalnizSayi ? son : `${tekil.length} ${KVKK_TUR_ADI[tur].toLocaleLowerCase("tr-TR")}`, tur: "silme", durum: "tamamlandi", not: "Kişisel veriler anonimleştirildi; istatistikler korundu." });
+  islemYaz(x, b.kullanici, "KVKK silme", `${tekil.length} ${KVKK_TUR_ADI[tur].toLocaleLowerCase("tr-TR")} verisi anonimleştirildi${borc > 0 ? `; ${tutarYazi(borc)} açık borç yönetici onayıyla, tutar korunarak` : ""}`);
   return { engel: null, sayi: tekil.length };
+}
+
+/* ---------- Haftalık otomatik anonimleştirme ---------- */
+/** Tek çalıştırmada en çok bu kadar kişi; kalanlar sonraki hafta */
+export const KVKK_OTOMATIK_SINIR = 500;
+export const KVKK_OTOMATIK_ANAHTAR = "kvkkOtomatik";
+export const KVKK_OTOMATIK_ARALIK_GUN = 7;
+export const kvkkOtomatikAcik = (d: Pick<Db, "ayarlar">) => d.ayarlar.kvkkOtomatik !== false;
+export function kvkkOtomatikZamani(d: Pick<Db, "otomasyon">, bugun: string): boolean {
+  const son = d.otomasyon?.[KVKK_OTOMATIK_ANAHTAR];
+  return !son || gunFarki(son, bugun) >= KVKK_OTOMATIK_ARALIK_GUN;
+}
+
+/** Otomatik işte borç, finans modülü kapalı olsa da aranır: geri alınamaz işlemde şüphe yöneticiye kalır */
+const kayitliBorc = (d: Pick<Db, "taksitler">, id: string) => d.taksitler.filter((t) => t.ogrenciId === id).reduce((a, t) => a + Math.max(0, taksitKalan(t)), 0);
+
+export type ElleBekleyen = { id: string; ad: string; borc: number };
+export type OtomatikPlan = { ogrenciIds: string[]; adayIds: string[]; veliIds: string[]; elleBekleyen: ElleBekleyen[] };
+
+/**
+ * Süresi dolan ayrılan öğrenci ve vazgeçen aday (saklamasiDolan* hesabı). İşlenmeyenler:
+ * süren kaydı olan öğrenci; borçlu öğrenci (elleBekleyen). Veli yalnızca tüm çocukları anonimse,
+ * kendisine bağlı borç ve açık adayı yoksa anonimleşir: kardeşi süren veli kalır.
+ */
+export function otomatikAnonimlestirmePlani(d: Db, bugun: string, sinir = KVKK_OTOMATIK_SINIR): OtomatikPlan {
+  const elleBekleyen: ElleBekleyen[] = [];
+  const uygun: string[] = [];
+  for (const o of saklamasiDolanOgrenciler(d, bugun)) {
+    if (d.kayitlar.some((k) => k.ogrenciId === o.id && (k.durum === "aktif" || k.durum === "dondurulmus"))) continue;
+    const borc = kayitliBorc(d, o.id);
+    if (borc > 0) elleBekleyen.push({ id: o.id, ad: `${o.ad} ${o.soyad}`, borc: Math.round(borc * 100) / 100 });
+    else uygun.push(o.id);
+  }
+  const ogrenciIds = uygun.slice(0, sinir);
+  const adayIds = saklamasiDolanAdaylar(d, bugun).map((a) => a.id).slice(0, Math.max(0, sinir - ogrenciIds.length));
+  const islenen = new Set(ogrenciIds);
+  const islenenAday = new Set(adayIds);
+  const adayler = new Set(ogrenciIds.flatMap((id) => d.ogrenciler.find((o) => o.id === id)!.veliIds));
+  const kalan = Math.max(0, sinir - ogrenciIds.length - adayIds.length);
+  const veliIds = [...adayler]
+    .filter((vid) => {
+      const v = d.veliler.find((y) => y.id === vid);
+      if (!v || veliAnonimMi(v)) return false;
+      if (d.ogrenciler.some((o) => o.veliIds.includes(vid) && !islenen.has(o.id) && !ogrenciAnonimMi(o))) return false;
+      if (d.taksitler.some((t) => t.veliId === vid && taksitKalan(t) > 0)) return false;
+      const tel = telefonNormalize(v.telefon);
+      return !d.adaylar.some((a) => !anonimMi(a) && !islenenAday.has(a.id) && a.ogrenciId === undefined && !!tel && telefonNormalize(a.veliTelefon) === tel);
+    })
+    .slice(0, kalan);
+  return { ogrenciIds, adayIds, veliIds, elleBekleyen };
+}
+
+/** Planı ortak anonimleştirmeyle uygular; kayıtlara yalnızca sayı yazılır. Öğrenci önce: veli engeli çocuklara bakar. */
+export function kvkkOtomatikUygula(x: Db, plan: OtomatikPlan, b: { bugun: string; zaman: string }): { ogrenci: number; aday: number; veli: number } {
+  const ortak = { kullanici: "Sistem", bugun: b.bugun, zaman: b.zaman, yalnizSayi: true };
+  const calistir = (tur: KvkkTur, ids: string[]) => (ids.length ? kvkkAnonimlestir(x, tur, ids, ortak).sayi : 0);
+  return { ogrenci: calistir("ogrenci", plan.ogrenciIds), aday: calistir("aday", plan.adayIds), veli: calistir("veli", plan.veliIds) };
 }
 
 /* =========================== Yazma denetimi için paket kuralları =========================== */

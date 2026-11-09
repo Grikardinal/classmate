@@ -1,3 +1,14 @@
+// Yazı tipi uygulamayla paketlidir (karar 2026-11-09): dış sunucuya istek gitmez; latin-ext Türkçe harfleri kapsar
+import "@fontsource/plus-jakarta-sans/latin-400.css";
+import "@fontsource/plus-jakarta-sans/latin-ext-400.css";
+import "@fontsource/plus-jakarta-sans/latin-500.css";
+import "@fontsource/plus-jakarta-sans/latin-ext-500.css";
+import "@fontsource/plus-jakarta-sans/latin-600.css";
+import "@fontsource/plus-jakarta-sans/latin-ext-600.css";
+import "@fontsource/plus-jakarta-sans/latin-700.css";
+import "@fontsource/plus-jakarta-sans/latin-ext-700.css";
+import "@fontsource/plus-jakarta-sans/latin-800.css";
+import "@fontsource/plus-jakarta-sans/latin-ext-800.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";

@@ -102,6 +102,13 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-09 | Ay ortası başlayan sabit maaşlı | Oranlama yok, **yönetici elle düzeltir** | Bölüm 13 ek iş ✅ |
 | 2026-11-09 | Öğretmenin hak ediş görünümü | Salt okunur **"Hak edişim"** | Bölüm 13 ek iş ✅ |
 | 2026-11-09 | Yedek öğretmen | **Oturum bazlı** atama | Bölüm 13 ek iş ✅ |
+| 2026-11-09 | Saklama süresi dolunca anonimleştirme | **Haftalık otomatik açık** (kullanıcı talebiyle ilk yıl beklenmeden); borcu olan öğrenci otomatik işlenmez, yöneticiye kalır | Bölüm 14 ek iş ✅ |
+| 2026-11-09 | Borcu olan öğrencinin anonimleştirilmesi | **Uyarı** çıkar, karar yöneticide; hukuk danışmanına sorulacak | Bölüm 14 ek iş ✅ |
+| 2026-11-09 | Finans kayıtları saklama süresi | Mali müşavir onayıyla **10 yıl** | Bölüm 14 ek iş ✅ |
+| 2026-11-09 | Şube müdürüne içe aktarma | **Açılmaz** (değişiklik yok) | — |
+| 2026-11-09 | Yedek dosyası şifreleme | Canlıya geçerken **şifrelenir** | Canlıya alma |
+| 2026-11-09 | Yazı tipi (Google Fonts) | Uygulamanın **içine alınır** | Bölüm 14 ek iş ✅ |
+| 2026-11-09 | `DEMO` varsayılanı | Yeni davranış korunur (değişiklik yok) | — |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

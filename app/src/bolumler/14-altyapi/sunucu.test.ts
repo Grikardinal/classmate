@@ -76,6 +76,13 @@ describe("KVKK ve aktarım kayıtları", () => {
   });
 });
 
+describe("finans kaydı saklama (10 yıl)", () => {
+  const taksit = { id: "t-s", kayitId: "k", ogrenciId: "o", veliId: "v", subeId: "s1", no: 1, tutar: 100, odenen: 0 };
+  const kaynak = (vade: string): Db => ({ ...structuredClone(db), moduller: { ...db.moduller, finans: true }, taksitler: [{ ...taksit, vade }] });
+  it("süresi dolmamış kayıt silinemez", () => reddedilir(dene((x) => (x.taksitler = []), YONETICI, kaynak("2026-10-01")), /10 yıllık saklama/));
+  it("süre dolsa da genel silme kuralı geçerlidir", () => reddedilir(dene((x) => (x.taksitler = []), YONETICI, kaynak("2010-01-01")), /silinemez; pasife/));
+});
+
 describe("içe aktarma paketi", () => {
   const sezon = db.sezonlar.find((z) => z.aktif)!.id;
   const g = db.gruplar.find((x) => x.subeId === "s1" && x.sezonId === sezon)!;
@@ -150,6 +157,69 @@ describe("içe aktarma paketi", () => {
   });
 });
 
+/* =========================== Haftalık KVKK işi =========================== */
+describe("haftalık otomatik anonimleştirme", () => {
+  const BU = "2026-11-09";
+  const t = (p: object = {}) => ({ bugun: BU, simdi: "04:00", zaman: `${BU}T04:00`, demo: false, yedek: async () => "y", ...p });
+  let vt2: Veritabani;
+  let v: Awaited<ReturnType<typeof uygulamaOlustur>>;
+  const hazirla = () => {
+    const d = v.durum.db;
+    const k = d.kayitlar[0];
+    const o = d.ogrenciler.find((x) => x.id === k.ogrenciId)!;
+    v.durum.db = { ...d, otomasyon: {}, adaylar: [], taksitler: [], ayarlar: { ...d.ayarlar, kvkkOtomatik: undefined }, ogrenciler: [...d.ogrenciler.filter((x) => x.id !== "ot-eski"), { ...o, id: "ot-eski", ad: "Ot", soyad: "Eski", durum: "ayrildi", veliIds: ["ot-v"], birincilVeliId: "ot-v" }], veliler: [...d.veliler.filter((x) => x.id !== "ot-v"), { ...d.veliler[0], id: "ot-v", telefon: "0533 999 88 77" }], kayitlar: [...d.kayitlar.filter((x) => x.id !== "ot-k"), { ...k, id: "ot-k", ogrenciId: "ot-eski", durum: "iptal", tarih: "2023-01-01", grupGecmisi: [{ grupId: k.grupId, tarih: "2023-01-01" }], iptalHesabi: undefined }] };
+  };
+  const eski = () => v.durum.db.ogrenciler.find((x) => x.id === "ot-eski")!;
+  beforeAll(async () => {
+    vt2 = await baglan();
+    v = await uygulamaOlustur({ vt: vt2, sms: new KonsolSms(), push: null, demo: true, uretim: false });
+  }, 60_000);
+  afterAll(async () => vt2.kapat());
+  beforeEach(hazirla);
+
+  it("önce yedek alır, anonimleştirir; kayıtta yalnızca sayı; ikinci çalıştırma işlem yapmaz", async () => {
+    let yedek = 0;
+    const r = await v.kvkkHaftalik(t({ yedek: async () => { yedek++; expect(ogrenciAnonimMi(eski())).toBe(false); } }));
+    expect(r).toMatchObject({ calisti: true, ogrenci: 1, veli: 1 });
+    expect(yedek).toBe(1);
+    expect(ogrenciAnonimMi(eski())).toBe(true);
+    const kayit = v.durum.db.islemler.find((i) => i.islem === "KVKK otomatik")!;
+    expect(kayit.kullanici).toBe("Sistem");
+    expect(kayit.detay).not.toMatch(/Eski/);
+    expect(await v.kvkkHaftalik(t({ bugun: "2026-11-12", yedek: async () => { throw new Error("çağrılmamalı"); } }))).toBeNull();
+  }, 60_000);
+  it("borçlu öğrenci işlenmez", async () => {
+    v.durum.db = { ...v.durum.db, taksitler: [{ id: "ot-t", kayitId: "ot-k", ogrenciId: "ot-eski", veliId: "ot-v", subeId: "s1", no: 1, vade: "2023-02-01", tutar: 100, odenen: 0 }] };
+    expect(await v.kvkkHaftalik(t())).toMatchObject({ ogrenci: 0, veli: 0 });
+    expect(ogrenciAnonimMi(eski())).toBe(false);
+    expect(v.durum.db.islemler.filter((i) => i.islem === "KVKK otomatik").at(-1)!.detay).toMatch(/1 öğrenci borç/);
+  }, 60_000);
+  it("ayar kapalıysa, demoda ve gece 03:00 öncesi çalışmaz", async () => {
+    expect(await v.kvkkHaftalik(t({ demo: true }))).toBeNull();
+    expect(await v.kvkkHaftalik(t({ simdi: "02:59" }))).toBeNull();
+    v.durum.db = { ...v.durum.db, ayarlar: { ...v.durum.db.ayarlar, kvkkOtomatik: false } };
+    expect(await v.kvkkHaftalik(t())).toBeNull();
+    expect(ogrenciAnonimMi(eski())).toBe(false);
+  });
+  it("uygulama demoda açıldıysa varsayılan olarak çalışmaz", async () => {
+    expect(await v.kvkkHaftalik({ bugun: BU, simdi: "04:00" })).toBeNull();
+  });
+  it("yedek hatasında o hafta çalışmaz, hafta sonra yeniden dener", async () => {
+    const hk = console.error;
+    console.error = () => undefined;
+    const r = await v.kvkkHaftalik(t({ yedek: async () => { throw new Error("disk dolu"); } }));
+    console.error = hk;
+    expect(r).toMatchObject({ calisti: false });
+    expect(ogrenciAnonimMi(eski())).toBe(false);
+    expect(await v.kvkkHaftalik(t({ bugun: "2026-11-12" }))).toBeNull();
+    expect(await v.kvkkHaftalik(t({ bugun: "2026-11-16" }))).toMatchObject({ calisti: true, ogrenci: 1 });
+  }, 60_000);
+  it("yalnızca genel yönetici ayarı kapatabilir", () => {
+    reddedilir(dene((x) => (x.ayarlar = { ...x.ayarlar, kvkkOtomatik: false }), SEKRETER), /yalnızca genel yönetici/);
+    expect(dene((x) => (x.ayarlar = { ...x.ayarlar, kvkkOtomatik: false }))).not.toThrow();
+  });
+});
+
 /* =========================== Yedek dosyaları =========================== */
 describe("yedek dosyaları", () => {
   it("yazılır, listelenir, okunur; geçici dosya kalmaz; yol geçişi okunmaz", async () => {
@@ -217,6 +287,7 @@ describe("API", () => {
   it("güvenlik başlıkları ve önbellek yasağı", async () => {
     const r = await iste("/api/durum");
     expect(r.baslik.get("content-security-policy")).toMatch(/default-src 'self'.*frame-ancestors 'self'/);
+    expect(r.baslik.get("content-security-policy")).not.toMatch(/google|gstatic/);
     expect(r.baslik.get("x-content-type-options")).toBe("nosniff");
     expect(r.baslik.get("x-frame-options")).toBe("SAMEORIGIN");
     expect(r.baslik.get("cache-control")).toBe("no-store");
@@ -332,6 +403,19 @@ describe("API", () => {
   });
 
   describe("KVKK anonimleştirme ucu", () => {
+    it("açık borçlu öğrenci açık onay olmadan 409; onayla anonimleşir, taksit kalır", async () => {
+      const o = u.durum.db.ogrenciler.find((x) => x.durum === "aktif" && !ogrenciAnonimMi(x))!;
+      const finansOnce = u.durum.db.moduller.finans;
+      u.durum.db = { ...u.durum.db, moduller: { ...u.durum.db.moduller, finans: true }, taksitler: [...u.durum.db.taksitler, { id: "t-borc", kayitId: "k", ogrenciId: o.id, veliId: o.veliIds[0], subeId: "s1", no: 1, vade: "2026-10-01", tutar: 300, odenen: 0 }] };
+      const r = await iste("/api/kvkk/anonimlestir", { tur: "ogrenci", ids: [o.id] });
+      expect(r.durum).toBe(409);
+      expect(r.veri.hata).toMatch(/Açık borç.*₺/);
+      expect((await iste("/api/kvkk/anonimlestir", { tur: "ogrenci", ids: [o.id], borcOnay: "evet" })).durum).toBe(409);
+      expect((await iste("/api/kvkk/anonimlestir", { tur: "ogrenci", ids: [o.id], borcOnay: true })).durum).toBe(200);
+      expect(ogrenciAnonimMi(u.durum.db.ogrenciler.find((x) => x.id === o.id)!)).toBe(true);
+      expect(u.durum.db.taksitler.find((t) => t.id === "t-borc")!.tutar).toBe(300);
+      u.durum.db = { ...u.durum.db, moduller: { ...u.durum.db.moduller, finans: finansOnce }, taksitler: u.durum.db.taksitler.filter((t) => t.id !== "t-borc") };
+    });
     it("aktif çocuklu veli 409; geçersiz istek 400", async () => {
       const o = u.durum.db.ogrenciler.find((x) => x.durum === "aktif" && !ogrenciAnonimMi(x))!;
       expect((await iste("/api/kvkk/anonimlestir", { tur: "veli", ids: [o.veliIds[0]] })).durum).toBe(409);

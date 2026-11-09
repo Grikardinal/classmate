@@ -31,7 +31,7 @@ import {
   sonGenelYoneticiEngeli,
   yonetimEngeli,
 } from "../src/bolumler/02-kullanicilar/kurallar";
-import { ayarlarEngeli, geriAlmaEngeli, iceAktarmaSatirEngeli } from "../src/bolumler/14-altyapi/kurallar";
+import { FINANS_SAKLAMA_KOLEKSIYONLARI, FINANS_SAKLAMA_MESAJI, ayarlarEngeli, finansSaklamaDoldu, geriAlmaEngeli, iceAktarmaSatirEngeli } from "../src/bolumler/14-altyapi/kurallar";
 import { adayYazmaEngeli, anonimMi, adTemizle, varsayilanSorumlu } from "../src/bolumler/03-on-kayit/kurallar";
 import {
   adayYenidenAc,
@@ -498,6 +498,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
       const eski = eskiler.get(id);
       if (!eski) continue;
       if (!kapsamda(satirSubeleri(onceki, k, eski), k)) hata("Bu kayıt şube kapsamınız dışında.");
+      if (FINANS_SAKLAMA_KOLEKSIYONLARI.includes(k) && !finansSaklamaDoldu(eski, zaman.slice(0, 10))) hata(FINANS_SAKLAMA_MESAJI);
       // Toplu silme yalnızca aynı pakette geri alınan partinin kendi satırları için
       const iceAktarmaGeriAl =
         ((k === "ogrenciler" || k === "kayitlar") && !!eski.iceAktarmaId && !!geriAlinan(eski.iceAktarmaId as string, k === "ogrenciler" ? "ogrenciIds" : "kayitIds", id)) ||

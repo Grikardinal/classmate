@@ -417,6 +417,8 @@ export type Ayarlar = {
   saklamaAyAday: number;
   saklamaAyOgrenci: number;
   oturumGun: number;
+  /** Saklama süresi dolanların haftalık otomatik anonimleştirilmesi (Bölüm 14); alan yoksa açık */
+  kvkkOtomatik?: boolean;
 };
 
 export type Db = {

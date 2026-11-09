@@ -37,7 +37,7 @@ const push = await pushHazirla(vt, process.env.PUSH_ILETISIM ?? "bilgi@classmate
   return null;
 });
 for (const u of uretimUyarilari({ uretim, demo, sms: sms.ad, postgres: !!process.env.DATABASE_URL })) console.warn("UYARI:", u);
-const { app, otomasyonCalistir, gunlukYedek } = await uygulamaOlustur({ vt, sms, push, demo, uretim });
+const { app, otomasyonCalistir, gunlukYedek, kvkkHaftalik } = await uygulamaOlustur({ vt, sms, push, demo, uretim });
 
 if (uretim) {
   app.use("/*", serveStatic({ root: "./dist" }));
@@ -52,6 +52,7 @@ serve({ fetch: app.fetch, port }, () => {
 const zamanlayici = setInterval(() => {
   void otomasyonCalistir().catch((e) => console.error("Otomasyon hatası:", e));
   void gunlukYedek().catch((e) => console.error("Yedek hatası:", e));
+  void kvkkHaftalik().catch(() => console.error("KVKK otomatik işi başarısız"));
 }, 60_000);
 void otomasyonCalistir().catch((e) => console.error("Otomasyon hatası:", e));
 
