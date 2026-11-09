@@ -27,7 +27,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 08 | Ödev takibi | `app/src/bolumler/08-odevler` | 3 | ✅ |
 | 09 | Etüt ve birebir ders | `app/src/bolumler/09-etut` | 4 | ✅ |
 | 10 | İletişim ve bildirimler | `app/src/bolumler/10-iletisim` | 5 | ✅ |
-| 11 | Veli ve öğrenci portalı | `app/src/bolumler/11-veli-portali` | 1 | ⏳ |
+| 11 | Veli ve öğrenci portalı | `app/src/bolumler/11-veli-portali` | 1 | ✅ |
 | 12 | Yönetim paneli ve raporlar | `app/src/bolumler/12-yonetim-paneli` | 2 | ⏳ |
 | 13 | Personel | `app/src/bolumler/13-personel` | 3 | ⏳ |
 | 14 | Altyapı, güvenlik, KVKK | `app/src/bolumler/14-altyapi` | 4 | ⏳ |

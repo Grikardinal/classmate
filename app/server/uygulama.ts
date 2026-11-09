@@ -49,6 +49,7 @@ import {
 } from "./kimlik";
 import { izinEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { smsIzniUygula } from "../src/bolumler/08-odevler/kurallar";
+import { GIRIS_SINIRLARI, YAZMA_SINIRLARI, kodHataMesaji } from "../src/bolumler/11-veli-portali/kurallar";
 import { SLOT_DOLU, ogrencileriCikar, veliIptalEngeli, veliRandevuPlani } from "../src/bolumler/09-etut/kurallar";
 import { TAKILI_HATA, pushAbonelikTemizle, takiliSatirlar } from "../src/bolumler/10-iletisim/kurallar";
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
@@ -443,6 +444,12 @@ export async function uygulamaOlustur(s: Secenekler) {
   });
 
   /* ---------- Veli portalı ---------- */
+  // Kişisel veri tarayıcı/ara katman önbelleğinde kalmasın (çıkıştan sonra da)
+  app.use("/api/veli/*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-store");
+  });
+  const hak = (anahtar: string, s: { sinir: number; pencere: number }) => denemeHakki(anahtar, s.sinir, s.pencere);
   const veliBul = (veliId: string) => {
     const v = durum.db.veliler.find((x) => x.id === veliId);
     const cocukVar = v && durum.db.ogrenciler.some((o) => o.veliIds.includes(v.id) && o.durum === "aktif" && aktifKayit(durum.db, o.id));
@@ -453,14 +460,19 @@ export async function uygulamaOlustur(s: Secenekler) {
     const { telefon } = await c.req.json<{ telefon: string }>();
     const tel = telefonNormalize(String(telefon ?? ""));
     if (!tel) return hata(c, "Geçerli bir cep telefonu girin.");
-    if (!denemeHakki(`kod:${tel}`, 3, 10 * 60_000) || !denemeHakki(`kodip:${ip(c)}`, 20, 10 * 60_000))
-      return hata(c, "Çok fazla kod istendi. 10 dakika sonra tekrar deneyin.", 429);
-    const v = durum.db.veliler.find((x) => x.telefon === tel && veliBul(x.id));
-    // Numaranın kayıtlı olup olmadığı dışarı sızdırılmaz: her durumda aynı yanıt
-    if (!v) return c.json({ tamam: true });
+    // Sıra önemli: IP sınırına takılan istek numaranın hakkını tüketmesin
+    if (!hak(`kodip:${ip(c)}`, GIRIS_SINIRLARI.kodIp) || !hak(`kod:${tel}`, GIRIS_SINIRLARI.kodTelefon) || !hak(`kodgun:${tel}`, GIRIS_SINIRLARI.kodTelefonGun))
+      return hata(c, "Çok fazla kod istendi. Bir süre sonra tekrar deneyin.", 429);
+    const v = durum.db.veliler.find((x) => telefonNormalize(x.telefon) === tel && veliBul(x.id));
+    // Numaranın kayıtlı olup olmadığı sızdırılmaz: aynı yanıt ve /giris'te aynı hata akışı için kayıtsız numaraya da (gönderilmeyen) kod üretilir
+    if (!v) {
+      kodUret(`veli:${tel}`, "");
+      return c.json({ tamam: true });
+    }
     const kod = kodUret(`veli:${tel}`, v.id);
-    const subeId = aktifKayit(durum.db, cocuklari(v.id)[0]?.id ?? "")?.subeId ?? "s1";
-    await kodGonder(tel, kod, v.id, subeId);
+    const subeId = cocuklari(v.id).map((o) => aktifKayit(durum.db, o.id)).find(Boolean)?.subeId ?? "s1";
+    // Sağlayıcı beklenmez: yanıt süresi numaranın kayıtlı olduğunu ele vermesin
+    void kodGonder(tel, kod, v.id, subeId).catch((e) => console.error("Giriş kodu gönderilemedi", e));
     return c.json({ tamam: true, demoKod: demo && sms.ad === "konsol" ? kod : undefined });
   });
 
@@ -468,11 +480,12 @@ export async function uygulamaOlustur(s: Secenekler) {
     const { telefon, kod } = await c.req.json<{ telefon: string; kod: string }>();
     const tel = telefonNormalize(String(telefon ?? ""));
     if (!tel) return hata(c, "Geçerli bir cep telefonu girin.");
+    if (!hak(`girisip:${ip(c)}`, GIRIS_SINIRLARI.girisIp)) return hata(c, "Çok fazla deneme. Bir süre sonra tekrar deneyin.", 429);
     const r = kodDogrula(`veli:${tel}`, String(kod ?? ""));
-    if (!r.tamam)
-      return hata(c, r.neden === "deneme" ? "Çok fazla hatalı deneme. Yeni kod isteyin." : r.neden === "sure" ? "Kodun süresi doldu. Yeni kod isteyin." : r.neden === "yok" ? "Önce kod isteyin." : `Kod hatalı. Kalan deneme: ${r.kalan}`, 401);
+    if (!r.tamam) return hata(c, kodHataMesaji(r.neden, r.kalan), 401);
     const v = veliBul(r.veri);
-    if (!v) return hata(c, "Hesap bulunamadı.", 401);
+    if (!v) return hata(c, kodHataMesaji("hatali"), 401);
+    await oturumKapat(vt, getCookie(c, VELI_CEREZ)); // aynı tarayıcıdaki önceki oturum açık kalmasın
     const saat = durum.db.ayarlar.oturumGun * 24;
     cerez(c, VELI_CEREZ, await oturumAc(vt, "veli", v.id, saat, cihaz(c)), saat);
     if (v.portalDavet !== "giris-yapti") await sunucuDegisikligi((x) => (x.veliler = x.veliler.map((y) => (y.id === v.id ? { ...y, portalDavet: "giris-yapti" } : y))));
@@ -483,23 +496,33 @@ export async function uygulamaOlustur(s: Secenekler) {
     const o = await oturumBul(vt, getCookie(c, VELI_CEREZ), "veli");
     const v = o && veliBul(o.sahipId);
     if (!v) return hata(c, "Oturum açmanız gerekiyor.", 401);
+    if (c.req.method !== "GET" && !c.req.path.endsWith("/cikis") && !hak(`veliyaz:${v.id}`, YAZMA_SINIRLARI.genel)) return hata(c, "Çok fazla istek. Biraz sonra tekrar deneyin.", 429);
     c.set("veli", v);
     await next();
   });
   app.get("/api/veli/ben", veliGerekli, (c) => c.json({ tur: "veli", veli: c.get("veli") }));
   app.get("/api/veli/veri", veliGerekli, (c) => c.json(veliVerisi(durum.db, c.get("veli").id)));
+  const pushCihaziVar = async (veliId: string) => (await vt.q("select 1 from push_abonelik where veli_id = $1 limit 1", [veliId])).length > 0;
   app.post("/api/veli/cikis", veliGerekli, async (c) => {
+    // Bu cihazın aboneliği silinir (yalnızca kendi kaydı); başka cihazı kalmadıysa kanal SMS'e döner ve "Bildirimleri aç" yeniden çıkar
+    const v = c.get("veli");
+    const { endpoint } = await c.req.json<{ endpoint?: unknown }>().catch(() => ({ endpoint: undefined }));
+    if (typeof endpoint === "string" && endpoint) {
+      await vt.q("delete from push_abonelik where endpoint = $1 and veli_id = $2", [endpoint, v.id]);
+      if (v.pushAcik && !(await pushCihaziVar(v.id))) await sunucuDegisikligi((x) => (x.veliler = x.veliler.map((y) => (y.id === v.id ? { ...y, pushAcik: false } : y))));
+    }
     await oturumKapat(vt, getCookie(c, VELI_CEREZ));
     deleteCookie(c, VELI_CEREZ, { path: "/" });
     return c.json({ tamam: true });
   });
 
-  const cocukMu = (veliId: string, ogrenciId: string) => cocuklari(veliId).some((o) => o.id === ogrenciId);
+  const cocukMu = (veliId: string, ogrenciId: string) => cocuklari(veliId).some((o) => o.id === ogrenciId && aktifKayit(durum.db, o.id));
 
   app.post("/api/veli/izin", veliGerekli, async (c) => {
     const v = c.get("veli");
     const { ogrenciId, tarih, not } = await c.req.json<{ ogrenciId: string; tarih: string; not: string }>();
     if (!cocukMu(v.id, ogrenciId)) return hata(c, "Bu öğrenci için işlem yapamazsınız.", 403);
+    if (!hak(`izin:${v.id}`, YAZMA_SINIRLARI.izin)) return hata(c, "Çok fazla istek. Bir saat sonra tekrar deneyin.", 429);
     const engel = izinEngeli({ ogrenciId, tarih }, durum.db, BUGUN);
     if (engel) return hata(c, engel);
     await sunucuDegisikligi((x) => {
@@ -516,6 +539,8 @@ export async function uygulamaOlustur(s: Secenekler) {
     const { ogrenciId, ogretmenId, tarih, bas } = await c.req.json<{ ogrenciId: string; ogretmenId: string; tarih: string; bas: string }>();
     if (!durum.db.moduller.etut) return hata(c, "Etüt modülü kapalı.", 403);
     if (!cocukMu(v.id, ogrenciId)) return hata(c, "Bu öğrenci için işlem yapamazsınız.", 403);
+    // Her randevu onay bildirimi üretir (SMS maliyeti): al-iptal döngüsü sınırlanır
+    if (!hak(`randevu:${v.id}`, YAZMA_SINIRLARI.randevu)) return hata(c, "Çok fazla istek. Bir saat sonra tekrar deneyin.", 429);
     const sonuc: { engel: string | null } = { engel: null };
     await sunucuDegisikligi((x) => {
       const plan = veliRandevuPlani(x, { ogrenciId, ogretmenId, tarih, bas }, { bugun: BUGUN, simdi: SIMDI });
@@ -568,6 +593,8 @@ export async function uygulamaOlustur(s: Secenekler) {
     for (const k of ["pushAcik", "izinSms", "izinTanitim"] as const) if (typeof b[k] === "boolean") p[k] = b[k];
     // Bildirimi kapatan velinin cihazlarına push gitmesin (yalnızca kendi abonelikleri)
     if (p.pushAcik === false) await vt.q("delete from push_abonelik where veli_id = $1", [v.id]);
+    // Cihaz aboneliği olmadan "bildirim açık" işaretlenmez
+    if (p.pushAcik === true && !(await pushCihaziVar(v.id))) return hata(c, "Önce bu cihazda bildirim izni verin.", 409);
     await sunucuDegisikligi((x) => (x.veliler = x.veliler.map((y) => (y.id === v.id ? { ...y, ...p } : y))));
     return c.json({ tamam: true });
   });

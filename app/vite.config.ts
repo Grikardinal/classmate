@@ -15,5 +15,7 @@ export default defineConfig({
   test: {
     // Sunucu testleri gömülü PostgreSQL başlattığı için sırayla
     fileParallelism: false,
+    // Testler geliştirme veritabanına (.veri/pg) asla yazmasın
+    env: { PGLITE_DIZIN: "memory://", DATABASE_URL: "" },
   },
 } as import("vite").UserConfig);

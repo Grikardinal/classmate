@@ -76,6 +76,7 @@ import { devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzel
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
 import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
 import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi, SABLON_UYMUYOR_HATA } from "../src/bolumler/10-iletisim/kurallar";
+import { veliGonderimGorunur } from "../src/bolumler/11-veli-portali/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -1315,28 +1316,39 @@ export function veliVerisi(db: Db, veliId: string): Db {
   const etut = veliEtutVerisi(db, ogrIds, subeIds);
   const ogretmenIds = new Set([...program.map((p) => p.ogretmenId), ...etut.ogretmenIds, ...db.gruplar.filter((g) => grupIds.has(g.id)).map((g) => g.rehberId)]);
   const v = db.veliler.find((x) => x.id === veliId)!;
+  const gorunenSubeler = new Set([...subeIds, ...etut.randevular.filter((r) => r.ogrenciIds.length).map((r) => r.subeId)]);
+  // İzin listesi: "...db" yok; Db'ye eklenen yeni alan derleme hatası verir, kendiliğinden veliye gitmez
   return {
-    ...db,
-    kurum: db.kurum,
+    surum: db.surum,
+    moduller: db.moduller,
+    kurum: { ad: db.kurum.ad, eposta: db.kurum.eposta, vergiNo: "", makbuzBasligi: "", logo: db.kurum.logo },
+    subeler: db.subeler.filter((s) => gorunenSubeler.has(s.id)).map((s) => ({ ...s, mudur: "" })),
+    sezonlar: db.sezonlar,
+    dersler: db.dersler,
+    derslikler: db.derslikler.filter((x) => gorunenSubeler.has(x.subeId)),
+    dersSaatleri: db.dersSaatleri.filter((x) => gorunenSubeler.has(x.subeId)),
+    fiyatListesi: [],
     personel: db.personel
       .filter((p) => ogretmenIds.has(p.id))
-      .map((p) => ({ ...p, telefon: "", eposta: "", ucretTipi: "sabit", dersUcreti: 0, sabitUcret: 0, baslangic: "" })),
+      .map((p) => ({ id: p.id, ad: p.ad, soyad: p.soyad, gorev: p.gorev, telefon: "", eposta: "", subeIds: [], anaSubeId: "", dersIds: [], baslangic: "", aktif: p.aktif, ucretTipi: "sabit", dersUcreti: 0, sabitUcret: 0 })),
     kullanicilar: [],
     girisler: [],
     rolYetkileri: {} as Db["rolYetkileri"],
     veliler: [v],
-    ogrenciler: cocuklar.map((o) => ({ ...o, notlar: [] })),
-    kayitlar: kayitlar.map((k) => ({ ...k })),
+    // Diğer velinin kimliği, personel notu ve sağlık notu gitmez
+    ogrenciler: cocuklar.map(({ iceAktarmaId: _i, ...o }) => ({ ...o, notlar: [], saglikNotu: "", veliIds: [veliId], birincilVeliId: veliId })),
+    // Sözleşme fiyatı, indirim ve iptal hesabı portalda kullanılmaz (personel adı da içerir)
+    kayitlar: kayitlar.map((k) => ({ id: k.id, ogrenciId: k.ogrenciId, sezonId: k.sezonId, subeId: k.subeId, grupId: k.grupId, sozlesmeNo: "", durum: k.durum, tarih: k.tarih, grupGecmisi: [], ekHizmetler: [], kvkkOnay: null, listeFiyati: 0, indirimler: [], net: 0 })),
     gruplar: db.gruplar.filter((g) => grupIds.has(g.id)),
     program,
     tatiller: db.tatiller.filter((t) => !t.subeId || subeIds.has(t.subeId)),
     iptaller: db.iptaller.filter((i) => program.some((p) => i.oturumId.startsWith(p.id + "_"))),
     yoklamalar: Object.fromEntries(
       Object.values(db.yoklamalar)
-        .filter((y) => grupIds.has(y.grupId))
+        .filter((y) => grupIds.has(y.grupId) && Object.keys(y.durumlar).some((o) => ogrIds.has(o)))
         .map((y) => [y.oturumId, { ...y, durumlar: Object.fromEntries(Object.entries(y.durumlar).filter(([o]) => ogrIds.has(o))) }]),
     ),
-    izinler: db.izinler.filter((i) => ogrIds.has(i.ogrenciId)),
+    izinler: db.izinler.filter((i) => ogrIds.has(i.ogrenciId)).map((i) => ({ ...i, veliId })),
     adaylar: [],
     odevler: db.moduller?.odev === false ? [] : veliOdevleri(db.odevler, kayitlar, ogrIds),
     // Başka öğrencilerin randevuları ve öğretmenin grup dersleri yalnızca "dolu saat" olarak görünür (Bölüm 09)
@@ -1346,11 +1358,11 @@ export function veliVerisi(db: Db, veliId: string): Db {
     doluSaatler: etut.doluSaatler,
     olaylar: [],
     // Sağlayıcı hatası, maliyet ve alıcı satırı veliye gitmez
-    gonderimler: db.gonderimler.filter((g) => g.veliId === veliId && g.olay !== "otp").map((g) => ({ ...g, hata: undefined, gonderimBasladi: undefined, deneme: undefined, adayId: undefined, alici: "", maliyet: 0 })),
+    gonderimler: db.gonderimler.filter((g) => g.veliId === veliId && veliGonderimGorunur(g, db.olaylar, db.moduller)).map((g) => ({ ...g, hata: undefined, gonderimBasladi: undefined, deneme: undefined, adayId: undefined, alici: "", maliyet: 0 })),
     duyurular: db.duyurular
       .filter((d) => !d.zamanlanmis && d.aliciVeliIds.includes(veliId))
-      .map((d) => ({ ...d, subeIds: undefined, aliciVeliIds: [veliId], okuyanVeliIds: d.okuyanVeliIds.includes(veliId) ? [veliId] : [] })),
-    taksitler: db.moduller.finans ? db.taksitler.filter((t) => ogrIds.has(t.ogrenciId)) : [],
+      .map((d) => ({ ...d, subeIds: undefined, gonderen: "", hedef: { tur: "tum" as const, deger: null }, aliciVeliIds: [veliId], okuyanVeliIds: d.okuyanVeliIds.includes(veliId) ? [veliId] : [] })),
+    taksitler: db.moduller.finans ? db.taksitler.filter((t) => ogrIds.has(t.ogrenciId)).map((t) => ({ ...t, veliId })) : [],
     tahsilatlar: [],
     giderler: [],
     virmanlar: [],
@@ -1361,5 +1373,6 @@ export function veliVerisi(db: Db, veliId: string): Db {
     avanslar: [],
     hakedisDurum: {},
     ayarlar: { ...db.ayarlar, smsBirimFiyat: 0 },
+    otomasyon: {},
   };
 }
