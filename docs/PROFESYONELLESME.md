@@ -110,6 +110,31 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-09 | Yazı tipi (Google Fonts) | Uygulamanın **içine alınır** | Bölüm 14 ek iş ✅ |
 | 2026-11-09 | `DEMO` varsayılanı | Yeni davranış korunur (değişiklik yok) | — |
 
+## Yapılacaklar (2026-11-09)
+
+### Sırada
+- [ ] **Kütüphane güvenlik güncellemesi.** `npm audit`: 10 açık; 5 yüksek açık canlı pakette (`hono`, `@hono/node-server`, `react-router-dom`), kalanı geliştirme araçlarında. `hono`, `@hono/node-server`, `vitest` doğrudan; `react-router-dom` 6.30.6, `vite` 6.4.6. `npm audit fix --force` kullanılmaz; sonra `npm run check`. Gerçek veriden önce şart.
+- [ ] **Render otomatik kurulum** (kullanıcı): Settings > Build & Deploy > Auto-Deploy = On Commit. Kapalı kaldıkça her gönderimde Manual Deploy gerekir.
+- [ ] **Vercel fatura adresi** (kullanıcı): uyarı duruyor; alan adının otomatik yenilenmesi (Kasım 2027) aksamasın.
+
+### Gerçek kurum verisine geçmeden önce
+- [ ] Ücretli sunucu ve yönetilen PostgreSQL (Render ücretli veya Türkiye'de sunucu; şu anki yayın ücretsiz demodur, veri sıfırlanır)
+- [ ] `DEMO=0`, güçlü `ILK_YONETICI_PAROLA`
+- [ ] Netgsm güvenli kimlik; ters vekil `x-forwarded-for`; yedek dosyası şifreleme
+- [ ] Mali müşavir onayı (finans kayıtları 10 yıl) ve hukuk danışmanı onayı (anonimleştirme, aydınlatma ve rıza metinleri)
+- [ ] Ayrıntılı liste: `app/src/bolumler/14-altyapi/README.md`, "Canlıya alma kontrol listesi"
+
+### Görülecek küçük konular
+- [ ] Ekranların gerçek tarayıcıda baştan sona denenmesi (otomatik testler arayüzü görsel olarak denetlemiyor)
+- [ ] Vercel'de kök alan adında eski otomatik ALIAS kaydı (`cname.vercel-dns-017.com`) duruyor; site aniden açılmazsa ilk bakılacak yer
+- [ ] Çok kiracılı yapı yok: her müşteri ayrı kurulum ister
+- [ ] Varsayılanı "böyle kalsın" olan onaylar: tüm çocukları anonimleşen velinin otomatik anonimleşmesi; hak edişte şube müdürü düzeltmesi yalnızca tüm şubeler kapsamındaysa; çok şubeli ödeme giderinin iptal zinciri
+
+### Yayın bilgileri
+- Canlı adres: https://classmatekurs.app (Render hizmeti `classmate-demo`, alan adı ve DNS Vercel `grikardinal` ekibinde)
+- Tanıtım filmi: `app/public/tanitim.mp4`. Kaynak kod ve müzik depoda değil, `D:\classmate-alternatif-video` klasöründe; paketleri `D:\Remotion` üzerinden kullanır. Yapımcı adı veya içerik değişirse oradan yeniden üretilir.
+- Fiyatlar (yıllık, KDV dahil): 1 şube 24.000 ₺, 2 şube 42.000 ₺, 3 şube 57.000 ₺, sonraki her şube +15.000 ₺ (`app/src/tanitim/fiyat.ts`)
+
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır
 - `npm run typecheck`, `npm test`, `npm run build`, `npm run smoke`
