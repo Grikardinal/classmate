@@ -96,6 +96,34 @@ describe("kasa raporu", () => {
   });
 });
 
+describe("kasa raporu tarih aralığı", () => {
+  const y = okumaSuz(FINANS, YONETICI, BUGUN);
+  const uret = (bas?: string, bit?: string) => rapor("kasa").uret(y, { ...baglam(yalnizS1), bas, bit });
+  it("varsayılan: aralıksız sonuç aynı kalır", () => {
+    expect(uret().satirlar).toEqual(uret("", "").satirlar);
+    expect(uret().satirlar.length).toBeGreaterThanOrEqual(5);
+  });
+  it("aslı aralık dışında kalan iptalin ters kaydı kendi gününde görünür", () => {
+    const s = uret("2030-03-05", "2030-03-05");
+    expect(s.satirlar.map((r) => r[2])).toEqual(["Tahsilat iptali"]);
+    expect(s.satirlar[0].slice(4)).toEqual([0, 100]);
+  });
+  it("aslı ve iptali aynı aralıktaysa net sıfır", () => {
+    const s = uret("2030-03-04", "2030-03-05");
+    expect(s.satirlar.reduce((t, r) => t + Number(r[4]) - Number(r[5]), 0)).toBe(0);
+  });
+  it("başlangıç bitişten sonraysa satır yok; dışa aktarma da boş", () => {
+    const s = uret("2030-03-31", "2030-03-01");
+    expect(s.satirlar).toEqual([]);
+    expect(raporCsv(s).split("\r\n")).toHaveLength(1);
+  });
+  it("dışa aktarma aralığa uyar", () => {
+    const metin = raporCsv(uret("2030-03-06", "2030-03-06"));
+    expect(metin).toContain("I1");
+    expect(metin).not.toContain("M1");
+  });
+});
+
 describe("devamsızlık ve katılım", () => {
   const d = structuredClone(FINANS);
   const sezonId = d.sezonlar.find((s) => s.aktif)!.id;

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { ornekSatirlar, personelOrnek, personelSablon, sablonBasliklar } from "@/bolumler/14-altyapi/sablonlar";
 import {
   adSoyadBol,
   cakismaBul,
   csvCoz,
+  csvHucre,
   csvOlustur,
+  csvOnekiniKaldir,
   devamsizlikOzeti,
   gecikmeGunu,
   hakEdis,
@@ -150,6 +153,65 @@ describe("hak ediş (13)", () => {
     expect(hakEdis("sabit", 10, 400, 20000)).toBe(20000);
     expect(hakEdis("ders", 10, 400, 20000)).toBe(4000);
     expect(hakEdis("karma", 10, 400, 20000)).toBe(24000);
+  });
+});
+
+describe("CSV güvenliği (12, 07, 14)", () => {
+  it.each(["=1+1", "-2+3", "+cmd|calc", "@SUM(A1)", "  =cmd", "\t=1", "-Ali"])("formül etkisizleşir: %j", (s) => expect(csvHucre(s).startsWith("'")).toBe(true));
+  it.each(["-5", "+90 532 410 11 22", "-12,5", "+90 (532) 410"])("meşru sayısal değer bozulmaz: %j", (s) => expect(csvHucre(s)).toBe(s));
+  it("sıradan metin ve tarih değişmez", () => {
+    expect(csvHucre("Ayşe")).toBe("Ayşe");
+    expect(csvHucre("2030-03-15")).toBe("2030-03-15");
+  });
+  it("sayı hücresi: işaret korunur, ondalık virgül; NaN boş; satır sonu tek satıra iner", () => {
+    expect(csvHucre(-5)).toBe("-5");
+    expect(csvHucre(12.5)).toBe("12,5");
+    expect(csvHucre(NaN)).toBe("");
+    expect(csvHucre("a\r\nb")).toBe("a b");
+  });
+  it("csvOlustur her hücreyi temizler; ayraçlı değer tırnaklanır", () => {
+    expect(csvOlustur([["=1;2", "@x"]])).toContain(`"'=1;2";'@x`);
+  });
+  it("içe aktarmada önek veriye girmez, meşru kesme işareti kalır", () => {
+    expect(csvCoz(csvOlustur([["Ad", "Not"], ["=cmd", "@x"], ["+a", "-b"]])).slice(1)).toEqual([["=cmd", "@x"], ["+a", "-b"]]);
+    expect(csvOnekiniKaldir("'=x")).toBe("=x");
+    expect(csvOnekiniKaldir("'Ali")).toBe("'Ali");
+    expect(csvOnekiniKaldir("O'Neil")).toBe("O'Neil");
+  });
+});
+
+describe("şablon indir → doldur → içe aktar (14)", () => {
+  /** İndirilen dosya: Bölüm 14 ekranındaki gibi başlık + örnek satır */
+  const indir = (b: string[], s: string[]) => csvOlustur([b, s]);
+  it("öğrenci şablonu hatasız döner", () => {
+    const t = csvCoz(indir(sablonBasliklar, ornekSatirlar[0]));
+    expect(t).toEqual([sablonBasliklar, ornekSatirlar[0]]);
+    const satir = satirCoz(t[1], sutunEslestir(t[0]), 2);
+    expect(satir.hatalar).toEqual([]);
+    expect(satir.veliTelefon).toBe("0532 410 11 22");
+  });
+  it("tüm örnek satırlar temizlemeden etkilenmez", () => {
+    for (const s of ornekSatirlar) expect(csvCoz(indir(sablonBasliklar, s))[1].slice(0, s.length)).toEqual(s.map((h) => h.trim()));
+  });
+  it("kullanıcının doldurduğu +90 telefon ve formüllü ad", () => {
+    const dolu = ["=Deniz Yalçın", "5", "", "", "Selma Yalçın", "+90 533 555 66 77", "5-A", "Merkez"];
+    const t = csvCoz(indir(sablonBasliklar, dolu));
+    const satir = satirCoz(t[1], sutunEslestir(t[0]), 2);
+    expect(satir.ad).toBe("=Deniz");
+    expect(satir.veliTelefon).toBe("0533 555 66 77");
+    expect(satir.hatalar).toEqual([]);
+  });
+  it("Excel'de kaydedilip önekiyle gelen CSV de temiz çözülür", () => {
+    const t = csvCoz(`${sablonBasliklar.join(";")}\n'=Deniz Yalçın;5;;;Selma;'+90 533 555 66 77;;`);
+    expect(t[1][0]).toBe("=Deniz Yalçın");
+    expect(telefonNormalize(t[1][5])).toBe("0533 555 66 77");
+  });
+  it("personel şablonu hatasız döner", () => {
+    const t = csvCoz(indir(personelSablon, personelOrnek[0]));
+    expect(t).toEqual([personelSablon, personelOrnek[0]]);
+    const e = basliklariEslestir(t[0], personelAlanlari);
+    expect(gorevCoz(t[1][e.gorev!])).toBe("ogretmen");
+    expect(telefonNormalize(t[1][e.telefon!])).toBe("0533 410 22 11");
   });
 });
 

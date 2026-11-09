@@ -71,12 +71,12 @@ export function kayitOzeti(d: Pick<Db, "kayitlar" | "gruplar">, secenek: { sezon
   const gruplar = d.gruplar.filter((g) => g.sezonId === secenek.sezonId && secenek.sg(g.subeId));
   const kapasite = gruplar.reduce((s, g) => s + g.kapasite, 0);
   const ay = secenek.bugun.slice(0, 7);
-  return { kayitlar, aktif, gruplar, kapasite, doluluk: yuzde(aktif.length, kapasite), buAyYeni: aktif.filter((k) => k.tarih.slice(0, 7) === ay).length };
+  return { kayitlar, aktif, gruplar, kapasite, doluluk: yuzde(aktif.length, kapasite), buAyYeni: aktif.filter((k) => !k.iceAktarmaId && k.tarih.slice(0, 7) === ay).length };
 }
 
-/** Aylık yeni kayıt: iptal edilen kayıt yeni kayıt sayılmaz; aktif, dondurulmuş ve mezun sayılır */
-export function aylikYeniKayit(kayitlar: Pick<Kayit, "tarih" | "durum">[], aylar: string[]): number[] {
-  return aylar.map((a) => kayitlar.filter((k) => k.durum !== "iptal" && k.tarih.startsWith(a)).length);
+/** Aylık yeni kayıt: iptal edilen ve içe aktarılan kayıt sayılmaz (toplu aktarım o ay kaydolmuş değildir); aktif, dondurulmuş, mezun sayılır */
+export function aylikYeniKayit(kayitlar: Pick<Kayit, "tarih" | "durum" | "iceAktarmaId">[], aylar: string[]): number[] {
+  return aylar.map((a) => kayitlar.filter((k) => k.durum !== "iptal" && !k.iceAktarmaId && k.tarih.startsWith(a)).length);
 }
 
 /** Aktif kayıtların seviye dağılımı (3–8) */
@@ -170,13 +170,12 @@ export function subeKarsilastirma(
   });
 }
 
-/* ---------- CSV ---------- */
-/**
- * Excel'de formül gibi çalışabilecek metni etkisizleştirir (=, +, -, @, sekme ile başlayan hücre; başına ' eklenir).
- * Sayı hücresi metin değildir, dokunulmaz; ondalık ayraç Türkçe Excel için virgüldür ("12.5" tarihe dönüşüyordu).
- */
-export function csvHucre(v: string | number): string {
-  if (typeof v === "number") return Number.isFinite(v) ? String(v).replace(".", ",") : "";
-  const s = String(v ?? "").replace(/[\r\n]+/g, " ");
-  return /^[\s]*[=+\-@]/.test(s) || /^[\t]/.test(s) ? `'${s}` : s;
+/* ---------- Tarih aralığı ---------- */
+/** Başlangıç bitişten sonraysa aralık geçersizdir; boş sınır açık uçtur */
+export const aralikGecerli = (bas: string, bit: string) => !bas || !bit || bas <= bit;
+
+/** Gün (YYYY-AA-GG veya tarih-saat) aralıkta mı; iki sınır da dahil */
+export function aralikta(zaman: string, bas: string, bit: string): boolean {
+  const gun = zaman.slice(0, 10);
+  return aralikGecerli(bas, bit) && (!bas || gun >= bas) && (!bit || gun <= bit);
 }

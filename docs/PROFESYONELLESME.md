@@ -89,6 +89,12 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-09 | Sağlık notu ve veli | Veliye **gönderilmez** (değişiklik yok) | — |
 | 2026-11-09 | Veli randevu iptali | **Onay penceresi** eklenir | Bölüm 11 ek iş ✅ |
 | 2026-11-09 | Tek çocuğu ayrılan velinin borcu | Portal girişi açılmaz, borç takibi personelde (değişiklik yok) | — |
+| 2026-11-09 | "Aylık beklenen ve tahsil edilen" grafiği | Finans modülü canlıya alınınca eklenir | Finans canlıya alma |
+| 2026-11-09 | Kasa raporu tarih aralığı | **Eklenir** | Bölüm 12 ek iş ✅ |
+| 2026-11-09 | Excel/CSV enjeksiyon temizliği | Ortak koda taşınır, 07 ve 14'e de uygulanır | Bölüm 12 ek iş ✅ |
+| 2026-11-09 | İçe aktarılan kayıtlar | Yeni kayıt grafiğinden **çıkarılır** | Bölüm 12 ek iş ✅ |
+| 2026-11-09 | Önceki aya göre değişim | Şimdilik "+N bu ay" (değişiklik yok) | — |
+| 2026-11-09 | Sekreterin finans yetkisi | Panel yönetime kalır; varsayılan rol yetkisi birlikte ele alınır | Bölüm 14 |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

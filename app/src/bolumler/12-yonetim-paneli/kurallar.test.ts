@@ -1,7 +1,7 @@
 /** Bölüm 12 saf hesapları. Tarihler parametreyle verilir; gerçek saate bağlı değildir. */
 import { describe, expect, it } from "vitest";
 import type { IslemKaydi, Taksit, Yoklama } from "@/data/model";
-import { aylikYeniKayit, csvHucre, finansIslemiMi, finansOzeti, finansPanelGorur, haftaOzeti, kayitOzeti, kontrolBekleyenOdevler, oranYuzde, selamla, seviyeDagilimi, sonAylar, sonIslemler, subeKarsilastirma, yoklamaBekliyor } from "./kurallar";
+import { aralikGecerli, aralikta, aylikYeniKayit, finansIslemiMi, finansOzeti, finansPanelGorur, haftaOzeti, kayitOzeti, kontrolBekleyenOdevler, oranYuzde, selamla, seviyeDagilimi, sonAylar, sonIslemler, subeKarsilastirma, yoklamaBekliyor } from "./kurallar";
 
 const BUGUN = "2030-03-15";
 const hepsi = () => true;
@@ -167,18 +167,34 @@ describe("son işlemler", () => {
   });
 });
 
-describe("CSV hücresi", () => {
-  it.each(["=1+1", "+90 555", "-2+3", "@SUM(A1)", "  =cmd", "\t=1"])("formül etkisizleşir: %j", (s) => expect(csvHucre(s).startsWith("'")).toBe(true));
-  it("sıradan metin ve tarih değişmez", () => {
-    expect(csvHucre("Ayşe")).toBe("Ayşe");
-    expect(csvHucre("2030-03-15")).toBe("2030-03-15");
+describe("içe aktarılan kayıtlar", () => {
+  const ozet = (l: never[]) => kayitOzeti({ gruplar: [], kayitlar: l }, { sezonId: "z", sg: hepsi, bugun: BUGUN });
+  it("bu ay yeni sayacına girmez, aktif toplamında kalır", () => {
+    const o = ozet([kayit({ id: "a", tarih: "2030-03-01" }), kayit({ id: "b", tarih: "2030-03-02", iceAktarmaId: "ia1" })]);
+    expect(o.buAyYeni).toBe(1);
+    expect(o.aktif).toHaveLength(2);
   });
-  it("sayı metin sayılmaz; ondalık virgül", () => {
-    expect(csvHucre(-5)).toBe("-5");
-    expect(csvHucre(12.5)).toBe("12,5");
+  it("aylık grafiğe girmez", () => {
+    const l = [{ tarih: "2030-03-01", durum: "aktif" }, { tarih: "2030-03-02", durum: "aktif", iceAktarmaId: "ia1" }] as never[];
+    expect(aylikYeniKayit(l, ["2030-03"])).toEqual([1]);
   });
-  it("satır sonu tek satıra iner; NaN boş", () => {
-    expect(csvHucre("a\r\nb")).toBe("a b");
-    expect(csvHucre(NaN)).toBe("");
+  it("seviye dağılımında sayılır", () => {
+    expect(seviyeDagilimi(ozet([kayit({ iceAktarmaId: "ia1" })]).aktif, [{ id: "g1", seviye: 5 }]).find((x) => x.seviye === 5)?.adet).toBe(1);
+  });
+});
+
+describe("tarih aralığı", () => {
+  it("sınırlar dahil; tarih-saat gününe göre", () => {
+    expect(aralikta("2030-03-01", "2030-03-01", "2030-03-31")).toBe(true);
+    expect(aralikta("2030-03-31T23:59", "2030-03-01", "2030-03-31")).toBe(true);
+    expect(aralikta("2030-04-01T00:00", "2030-03-01", "2030-03-31")).toBe(false);
+    expect(aralikta("2030-02-28", "2030-03-01", "")).toBe(false);
+  });
+  it("boş aralık her şeyi kapsar", () => expect(aralikta("2000-01-01", "", "")).toBe(true));
+  it("başlangıç bitişten sonra: geçersiz, hiçbir gün eşleşmez", () => {
+    expect(aralikGecerli("2030-04-01", "2030-03-01")).toBe(false);
+    expect(aralikta("2030-03-15", "2030-04-01", "2030-03-01")).toBe(false);
+    expect(aralikGecerli("2030-03-01", "2030-03-01")).toBe(true);
+    expect(aralikGecerli("2030-04-01", "")).toBe(true);
   });
 });

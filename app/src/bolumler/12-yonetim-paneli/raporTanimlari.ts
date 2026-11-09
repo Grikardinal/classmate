@@ -5,7 +5,7 @@
 import { dersAdi, grupDoluluk, grupEtiket, personelAdi, sube, taksitAdi, taksitKalan, tamAd, type Db, type Kayit, type Rol } from "@/data/model";
 import { csvOlustur, devamsizlikOzeti, gecikmeGunu, type YoklamaDurumu } from "@/lib/kurallar";
 import { MERKEZ, kasaHareketleri, kasaSubesi, vadesiGecenler, yuzde, type KasaHareketi } from "@/bolumler/05-finans/kurallar";
-import { csvHucre, finansPanelGorur, oranYuzde, type SubeSuzgeci } from "./kurallar";
+import { aralikta, finansPanelGorur, oranYuzde, type SubeSuzgeci } from "./kurallar";
 
 export type RaporBaglami = {
   sg: SubeSuzgeci;
@@ -13,6 +13,9 @@ export type RaporBaglami = {
   bugun: string;
   /** Genel Merkez kasası: yalnızca genel yönetici, tüm şubeler görünümünde */
   merkezDahil: boolean;
+  /** Tarih aralığı destekleyen rapor için (YYYY-AA-GG); boşsa sınır yok */
+  bas?: string;
+  bit?: string;
 };
 export type RaporSonucu = { basliklar: string[]; satirlar: (string | number)[][]; subeSutun: number };
 export type Rapor = {
@@ -23,6 +26,8 @@ export type Rapor = {
   yetki?: string;
   modul?: "finans" | "onKayit" | "odev";
   finans?: boolean;
+  /** Ekranda başlangıç/bitiş seçimi gösterilir */
+  tarihAraligi?: boolean;
   uret: (d: Db, b: RaporBaglami) => RaporSonucu;
 };
 
@@ -186,13 +191,14 @@ export const raporlar: Rapor[] = [
     }),
   },
   {
-    key: "kasa", ad: "Kasa / gelir-gider", bolum: "05", yetki: "05", modul: "finans", finans: true,
-    // Kasa ekranıyla aynı hareketler: iptaller iptal gününe ters kayıt olarak düşer, iade çıkıştır
+    key: "kasa", ad: "Kasa / gelir-gider", bolum: "05", yetki: "05", modul: "finans", finans: true, tarihAraligi: true,
+    // Kasa ekranıyla aynı hareketler: iptaller iptal gününe ters kayıt olarak düşer, iade çıkıştır.
+    // Aralık hareketin kendi gününe uygulanır: iptali aralıkta, aslı dışında olan ters kayıt görünür (gün sonu kasayla aynı)
     uret: (d, b) => ({
       basliklar: ["Tarih", "Şube", "Tür", "Açıklama", "Giriş", "Çıkış"],
       subeSutun: 1,
       satirlar: kasaHareketleri(d)
-        .filter((h) => (kasaSubesi(h.kasa) === MERKEZ ? b.merkezDahil : b.sg(kasaSubesi(h.kasa))))
+        .filter((h) => (kasaSubesi(h.kasa) === MERKEZ ? b.merkezDahil : b.sg(kasaSubesi(h.kasa))) && aralikta(h.tarih, b.bas ?? "", b.bit ?? ""))
         .map((h) => [h.tarih.slice(0, 10), kasaSubesi(h.kasa) === MERKEZ ? "Genel Merkez" : subeAdi(kasaSubesi(h.kasa)), KASA_TUR_ADI[h.tur], kasaAciklama(d, h), h.giris, h.cikis]),
     }),
   },
@@ -205,5 +211,5 @@ export function raporListesi(moduller: Partial<Record<string, boolean>>, rol: Ro
 
 /** Dışa aktarım metni: hücreler formül enjeksiyonuna karşı temizlenir */
 export function raporCsv(s: Pick<RaporSonucu, "basliklar" | "satirlar">): string {
-  return csvOlustur([s.basliklar, ...s.satirlar].map((r) => r.map(csvHucre)));
+  return csvOlustur([s.basliklar, ...s.satirlar]);
 }

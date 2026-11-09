@@ -3,6 +3,8 @@
  * .xlsx bir ZIP arşividir; dosyalar tarayıcının DecompressionStream("deflate-raw") özelliğiyle açılır.
  */
 
+import { csvOnekiniKaldir } from "./kurallar";
+
 async function inflate(veri: Uint8Array): Promise<Uint8Array> {
   const akis = new Blob([veri]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new Uint8Array(await new Response(akis).arrayBuffer());
@@ -107,7 +109,7 @@ export async function xlsxOku(dosya: File): Promise<string[][]> {
         const s = Number(c.getAttribute("s") ?? -1);
         if (tarihStilleri.has(s) && /^\d+(\.\d+)?$/.test(deger)) deger = excelTarih(Number(deger));
       }
-      satir[i] = deger;
+      satir[i] = csvOnekiniKaldir(deger); // Excel'de açılıp kaydedilen CSV'nin öneki veriye girmez
     }
     satirlar.push(Array.from(satir, (x) => x ?? ""));
   }

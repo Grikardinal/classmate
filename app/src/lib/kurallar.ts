@@ -423,13 +423,30 @@ export function csvCoz(metin: string): string[][] {
       } else cur += c;
     }
     hucreler.push(cur);
-    return hucreler.map((h) => h.trim());
+    return hucreler.map((h) => csvOnekiniKaldir(h.trim()));
   });
 }
 
+/** Yalnızca rakam ve ayraçtan oluşan değer (-5, +90 532 410 11 22): formül çalıştıramaz, olduğu gibi yazılır */
+const CSV_SAYISAL = /^\s*[+-]?\d[\d\s.,()]*$/;
+const CSV_FORMUL = /^\s*[=+\-@]/;
+
+/**
+ * Hücreyi Excel için güvenli hale getirir. Formül gibi başlayan metnin (=, +, -, @) başına ' eklenir; sayısal değerler bozulmaz.
+ * Satır sonu tek satıra iner. Sayı hücresinde ondalık ayraç virgüldür (Türkçe Excel "12.5"i tarihe çevirir).
+ */
+export function csvHucre(v: string | number): string {
+  if (typeof v === "number") return Number.isFinite(v) ? String(v).replace(".", ",") : "";
+  const s = String(v ?? "").replace(/[\r\n]+/g, " ");
+  return CSV_FORMUL.test(s) && !CSV_SAYISAL.test(s) ? `'${s}` : s;
+}
+
+/** csvHucre'nin eklediği öneki geri alır: içe aktarmada ' veriye girmez */
+export const csvOnekiniKaldir = (s: string) => s.replace(/^'(?=\s*[=+\-@])/, "");
+
 export function csvOlustur(satirlar: (string | number)[][]): string {
   const kac = (v: string | number) => {
-    const s = String(v ?? "");
+    const s = csvHucre(v);
     return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return "﻿" + satirlar.map((r) => r.map(kac).join(";")).join("\r\n");
