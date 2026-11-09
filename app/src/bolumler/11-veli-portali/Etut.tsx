@@ -15,6 +15,8 @@ export function PortalEtut() {
   const { moduller } = useApp();
   const { cocuk, islem } = usePortal();
   const [secim, setSecim] = React.useState<{ tarih: string; bas: string; bit: string; ogretmenId: string; subeId: string } | null>(null);
+  const [iptalId, setIptalId] = React.useState<string | null>(null);
+  const [iptalEdiliyor, setIptalEdiliyor] = React.useState(false);
   if (!moduller.etut) return <Navigate to="/veli" replace />;
   const k = aktifKayit(d, cocuk.id)!;
   const randevular = d.randevular.filter((r) => r.ogrenciIds.includes(cocuk.id)).sort((a, b) => b.tarih.localeCompare(a.tarih));
@@ -26,7 +28,14 @@ export function PortalEtut() {
     if (!secim) return;
     if (await islem("/api/veli/randevu", { ogrenciId: cocuk.id, ogretmenId: secim.ogretmenId, tarih: secim.tarih, bas: secim.bas }, "Randevunuz alındı. 1 saat önce hatırlatma gelecek.")) setSecim(null);
   };
-  const iptal = (id: string) => void islem(`/api/veli/randevu/${id}/iptal`, {}, "Randevu iptal edildi.");
+  const iptalRandevu = randevular.find((r) => r.id === iptalId);
+  const iptal = async () => {
+    if (!iptalRandevu || iptalEdiliyor) return;
+    setIptalEdiliyor(true);
+    await islem(`/api/veli/randevu/${iptalRandevu.id}/iptal`, {}, "Randevu iptal edildi.");
+    setIptalEdiliyor(false);
+    setIptalId(null);
+  };
 
   return (
     <div className="grid gap-4">
@@ -37,7 +46,7 @@ export function PortalEtut() {
           <Card key={r.id}><CardContent className="flex items-center gap-3 p-3 text-sm">
             <div className="flex-1"><p className="font-medium">{tarihKisa(r.tarih)} · {r.bas}</p><p className="text-xs text-muted-foreground">{personelAdi(d, r.ogretmenId)} · {etutTurAd[r.tur]} · {sube(r.subeId)?.ad}</p></div>
             {randevuIptalDurumu(r, d.ayarlar.etutIptalSaat, { bugun: BUGUN, simdi: SIMDI }) !== "sonuc" ? (
-              randevuIptalDurumu(r, d.ayarlar.etutIptalSaat, { bugun: BUGUN, simdi: SIMDI }) === "acik" ? <Button size="sm" variant="ghost" className="text-danger" onClick={() => iptal(r.id)}>İptal</Button> : <span className="text-xs text-muted-foreground">İptal süresi geçti</span>
+              randevuIptalDurumu(r, d.ayarlar.etutIptalSaat, { bugun: BUGUN, simdi: SIMDI }) === "acik" ? <Button size="sm" variant="ghost" className="text-danger" onClick={() => setIptalId(r.id)}>İptal</Button> : <span className="text-xs text-muted-foreground">İptal süresi geçti</span>
             ) : (
               <Badge variant={randevuRozeti(r, cocuk.id).ton}>{randevuRozeti(r, cocuk.id).ad}</Badge>
             )}
@@ -55,6 +64,11 @@ export function PortalEtut() {
         </div>
         {slotlar.length === 0 && <p className="text-sm text-muted-foreground">Önümüzdeki günlerde boş slot yok.</p>}
       </Bolum>
+      {iptalRandevu && (
+        <Dialog open onClose={() => setIptalId(null)} title="Randevu iptal edilsin mi?" description={`${tarihKisa(iptalRandevu.tarih)} ${iptalRandevu.bas} · ${personelAdi(d, iptalRandevu.ogretmenId)}`} footer={<><Button variant="outline" onClick={() => setIptalId(null)}>Vazgeç</Button><Button variant="destructive" onClick={() => void iptal()} disabled={iptalEdiliyor}>Randevuyu iptal et</Button></>}>
+          <p className="text-sm text-muted-foreground">{iptalRandevu.tur === "grup" ? `Yalnızca ${cocuk.ad} bu grup etüdünden çıkarılır.` : "Bu işlem geri alınamaz; aynı saat başkası tarafından alınabilir."}</p>
+        </Dialog>
+      )}
       {secim && (
         <Dialog open onClose={() => setSecim(null)} title="Randevuyu onayla" description={`${gunAdlari[haftaGunu(secim.tarih)]} ${tarihKisa(secim.tarih)} ${secim.bas}–${secim.bit} · ${personelAdi(d, secim.ogretmenId)}`} footer={<><Button variant="outline" onClick={() => setSecim(null)}>Vazgeç</Button><Button onClick={al}>Randevu al</Button></>}>
           <p className="text-sm text-muted-foreground">En geç {d.ayarlar.etutIptalSaat} saat öncesine kadar iptal edebilirsiniz.</p>

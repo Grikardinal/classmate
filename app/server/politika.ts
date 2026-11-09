@@ -76,7 +76,7 @@ import { devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzel
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
 import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
 import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi, SABLON_UYMUYOR_HATA } from "../src/bolumler/10-iletisim/kurallar";
-import { veliGonderimGorunur } from "../src/bolumler/11-veli-portali/kurallar";
+import { ayrilanAcikBorclar, veliGonderimGorunur } from "../src/bolumler/11-veli-portali/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -1316,6 +1316,8 @@ export function veliVerisi(db: Db, veliId: string): Db {
   const etut = veliEtutVerisi(db, ogrIds, subeIds);
   const ogretmenIds = new Set([...program.map((p) => p.ogretmenId), ...etut.ogretmenIds, ...db.gruplar.filter((g) => grupIds.has(g.id)).map((g) => g.rehberId)]);
   const v = db.veliler.find((x) => x.id === veliId)!;
+  // Kaydı sona eren çocuk: yalnızca adı ve açık taksitleri (ogrIds'e girmez; yoklama, ödev, program gitmez)
+  const ayrilan = db.moduller.finans ? ayrilanAcikBorclar(db.ogrenciler, db.taksitler, veliId) : { ogrenciler: [], taksitler: [] };
   const gorunenSubeler = new Set([...subeIds, ...etut.randevular.filter((r) => r.ogrenciIds.length).map((r) => r.subeId)]);
   // İzin listesi: "...db" yok; Db'ye eklenen yeni alan derleme hatası verir, kendiliğinden veliye gitmez
   return {
@@ -1336,7 +1338,11 @@ export function veliVerisi(db: Db, veliId: string): Db {
     rolYetkileri: {} as Db["rolYetkileri"],
     veliler: [v],
     // Diğer velinin kimliği, personel notu ve sağlık notu gitmez
-    ogrenciler: cocuklar.map(({ iceAktarmaId: _i, ...o }) => ({ ...o, notlar: [], saglikNotu: "", veliIds: [veliId], birincilVeliId: veliId })),
+    ogrenciler: [
+      ...cocuklar.map(({ iceAktarmaId: _i, ...o }) => ({ ...o, notlar: [], saglikNotu: "", veliIds: [veliId], birincilVeliId: veliId })),
+      // cinsiyet türün zorunlu alanı; gerçek değer gönderilmez
+      ...ayrilan.ogrenciler.map((o) => ({ id: o.id, ad: o.ad, soyad: "", dogum: "", cinsiyet: "K" as const, okul: "", okulSinifi: "", saglikNotu: "", veliIds: [veliId], birincilVeliId: veliId, durum: o.durum, notlar: [] })),
+    ],
     // Sözleşme fiyatı, indirim ve iptal hesabı portalda kullanılmaz (personel adı da içerir)
     kayitlar: kayitlar.map((k) => ({ id: k.id, ogrenciId: k.ogrenciId, sezonId: k.sezonId, subeId: k.subeId, grupId: k.grupId, sozlesmeNo: "", durum: k.durum, tarih: k.tarih, grupGecmisi: [], ekHizmetler: [], kvkkOnay: null, listeFiyati: 0, indirimler: [], net: 0 })),
     gruplar: db.gruplar.filter((g) => grupIds.has(g.id)),
@@ -1362,7 +1368,12 @@ export function veliVerisi(db: Db, veliId: string): Db {
     duyurular: db.duyurular
       .filter((d) => !d.zamanlanmis && d.aliciVeliIds.includes(veliId))
       .map((d) => ({ ...d, subeIds: undefined, gonderen: "", hedef: { tur: "tum" as const, deger: null }, aliciVeliIds: [veliId], okuyanVeliIds: d.okuyanVeliIds.includes(veliId) ? [veliId] : [] })),
-    taksitler: db.moduller.finans ? db.taksitler.filter((t) => ogrIds.has(t.ogrenciId)).map((t) => ({ ...t, veliId })) : [],
+    taksitler: db.moduller.finans
+      ? [
+          ...db.taksitler.filter((t) => ogrIds.has(t.ogrenciId)).map((t) => ({ ...t, veliId })),
+          ...ayrilan.taksitler.map((t) => ({ id: t.id, kayitId: "", ogrenciId: t.ogrenciId, veliId, subeId: "", no: t.no, vade: t.vade, tutar: t.tutar, odenen: t.odenen })),
+        ]
+      : [],
     tahsilatlar: [],
     giderler: [],
     virmanlar: [],

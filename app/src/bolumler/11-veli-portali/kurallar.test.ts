@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Db, Taksit } from "@/data/model";
-import { acikTaksitler, bekleyenOdevler, devamMetni, grupOgretmenleri, kodHataMesaji, ogrenciOdevleri, okunmamisDuyuruSayisi, randevuIptalDurumu, randevuRozeti, taksitOzeti, veliDuyurulari, veliGonderimGorunur } from "./kurallar";
+import { acikTaksitler, ayrilanAcikBorclar, bekleyenOdevler, devamMetni, grupOgretmenleri, kodHataMesaji, ogrenciOdevleri, okunmamisDuyuruSayisi, randevuIptalDurumu, randevuRozeti, taksitOzeti, veliDuyurulari, veliGonderimGorunur } from "./kurallar";
 
 const AN = { bugun: "2030-03-10", simdi: "10:00" };
 const moduller = (p: Partial<Db["moduller"]> = {}) => ({ finans: true, odev: true, etut: true, onKayit: true, ...p }) as Db["moduller"];
@@ -60,6 +60,23 @@ describe("ödemeler", () => {
   });
   it("kalan ve geciken toplamı; vadesi bugün olan gecikmiş sayılmaz", () => {
     expect(taksitOzeti([t("a", "2030-03-09", 100, 40), t("b", AN.bugun, 200, 0), t("c", "2030-01-01", 50, 50)], AN.bugun)).toEqual({ kalan: 260, geciken: 60 });
+  });
+});
+
+describe("kaydı sona eren çocuğun borcu", () => {
+  const t = (id: string, ogrenciId: string, odenen = 0) => ({ id, kayitId: "k", ogrenciId, veliId: "v1", subeId: "s1", no: 1, vade: "2030-01-01", tutar: 100, odenen }) as Taksit;
+  const o = (id: string, durum: "aktif" | "ayrildi" | "mezun", veliIds = ["v1"]) => ({ id, durum, veliIds });
+  it("yalnızca açık taksit; ödenmiş olan gelmez", () => {
+    const s = ayrilanAcikBorclar([o("a", "ayrildi")], [t("1", "a"), t("2", "a", 100), t("3", "a", 40)], "v1");
+    expect(s.taksitler.map((x) => x.id)).toEqual(["1", "3"]);
+  });
+  it("açık borcu yoksa çocuk da dönmez", () => {
+    expect(ayrilanAcikBorclar([o("a", "ayrildi")], [t("1", "a", 100)], "v1").ogrenciler).toEqual([]);
+  });
+  it("aktif çocuk ve başka velinin çocuğu girmez; mezun girer", () => {
+    const s = ayrilanAcikBorclar([o("a", "aktif"), o("b", "ayrildi", ["v2"]), o("c", "mezun")], [t("1", "a"), t("2", "b"), t("3", "c")], "v1");
+    expect(s.ogrenciler.map((x) => x.id)).toEqual(["c"]);
+    expect(s.taksitler.map((x) => x.id)).toEqual(["3"]);
   });
 });
 

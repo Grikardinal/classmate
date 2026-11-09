@@ -1,7 +1,7 @@
 /**
  * Bölüm 11 saf iş kuralları: ekran ve sunucu ortak kullanır (yalnızca göreli içe aktarma).
  */
-import { taksitKalan, type BildirimOlayi, type Db, type Duyuru, type Gonderim, type Odev, type ProgramSatiri, type Randevu, type Taksit } from "../../data/model";
+import { taksitKalan, type BildirimOlayi, type Db, type Duyuru, type Gonderim, type Odev, type Ogrenci, type ProgramSatiri, type Randevu, type Taksit } from "../../data/model";
 import { devamsizlikOzeti, type YoklamaDurumu } from "../../lib/kurallar";
 import { ogrenciSonucu, veliIptalEngeli } from "../09-etut/kurallar";
 
@@ -62,6 +62,13 @@ export function okunmamisDuyuruSayisi(duyurular: Pick<Duyuru, "zamanlanmis" | "a
 
 export function acikTaksitler(taksitler: Taksit[], ogrenciId: string): Taksit[] {
   return taksitler.filter((t) => t.ogrenciId === ogrenciId && taksitKalan(t) > 0).sort((a, b) => a.vade.localeCompare(b.vade));
+}
+
+/** Karar 2026-11-09: kaydı sona eren çocuğun yalnızca açık taksitleri; açık borcu olmayan çocuk hiç dönmez */
+export function ayrilanAcikBorclar<O extends Pick<Ogrenci, "id" | "veliIds" | "durum">>(ogrenciler: O[], taksitler: Taksit[], veliId: string): { ogrenciler: O[]; taksitler: Taksit[] } {
+  const ayrilan = ogrenciler.filter((o) => o.veliIds.includes(veliId) && o.durum !== "aktif");
+  const acik = taksitler.filter((t) => taksitKalan(t) > 0 && ayrilan.some((o) => o.id === t.ogrenciId));
+  return { ogrenciler: ayrilan.filter((o) => acik.some((t) => t.ogrenciId === o.id)), taksitler: acik };
 }
 
 export function taksitOzeti(taksitler: Taksit[], bugun: string): { kalan: number; geciken: number } {

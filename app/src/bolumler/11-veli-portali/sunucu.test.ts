@@ -79,6 +79,44 @@ describe("veliVerisi", () => {
     expect(y.gonderimler).toEqual([]);
     for (const p of y.paketler) expect(p.fiyat).toBe(0);
   });
+  describe("kaydı sona eren çocuk", () => {
+    const ayr = { ...cocukVeli, id: "ayr", ad: "Ayrilan", soyad: "GizliSoyad", okul: "GizliOkul", saglikNotu: "GizliSaglik", dogum: "2015-05-05", durum: "ayrildi" as const, veliIds: [VELI, "diger"], birincilVeliId: "diger", notlar: [{ tarih: "x", yazar: "y", metin: "GizliNot" }] };
+    const ornekKayit = db.kayitlar[0];
+    const taksit = (id: string, odenen: number) => ({ id, kayitId: "GizliKayit", ogrenciId: "ayr", veliId: "diger", subeId: "s1", no: 1, vade: "2030-01-01", tutar: 100, odenen });
+    const kur = (finans = true): Db => ({
+      ...db,
+      moduller: { ...db.moduller, finans },
+      ogrenciler: [...db.ogrenciler, ayr],
+      kayitlar: [...db.kayitlar, { ...ornekKayit, id: "kayr", ogrenciId: "ayr", grupId: "grupAyr", durum: "iptal" }],
+      taksitler: [...db.taksitler, taksit("acik", 30), taksit("kapali", 100)],
+      program: [...db.program, { ...db.program[0], id: "prgAyr", grupId: "grupAyr" }],
+      yoklamalar: { ...db.yoklamalar, ayrOt: { oturumId: "ayrOt", tarih: "2030-01-01", satirId: "prgAyr", grupId: "grupAyr", ogretmenId: "p1", durumlar: { ayr: "gelmedi" }, konu: "GizliKonu", kayitZamani: "x" } },
+    });
+    it("yalnızca ad ve açık taksit gider", () => {
+      const y = veliVerisi(kur(), VELI);
+      const o = y.ogrenciler.find((x) => x.id === "ayr")!;
+      expect(o).toMatchObject({ ad: "Ayrilan", soyad: "", okul: "", dogum: "", saglikNotu: "", notlar: [], durum: "ayrildi", veliIds: [VELI] });
+      expect(y.taksitler.filter((t) => t.ogrenciId === "ayr").map((t) => t.id)).toEqual(["acik"]);
+      expect(y.taksitler.find((t) => t.id === "acik")).toMatchObject({ kayitId: "", subeId: "", veliId: VELI, tutar: 100, odenen: 30 });
+    });
+    it("kayıt, program, yoklama ve kişisel ayrıntı gitmez", () => {
+      const y = veliVerisi(kur(), VELI);
+      expect(y.kayitlar.some((k) => k.ogrenciId === "ayr")).toBe(false);
+      expect(y.program.some((p) => p.id === "prgAyr")).toBe(false);
+      expect(y.yoklamalar.ayrOt).toBeUndefined();
+      for (const g of ["GizliSoyad", "GizliOkul", "GizliSaglik", "GizliNot", "GizliKonu", "GizliKayit", '"diger"']) expect(JSON.stringify(y)).not.toContain(g);
+    });
+    it("finans kapalıyken ne çocuk ne taksit gider", () => {
+      const y = veliVerisi(kur(false), VELI);
+      expect(y.ogrenciler.some((x) => x.id === "ayr")).toBe(false);
+      expect(y.taksitler).toEqual([]);
+    });
+    it("borcu kapanınca çocuk listeden çıkar", () => {
+      const k = kur();
+      const y = veliVerisi({ ...k, taksitler: k.taksitler.filter((t) => t.id !== "acik") }, VELI);
+      expect(y.ogrenciler.some((x) => x.id === "ayr")).toBe(false);
+    });
+  });
   it("ödev ve etüt modülü kapalı: boş", () => {
     const y = veliVerisi({ ...db, moduller: { ...db.moduller, odev: false, etut: false } }, VELI);
     expect(y.odevler).toEqual([]);
@@ -271,6 +309,20 @@ describe("API", () => {
       const { i } = await girisYap(a);
       const c = app.durum.db.ogrenciler.find((o) => o.durum === "aktif" && o.veliIds.includes(a.id))!;
       expect((await i("/api/veli/izin", { ogrenciId: c.id, tarih: "bozuk" })).durum).toBe(400);
+    });
+    it("kaydı sona eren çocuk için izin ve randevu yazılamaz", async () => {
+      const v = yeniVeli();
+      const { i } = await girisYap(v);
+      const eski = app.durum.db.ogrenciler;
+      const baska = eski.find((o) => o.durum === "aktif" && !o.veliIds.includes(v.id))!;
+      app.durum.db.ogrenciler = eski.map((o) => (o.id === baska.id ? { ...o, durum: "ayrildi" as const, veliIds: [...o.veliIds, v.id] } : o));
+      const izin = await i("/api/veli/izin", { ogrenciId: baska.id, tarih: "2030-01-01" });
+      const randevu = await i("/api/veli/randevu", { ogrenciId: baska.id, ogretmenId: "p5", tarih: "2030-01-01", bas: "14:00" });
+      app.durum.db.ogrenciler = eski;
+      expect(izin.durum).toBe(403);
+      expect(izin.veri.hata).toMatch(/Bu öğrenci/);
+      expect(randevu.durum).toBe(403);
+      if (app.durum.db.moduller.etut) expect(randevu.veri.hata).toMatch(/Bu öğrenci/);
     });
     it("tercih yalnızca izinli alanları yazar", async () => {
       const v = yeniVeli();

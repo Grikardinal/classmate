@@ -43,6 +43,7 @@ Sunucu: `app/server/uygulama.ts · /api/veli/*`, `app/server/politika.ts · veli
 - İzin listesiyle kurulur (`...db` yok): Db'ye eklenen yeni alan derleme hatası verir, kendiliğinden veliye gitmez.
 - Gitmeyenler: diğer velinin kimliği, personel iletişim ve ücret bilgisi, öğrenci notları, sağlık notu, sözleşme fiyatı ve indirimler, iptal hesabı, fiyat listesi, aday, tahsilat, işlem kaydı, otomasyon kaydı, vergi no, şube müdürü adı, ilgisiz şubeler, duyuru göndereni ve diğer alıcılar.
 - Yoklamada yalnızca kendi çocuğunun satırı; çocuğun olmadığı oturum hiç gitmez.
+- Kaydı sona eren çocuk (Finans açıkken, açık taksiti varsa): yalnızca adı ve açık taksitleri gider; yoklama, ödev, program, kayıt gitmez. İzin ve randevu yazılamaz.
 - Kapalı modül: finans/ödev/etüt verisi ve bu modüllerin geçmiş bildirimleri gitmez.
 
 **Yazma uçları**
@@ -52,6 +53,7 @@ Sunucu: `app/server/uygulama.ts · /api/veli/*`, `app/server/politika.ts · veli
 - Devam oranı `devamsizlikOzeti` ile (izinli dersler hariç); hesaplanacak ders yoksa "—".
 - SMS iznini kapatırken uyarı ve onay. Dersi olmayan güne izin reddedilir (ekranda düğme de kapalıdır).
 - Grup etüdünde veli yalnızca kendi çocuğunun sonucunu görür, yalnızca onu çıkarır.
+- Veli randevu iptali onay penceresinden geçer.
 
 **Önbellek**
 - Service worker bilinçli olarak önbellek tutmaz, veri yalnızca bellektedir. `/api/veli/*` yanıtları `Cache-Control: no-store`. Çıkıştan sonra cihazda veri kalmaz. Çevrimdışı kullanım yoktur.
@@ -64,12 +66,14 @@ Sunucu: `app/server/uygulama.ts · /api/veli/*`, `app/server/politika.ts · veli
 - Saldırgan bir kurbanın numarasına kod isteyerek o numaranın saatlik hakkını doldurabilir (SMS bombalamaya karşı kabul edilen bedel).
 - Aynı telefonla iki veli kartı varsa ilk eşleşen açılır; Bölüm 04'teki birleştirme bunu giderir.
 - Personelin veli kartını pasife alma alanı yoktur; erişim, aktif kayıtlı çocuk kalmayınca kesilir.
+- Tek çocuğu ayrılan velinin portal oturumu yoktur (giriş aktif kayıtlı çocuk ister); açık borcu ekranda yalnızca aktif kayıtlı başka çocuğu olan veli görür.
 - Telefon numarası personelce değiştirilince açık oturumlar kapanmaz.
 - Manifest yalnızca SVG simge içerir; bazı Android sürümlerinde ana ekrana ekleme için PNG gerekebilir.
 
-## Açık sorular
-1. **IP sınırının güvenilirliği:** `x-forwarded-for` ilk değeri istemciden gelebilir; sunucu doğrudan internete açıksa IP sınırı aşılabilir. *Öneri:* canlıya alırken ters vekil bu başlığı kendisi yazsın; numara başına sınır her durumda geçerlidir.
-2. **Boşanmış / ikinci veli ödemeleri:** Çocuğa bağlı her veli taksitleri görür. *Öneri:* varsayılan kalsın; gerekirse çocuk bazında "ödemeleri yalnızca birincil veli görsün" seçeneği eklensin.
-3. **Ayrılan çocuğun borcu:** Yalnızca aktif çocuklar görünür, ayrılmış çocuğun açık taksiti portalda çıkmaz. *Öneri:* açık borç varsa Ödemeler ekranında gösterilsin.
-4. **Sağlık notu:** Veli kendi çocuğunun notunu da görmüyor (ekran kullanmıyordu, personel not düşüyor olabilir). *Öneri:* böyle kalsın.
-5. **Randevu iptali onayı:** İptal tek dokunuşla gerçekleşiyor. *Öneri:* onay penceresi eklensin.
+## Kapanan sorular
+Kararlar: `docs/PROFESYONELLESME.md`.
+1. **IP sınırının güvenilirliği:** Kapandı (2026-11-09). Ters vekil `x-forwarded-for` başlığını kendisi yazar. **Canlıya almada** yapılacak; numara başına sınır her durumda geçerlidir.
+2. **Boşanmış / ikinci veli ödemeleri:** Kapandı (2026-11-09). Çocuğa bağlı her veli taksitleri görür (değişiklik yok).
+3. **Ayrılan çocuğun borcu:** Kapandı (2026-11-09). Açık taksitler Ödemeler ekranında "Kaydı sona erdi" etiketiyle görünür.
+4. **Sağlık notu:** Kapandı (2026-11-09). Veliye gönderilmez (değişiklik yok).
+5. **Randevu iptali onayı:** Kapandı (2026-11-09). Uygulama içi onay penceresi eklendi.

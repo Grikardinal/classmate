@@ -135,8 +135,10 @@ export function PortalOdemeler() {
   const { moduller } = useApp();
   const { cocuklar, ogrenciModu } = usePortal();
   if (!moduller.finans || ogrenciModu) return <Navigate to="/veli" replace />;
-  // Kardeşlerin borçları veli bazında birlikte görünür
-  const taksitler = d.taksitler.filter((t) => cocuklar.some((o) => o.id === t.ogrenciId)).sort((a, b) => a.vade.localeCompare(b.vade));
+  // Kardeşlerin borçları veli bazında birlikte görünür; kaydı sona erenin yalnızca açık taksitleri gelir (sunucu süzer)
+  const taksitler = [...d.taksitler].sort((a, b) => a.vade.localeCompare(b.vade));
+  const sonaErdi = (ogrenciId: string) => !cocuklar.some((o) => o.id === ogrenciId);
+  const adGoster = cocuklar.length > 1 || taksitler.some((t) => sonaErdi(t.ogrenciId));
   const { kalan, geciken } = taksitOzeti(taksitler, BUGUN);
   return (
     <div className="grid gap-4">
@@ -152,7 +154,7 @@ export function PortalOdemeler() {
           const k = taksitKalan(t);
           return (
             <div key={t.id} className="flex items-center gap-3 p-3 text-sm">
-              <div className="flex-1"><p className="font-medium">{cocuklar.length > 1 && `${cocuklar.find((o) => o.id === t.ogrenciId)?.ad} · `}{taksitAdi(t.no)}</p><p className="text-xs text-muted-foreground">Vade {tarihKisa(t.vade)}</p></div>
+              <div className="flex-1"><p className="font-medium">{adGoster && `${d.ogrenciler.find((o) => o.id === t.ogrenciId)?.ad} · `}{taksitAdi(t.no)}</p><p className="text-xs text-muted-foreground">Vade {tarihKisa(t.vade)}</p>{sonaErdi(t.ogrenciId) && <Badge variant="outline" className="mt-1">Kaydı sona erdi</Badge>}</div>
               <div className="text-right"><p className="tabular-nums">{tl(t.tutar)}</p>{k <= 0 ? <Badge variant="success">Ödendi</Badge> : t.vade < BUGUN ? <Badge variant="danger">Gecikti</Badge> : <Badge variant="secondary">Bekliyor</Badge>}</div>
             </div>
           );

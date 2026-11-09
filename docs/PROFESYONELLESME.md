@@ -83,6 +83,12 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-09 | Takılı kalan gönderim | Otomatik tekrar yok, personel karar verir (değişiklik yok) | — |
 | 2026-11-09 | Netgsm kimlik bilgisi | SMS hesabı netleşince güvenli yönteme geçilir | Canlıya alma |
 | 2026-11-09 | Şablona uymayan metin | **Tamamen reddedilir** | Bölüm 10 ek iş ✅ |
+| 2026-11-09 | IP başlığı (`x-forwarded-for`) | Ters vekil başlığı kendisi yazar | Canlıya alma |
+| 2026-11-09 | İkinci velinin taksitleri görmesi | Çocuğa bağlı her veli görür (değişiklik yok) | — |
+| 2026-11-09 | Ayrılan çocuğun açık borcu | Portalda **Ödemeler ekranında görünür** | Bölüm 11 ek iş ✅ |
+| 2026-11-09 | Sağlık notu ve veli | Veliye **gönderilmez** (değişiklik yok) | — |
+| 2026-11-09 | Veli randevu iptali | **Onay penceresi** eklenir | Bölüm 11 ek iş ✅ |
+| 2026-11-09 | Tek çocuğu ayrılan velinin borcu | Portal girişi açılmaz, borç takibi personelde (değişiklik yok) | — |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır
