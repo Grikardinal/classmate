@@ -30,6 +30,8 @@ async function zipOku(buf: ArrayBuffer): Promise<Map<string, () => Promise<strin
     if (v.getUint32(p, true) !== 0x02014b50) break;
     const yontem = v.getUint16(p + 10, true);
     const sikisik = v.getUint32(p + 20, true);
+    // Sıkıştırma bombası: açılmış boyutu aşırı büyük dosya tarayıcıyı kilitlemesin
+    if (v.getUint32(p + 24, true) > 100 * 1024 * 1024) throw new Error("Dosya içeriği çok büyük.");
     const adUz = v.getUint16(p + 28, true);
     const ekUz = v.getUint16(p + 30, true);
     const yorumUz = v.getUint16(p + 32, true);

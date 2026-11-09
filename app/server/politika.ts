@@ -31,6 +31,7 @@ import {
   sonGenelYoneticiEngeli,
   yonetimEngeli,
 } from "../src/bolumler/02-kullanicilar/kurallar";
+import { ayarlarEngeli, geriAlmaEngeli, iceAktarmaSatirEngeli } from "../src/bolumler/14-altyapi/kurallar";
 import { adayYazmaEngeli, anonimMi, adTemizle, varsayilanSorumlu } from "../src/bolumler/03-on-kayit/kurallar";
 import {
   adayYenidenAc,
@@ -80,7 +81,7 @@ import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar
 import { ayrilanAcikBorclar, veliGonderimGorunur } from "../src/bolumler/11-veli-portali/kurallar";
 import { avansEngeli, donmusOlustur, etutUcretiEngeli, farkAktar, hakEdisHesabi, hakedisAnahtari, hakedisDurumEngeli, hakedisDuzeltmeEngeli, hakedisIslemiMi, hakedisimOzeti, hakedisKaydi, MAAS_KATEGORISI, MASKELI_MAAS_ACIKLAMASI, maskeliAlanlariKoru, odemeAciklamasi, personelMaskele, personelSilmeEngeli, personelTemizle, personelYazmaEngeli, type Avans, type Goren, type HakedisKaydi } from "../src/bolumler/13-personel/kurallar";
 import { farkUygula } from "../src/data/fark";
-import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
+import type { Gider, Gonderim, IceAktarma, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
 const ayni = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 import { tarihEkle, telefonNormalize } from "../src/lib/kurallar";
@@ -319,10 +320,26 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
 
   const temiz: Degisiklik = { koleksiyonlar: {}, tekil: {} };
 
+  // Bu pakette geri alınan içe aktarma partileri (yalnızca 14 yetkisiyle gelir: YAZMA.iceAktarmalar)
+  const geriAlinanPartiler: Record<string, IceAktarma> = {};
+  for (const ham of (d.koleksiyonlar?.iceAktarmalar?.yaz ?? []) as unknown as IceAktarma[]) {
+    const eski = onceki.iceAktarmalar.find((x) => x.id === ham.id);
+    if (eski && !eski.geriAlindi && ham.geriAlindi) geriAlinanPartiler[eski.id] = eski;
+  }
+  const geriAlinan = (partiId: string, alan: "ogrenciIds" | "kayitIds", id: string) => geriAlinanPartiler[partiId]?.[alan].includes(id);
+  for (const p of Object.values(geriAlinanPartiler)) {
+    const engel = geriAlmaEngeli(onceki, p);
+    if (engel) hata(engel);
+  }
+
   for (const [t, v] of Object.entries(d.tekil ?? {}) as [Tekil, unknown][]) {
     if (!TEKILLER.includes(t)) hata(`Bilinmeyen ayar: ${t}`);
     if (!TEKIL_YAZMA[t].some((b) => yetki(onceki, a, b))) hata("Bu ayarı değiştirme yetkiniz yok.");
     if (t !== "hakedisDurum" && !genel) hata("Kurum geneli ayarları yalnızca genel yönetici değiştirebilir.");
+    if (t === "ayarlar") {
+      const engel = ayarlarEngeli(v, onceki.ayarlar);
+      if (engel) hata(engel);
+    }
     temiz.tekil[t] = v;
   }
 
@@ -352,8 +369,21 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
       switch (k) {
         case "islemler":
           if (eski) hata("İşlem kaydı değiştirilemez.");
-          s.kullanici = s.kullanici === "Sistem" ? "Sistem" : ad;
+          // "Sistem" adıyla yalnızca ekranın ürettiği otomatik devamsızlık uyarısı yazılır; başka işlem kişiye bağlanır
+          s.kullanici = s.kullanici === "Sistem" && s.islem === "Devamsızlık uyarısı" ? "Sistem" : ad;
           s.zaman = zaman;
+          if (typeof s.islem !== "string" || typeof s.detay !== "string" || s.islem.length > 120 || s.detay.length > 2000) hata("Geçersiz işlem kaydı.");
+          break;
+        case "kvkk":
+          if (eski) hata("KVKK başvuru kaydı değiştirilemez.");
+          s.zaman = zaman;
+          break;
+        case "iceAktarmalar":
+          {
+            const engel = iceAktarmaSatirEngeli(s as unknown as IceAktarma, eski as unknown as IceAktarma | undefined);
+            if (engel) hata(engel);
+            if (!eski) s.zaman = zaman;
+          }
           break;
         case "girisler":
           hata("Giriş kaydı yazılamaz.");
@@ -468,17 +498,26 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
       const eski = eskiler.get(id);
       if (!eski) continue;
       if (!kapsamda(satirSubeleri(onceki, k, eski), k)) hata("Bu kayıt şube kapsamınız dışında.");
+      // Toplu silme yalnızca aynı pakette geri alınan partinin kendi satırları için
       const iceAktarmaGeriAl =
-        ((k === "ogrenciler" || k === "kayitlar") && !!eski.iceAktarmaId) ||
+        ((k === "ogrenciler" || k === "kayitlar") && !!eski.iceAktarmaId && !!geriAlinan(eski.iceAktarmaId as string, k === "ogrenciler" ? "ogrenciIds" : "kayitIds", id)) ||
         (k === "personel" && !!eski.iceAktarmaId && !onceki.program.some((p) => p.ogretmenId === id)) ||
         (k === "kullanicilar" && !!onceki.personel.find((p) => p.id === eski.personelId)?.iceAktarmaId);
-      const iceAktarmaVelisi = k === "veliler" && !sonrakiDb.ogrenciler.some((o) => o.veliIds.includes(id));
+      const iceAktarmaVelisi = k === "veliler" && !sonrakiDb.ogrenciler.some((o) => o.veliIds.includes(id)) && Object.values(geriAlinanPartiler).some((p) => p.veliIds.includes(id));
       if (!SILINEBILIR.has(k) && !iceAktarmaGeriAl && !iceAktarmaVelisi) hata(`“${k}” kaydı silinemez; pasife alın veya iptal edin.`);
       if (ogrGrup && eski.ogretmenId !== a.personel.id) hata("Yalnızca kendi kayıtlarınızı silebilirsiniz.");
       sil.push(id);
     }
     temiz.koleksiyonlar[k] = { yaz, sil };
   }
+  // iceAktarmaId'yi istemci yalnızca aynı pakette açtığı partiyle verebilir: ücretsiz kayıt istisnası bu alana bağlıdır (Bölüm 05)
+  const yeniPartiler = new Set((temiz.koleksiyonlar.iceAktarmalar?.yaz ?? []).filter((s) => !onceki.iceAktarmalar.some((x) => x.id === s.id)).map((s) => String(s.id)));
+  for (const k of ["ogrenciler", "kayitlar"] as const)
+    for (const s of temiz.koleksiyonlar[k]?.yaz ?? []) {
+      const eski = dizi(onceki, k).find((x) => x.id === s.id);
+      if (eski?.iceAktarmaId) s.iceAktarmaId = eski.iceAktarmaId;
+      else if (eski || !s.iceAktarmaId || !yeniPartiler.has(String(s.iceAktarmaId))) delete s.iceAktarmaId;
+    }
   tanimDenetle(onceki, sonrakiDb, temiz);
   iletisimDenetle(onceki, sonrakiDb, temiz, a, zaman); // önce: yoklama, ödev, etüt denetimleri temizlenmiş satırları görür
   programDenetle(onceki, sonrakiDb, temiz, a, zaman);

@@ -2,20 +2,23 @@
  * Otomatik yedek (Bölüm 14): her gece veritabanının tam JSON dökümü YEDEK_DIZIN klasörüne yazılır,
  * en az 30 gün saklanır. Ek olarak PostgreSQL tarafında barındırma sağlayıcısının yedeği önerilir.
  */
-import { mkdir, readdir, rm, stat, writeFile, readFile } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Db } from "../src/data/model";
+import { YEDEK_SAKLAMA_GUN, yedekAdiGecerli, yedekAdiUret, yedekSuresiDoldu } from "../src/bolumler/14-altyapi/kurallar";
 
 export const yedekDizini = () => process.env.YEDEK_DIZIN ?? "./.veri/yedekler";
-const ADI = /^classmate-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}\.json$/;
 
-export async function yedekAl(db: Db, saklaGun = 30): Promise<string> {
+export async function yedekAl(db: Db, saklaGun = YEDEK_SAKLAMA_GUN): Promise<string> {
   const dizin = yedekDizini();
   await mkdir(dizin, { recursive: true });
-  const z = new Date();
-  const ad = `classmate-${z.toISOString().slice(0, 16).replace(":", "-")}.json`;
-  await writeFile(join(dizin, ad), JSON.stringify(db), "utf8");
-  for (const y of await yedekleriListele()) if (Date.now() - new Date(y.zaman).getTime() > saklaGun * 86400_000) await rm(join(dizin, y.ad));
+  const ad = yedekAdiUret(new Date());
+  // Önce geçici dosyaya: yarıda kalan yazma bozuk bir yedek bırakmasın (geçici ad listeye girmez). Yalnızca sunucu kullanıcısı okuyabilir.
+  const gecici = join(dizin, `${ad}.${process.pid}.tmp`);
+  await writeFile(gecici, JSON.stringify(db), { encoding: "utf8", mode: 0o600 });
+  await rename(gecici, join(dizin, ad));
+  const simdi = Date.now();
+  for (const y of await yedekleriListele()) if (yedekSuresiDoldu(y.zaman, simdi, saklaGun)) await rm(join(dizin, y.ad));
   return ad;
 }
 
@@ -23,7 +26,7 @@ export async function yedekleriListele(): Promise<{ ad: string; boyut: number; z
   const dizin = yedekDizini();
   let adlar: string[] = [];
   try {
-    adlar = (await readdir(dizin)).filter((a) => ADI.test(a));
+    adlar = (await readdir(dizin)).filter(yedekAdiGecerli);
   } catch {
     return [];
   }
@@ -32,7 +35,7 @@ export async function yedekleriListele(): Promise<{ ad: string; boyut: number; z
 }
 
 export async function yedekOku(ad: string): Promise<string | null> {
-  if (!ADI.test(ad)) return null;
+  if (!yedekAdiGecerli(ad)) return null;
   try {
     return await readFile(join(yedekDizini(), ad), "utf8");
   } catch {

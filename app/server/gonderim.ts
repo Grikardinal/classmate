@@ -24,7 +24,8 @@ export class KonsolSms implements SmsSaglayici {
   gonderilenler: { telefon: string; metin: string }[] = [];
   async gonder(telefon: string, metin: string): Promise<SmsSonucu> {
     this.gonderilenler.push({ telefon, metin });
-    if (process.env.NODE_ENV !== "test") console.log(`[SMS → ${telefon}] ${metin}`);
+    // Üretim günlüğüne telefon ve giriş kodu yazılmaz
+    if (process.env.NODE_ENV !== "test") console.log(process.argv.includes("--uretim") || process.env.NODE_ENV === "production" ? "[SMS] konsol sağlayıcı: gönderilmedi" : `[SMS → ${telefon}] ${metin}`);
     return { tamam: true, ref: "konsol" };
   }
 }

@@ -22,7 +22,7 @@ npm run start    # üretim: derlenmiş arayüz + API tek portta (PORT, varsayıl
 
 | Değişken | Anlamı |
 |---|---|
-| `DEMO` | `1` (varsayılan): uydurma örnek veriyle kurulur. `0`: boş kurum + `ILK_YONETICI_*` ile ilk yönetici (ilk girişte parola değiştirmesi istenir) |
+| `DEMO` | `1`: uydurma örnek veriyle kurulur. Tanımsızsa geliştirmede `1`, üretimde (`npm run start`) `0` sayılır. `0`: boş kurum + `ILK_YONETICI_*` ile ilk yönetici (ilk girişte parola değiştirmesi istenir) |
 | `DATABASE_URL` | Boşsa gömülü PostgreSQL (PGlite, `./.veri/pg`). Canlıda gerçek PostgreSQL bağlantısı |
 | `SMS_SAGLAYICI` | `konsol` (gönderilmez, konsola yazılır) veya `netgsm` (`NETGSM_KULLANICI`, `NETGSM_SIFRE`, `NETGSM_BASLIK`) |
 | `VAPID_PUBLIC` / `VAPID_PRIVATE` | Web push anahtarları; boşsa ilk açılışta üretilip veritabanında saklanır |

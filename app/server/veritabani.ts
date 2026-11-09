@@ -115,34 +115,36 @@ export function veriyiOnar(girdi: Db): Db {
 
 /** Değişiklikleri tek işlemde (transaction) yazar. subeBul: satırın şube kimliği (kapsam sütunu) */
 export async function yaz(vt: Veritabani, d: Degisiklik, subeBul: (k: Koleksiyon, s: Satir) => string | null) {
-  await vt.islem(async (q) => {
-    for (const [k, v] of Object.entries(d.koleksiyonlar) as [Koleksiyon, { yaz: Satir[]; sil: string[] }][]) {
-      for (const s of v.yaz)
-        await q(
-          `insert into ${tablo(k)} (id, sube_id, veri, guncelleme) values ($1, $2, $3, now())
-           on conflict (id) do update set sube_id = excluded.sube_id, veri = excluded.veri, guncelleme = now()`,
-          [anahtar(k, s), subeBul(k, s), JSON.stringify(s)],
-        );
-      for (const id of v.sil) await q(`delete from ${tablo(k)} where id = $1`, [id]);
-    }
-    for (const [a, veri] of Object.entries(d.tekil))
-      await q(`insert into tekil (anahtar, veri) values ($1, $2) on conflict (anahtar) do update set veri = excluded.veri`, [a, JSON.stringify(veri)]);
-  });
+  await vt.islem((q) => islemdeYaz(q, d, subeBul));
 }
 
-/** Tüm veriyi baştan yazar (ilk kurulum, yedekten geri yükleme) */
+async function islemdeYaz(q: Sorgu, d: Degisiklik, subeBul: (k: Koleksiyon, s: Satir) => string | null) {
+  for (const [k, v] of Object.entries(d.koleksiyonlar) as [Koleksiyon, { yaz: Satir[]; sil: string[] }][]) {
+    for (const s of v.yaz)
+      await q(
+        `insert into ${tablo(k)} (id, sube_id, veri, guncelleme) values ($1, $2, $3, now())
+         on conflict (id) do update set sube_id = excluded.sube_id, veri = excluded.veri, guncelleme = now()`,
+        [anahtar(k, s), subeBul(k, s), JSON.stringify(s)],
+      );
+    for (const id of v.sil) await q(`delete from ${tablo(k)} where id = $1`, [id]);
+  }
+  for (const [a, veri] of Object.entries(d.tekil))
+    await q(`insert into tekil (anahtar, veri) values ($1, $2) on conflict (anahtar) do update set veri = excluded.veri`, [a, JSON.stringify(veri)]);
+}
+
+/** Tüm veriyi baştan yazar (ilk kurulum, yedekten geri yükleme). Tek işlemdir: yazma yarıda kalırsa eski veri olduğu gibi durur. */
 export async function tamamenYaz(vt: Veritabani, db: Db, subeBul: (k: Koleksiyon, s: Satir) => string | null) {
-  await vt.islem(async (q) => {
-    for (const k of KOLEKSIYONLAR) await q(`delete from ${tablo(k)}`);
-    // vapid anahtarları korunur (yedek geri yüklense de cihaz abonelikleri bozulmasın)
-    await q("delete from tekil where anahtar <> 'vapid'");
-  });
   const kayit = db as unknown as Record<string, unknown>;
   const d: Degisiklik = { koleksiyonlar: {}, tekil: {} };
   for (const k of KOLEKSIYONLAR) {
     const v = kayit[k];
     d.koleksiyonlar[k] = { yaz: (Array.isArray(v) ? v : Object.values((v as object) ?? {})) as Satir[], sil: [] };
   }
-  for (const t of TEKILLER) d.tekil[t] = kayit[t];
-  await yaz(vt, d, subeBul);
+  for (const t of TEKILLER) if (kayit[t] !== undefined) d.tekil[t] = kayit[t];
+  await vt.islem(async (q) => {
+    for (const k of KOLEKSIYONLAR) await q(`delete from ${tablo(k)}`);
+    // vapid anahtarları korunur (yedek geri yüklense de cihaz abonelikleri bozulmasın)
+    await q("delete from tekil where anahtar <> 'vapid'");
+    await islemdeYaz(q, d, subeBul);
+  });
 }

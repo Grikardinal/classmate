@@ -55,6 +55,7 @@ import { TAKILI_HATA, pushAbonelikTemizle, takiliSatirlar } from "../src/bolumle
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
+import { anonimlikleriKoru, degisiklikPaketiEngeli, ilkParolaEngeli, jsonIcerikMi, kvkkAnonimlestir, yedekDogrula, yedekTamamla, YEDEK_EN_BUYUK_BAYT, type KvkkTur } from "../src/bolumler/14-altyapi/kurallar";
 import { hepsiniYukle, semaKur, tamamenYaz, veriyiOnar, yaz, type Veritabani } from "./veritabani";
 import { yedekAl, yedekOku, yedekleriListele } from "./yedek";
 
@@ -97,12 +98,18 @@ export async function uygulamaOlustur(s: Secenekler) {
 
   let db = await hepsiniYukle(vt);
   if (!db) {
-    db = demo ? ornekVeriUret() : bosKurulum();
-    await tamamenYaz(vt, db, (k, x) => subeSutunu(db!, k, x));
+    // Parola denetimi veriden önce: eksik parolayla kurulum yazılsaydı sonraki açılışta hesabı parolasız yönetici kalırdı
     const parola = demo ? DEMO_PAROLA : process.env.ILK_YONETICI_PAROLA;
-    if (!parola) throw new Error("Demo dışı ilk kurulum için ILK_YONETICI_PAROLA gerekli");
-    const ozet = await parolaOzeti(parola);
-    for (const k of db.kullanicilar) await vt.q("insert into parola (kullanici_id, ozet, degistirmeli) values ($1, $2, $3)", [k.id, ozet, !demo]);
+    if (!demo) {
+      const engel = ilkParolaEngeli(parola);
+      if (engel) throw new Error(engel);
+    }
+    db = demo ? ornekVeriUret() : bosKurulum();
+    const ozet = await parolaOzeti(parola!);
+    // Parolalar önce: kurum verisi en son yazılır, arada kesilen kurulum sonraki açılışta baştan yapılır
+    for (const k of db.kullanicilar)
+      await vt.q("insert into parola (kullanici_id, ozet, degistirmeli) values ($1, $2, $3) on conflict (kullanici_id) do update set ozet = excluded.ozet, degistirmeli = excluded.degistirmeli", [k.id, ozet, !demo]);
+    await tamamenYaz(vt, db, (k, x) => subeSutunu(db!, k, x));
   }
   const durum = { db };
   tanimKaynagi(durum.db);
@@ -197,7 +204,7 @@ export async function uygulamaOlustur(s: Secenekler) {
   };
   const cerez = (c: Context, ad: string, deger: string, saat: number) =>
     setCookie(c, ad, deger, { httpOnly: true, sameSite: "Strict", secure: uretim, path: "/", maxAge: saat * 3600 });
-  const hata = (c: Context, mesaj: string, kod: 400 | 401 | 403 | 404 | 409 | 429 = 400) => c.json({ hata: mesaj }, kod);
+  const hata = (c: Context, mesaj: string, kod: 400 | 401 | 403 | 404 | 409 | 429 | 500 = 400) => c.json({ hata: mesaj }, kod);
 
   /** Hesap ve bağlı personel kartı aktifse aktör (her istekte güncel veriden: pasife alınan hesap hemen düşer) */
   function aktorBul(kullaniciId: string): Aktor | null {
@@ -231,26 +238,68 @@ export async function uygulamaOlustur(s: Secenekler) {
 
   /* =========================== Uygulama =========================== */
   const app = new Hono<{ Variables: { aktor: Aktor; veli: Veli } }>();
-  app.use("*", secureHeaders({ crossOriginEmbedderPolicy: false }));
-  app.use("/api/*", bodyLimit({ maxSize: 8 * 1024 * 1024, onError: (c) => c.json({ hata: "İstek çok büyük" }, 413) }));
+  app.use(
+    "*",
+    secureHeaders({
+      crossOriginEmbedderPolicy: false,
+      // Yazdırma penceresi satır içi stil kullanır; Google Fonts açık (KVKK notu: README). Veli önizlemesi aynı kökten iframe açar.
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: ["'self'"],
+        workerSrc: ["'self'"],
+        manifestSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'self'"],
+      },
+    }),
+  );
+  const genelSinir = bodyLimit({ maxSize: 8 * 1024 * 1024, onError: (c) => c.json({ hata: "İstek çok büyük" }, 413) });
+  const yedekSinir = bodyLimit({ maxSize: YEDEK_EN_BUYUK_BAYT, onError: (c) => c.json({ hata: "Yedek dosyası çok büyük" }, 413) });
+  app.use("/api/*", (c, next) => (c.req.path === "/api/yedek" ? yedekSinir(c, next) : genelSinir(c, next)));
+  // Kişisel veri tarayıcı/ara katman önbelleğinde kalmasın
+  app.use("/api/*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-store");
+  });
   // Çapraz site isteklerine karşı: yazma isteklerinde JSON zorunlu (SameSite=Strict çerezle birlikte)
   app.use("/api/*", async (c, next) => {
-    if (c.req.method !== "GET" && c.req.method !== "DELETE" && !(c.req.header("content-type") ?? "").includes("application/json")) return hata(c, "JSON bekleniyor", 400);
+    if (c.req.method !== "GET" && c.req.method !== "DELETE" && !jsonIcerikMi(c.req.header("content-type"))) return hata(c, "JSON bekleniyor", 400);
+    // Bozuk veya nesne olmayan gövde uçlara ulaşmaz (boş gövdeye izin veren uçlar var). Yedek yetki denetiminden sonra okunur.
+    if (c.req.method === "POST" && c.req.path !== "/api/yedek") {
+      const metin = await c.req.text();
+      if (metin) {
+        let govde: unknown;
+        try {
+          govde = JSON.parse(metin);
+        } catch {
+          return hata(c, "Geçersiz istek gövdesi.", 400);
+        }
+        if (!govde || typeof govde !== "object" || Array.isArray(govde)) return hata(c, "Geçersiz istek gövdesi.", 400);
+      }
+    }
     await next();
   });
   app.onError((e, c) => {
     if (e instanceof YetkiHatasi) return hata(c, e.message, 403);
-    console.error(e);
-    return hata(c, "Sunucu hatası", 400);
+    if (e instanceof SyntaxError) return hata(c, "Geçersiz istek gövdesi.", 400);
+    if (e.name === "BodyLimitError") return c.json({ hata: "İstek çok büyük" }, 413);
+    // Ayrıntı yalnızca günlükte (parametre içeren sürücü hatası nesnesi değil, ileti ve yığın)
+    console.error(`${c.req.method} ${c.req.path}:`, e.stack ?? e.message);
+    return hata(c, "Sunucu hatası", 500);
   });
 
   app.get("/api/durum", (c) =>
     c.json({
       surum: SURUM,
       demo,
-      vt: vt.tur,
-      sms: sms.ad,
-      push: !!push,
+      // Altyapı bilgisi girişsiz uçtan üretimde verilmez
+      ...(demo || !uretim ? { vt: vt.tur, sms: sms.ad, push: !!push } : {}),
       kurum: durum.db.kurum.ad,
       bugun: BUGUN,
       saat: SIMDI,
@@ -340,7 +389,8 @@ export async function uygulamaOlustur(s: Secenekler) {
 
   app.post("/api/degisiklik", personelGerekli, async (c) => {
     const ham = await c.req.json<Degisiklik>();
-    if (!ham || typeof ham !== "object" || typeof ham.koleksiyonlar !== "object" || typeof ham.tekil !== "object") return hata(c, "Geçersiz değişiklik paketi");
+    const bicim = degisiklikPaketiEngeli(ham);
+    if (bicim) return hata(c, bicim);
     const a = c.get("aktor");
     await sirali(async () => {
       const temiz = yazmaDenetle(durum.db, farkUygula(durum.db, ham), ham, a, simdiZaman());
@@ -393,26 +443,34 @@ export async function uygulamaOlustur(s: Secenekler) {
     return c.json({ parola });
   });
 
-  app.get("/api/yedek", personelGerekli, (c) => {
-    if (c.get("aktor").kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici yedek alabilir.", 403);
+  app.get("/api/yedek", personelGerekli, async (c) => {
+    const a = c.get("aktor");
+    if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici yedek alabilir.", 403);
+    await sunucuDegisikligi((x) => islemYaz(x, tamAd(a.personel), "Yedek", "Tam yedek bilgisayara indirildi"));
     return c.json(durum.db);
   });
   app.post("/api/yedek", personelGerekli, async (c) => {
     const a = c.get("aktor");
     if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici geri yükleyebilir.", 403);
     const ham = await c.req.json<Db>();
-    if (ham?.surum !== SURUM || !Array.isArray(ham.ogrenciler) || !Array.isArray(ham.kullanicilar)) return hata(c, "Geçerli bir Classmate yedeği değil (veya farklı sürüm).");
+    const bicim = yedekDogrula(ham, SURUM);
+    if (bicim) return hata(c, bicim);
     // Eski biçimli yedek (ör. şube başına tek fiyat) yeni biçime çevrilerek yazılır
-    const yeni = veriyiOnar(ham);
-    if (yeni?.surum !== SURUM || !Array.isArray(yeni.ogrenciler) || !Array.isArray(yeni.kullanicilar)) return hata(c, "Geçerli bir Classmate yedeği değil (veya farklı sürüm).");
-    if (!yeni.kullanicilar.some((k) => k.id === a.kullanici.id && k.aktif && k.rol === "genel-yonetici"))
+    const onarilmis = veriyiOnar(yedekTamamla(ham));
+    const benim = onarilmis.kullanicilar.find((k) => k.id === a.kullanici.id && k.aktif && k.rol === "genel-yonetici");
+    if (!benim || !onarilmis.personel.some((p) => p.id === benim.personelId && p.aktif !== false))
       return hata(c, "Yedekte sizin aktif genel yönetici hesabınız yok; geri yükleme sizi dışarıda bırakırdı.");
+    let korunan = 0;
     await sirali(async () => {
+      // Dönüşü olmayan işlem öncesi mevcut verinin yedeği; alınamazsa geri yükleme yapılmaz
+      await yedekAl(durum.db);
+      const { db: yeni, sayi } = anonimlikleriKoru(durum.db, onarilmis, BUGUN);
+      korunan = sayi;
       await tamamenYaz(vt, yeni, (k, x) => subeSutunu(yeni, k, x));
       durum.db = (await hepsiniYukle(vt))!;
       tanimKaynagi(durum.db);
     });
-    await sunucuDegisikligi((x) => islemYaz(x, tamAd(a.personel), "Geri yükleme", "Yedekten geri yüklendi"));
+    await sunucuDegisikligi((x) => islemYaz(x, tamAd(a.personel), "Geri yükleme", korunan ? `Yedekten geri yüklendi; ${korunan} KVKK silmesi yeniden uygulandı` : "Yedekten geri yüklendi"));
     return c.json({ tamam: true });
   });
   app.get("/api/yedek/liste", personelGerekli, async (c) => {
@@ -427,9 +485,11 @@ export async function uygulamaOlustur(s: Secenekler) {
     return c.json({ ad });
   });
   app.get("/api/yedek/dosya/:ad", personelGerekli, async (c) => {
-    if (c.get("aktor").kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici.", 403);
+    const a = c.get("aktor");
+    if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Yalnızca genel yönetici.", 403);
     const icerik = await yedekOku(c.req.param("ad"));
     if (!icerik) return hata(c, "Yedek bulunamadı.", 404);
+    await sunucuDegisikligi((x) => islemYaz(x, tamAd(a.personel), "Yedek", `Yedek indirildi: ${c.req.param("ad")}`));
     return c.body(icerik, 200, { "content-type": "application/json", "content-disposition": `attachment; filename="${c.req.param("ad")}"` });
   });
   app.post("/api/demo/sifirla", personelGerekli, async (c) => {
@@ -443,12 +503,27 @@ export async function uygulamaOlustur(s: Secenekler) {
     return c.json({ tamam: true });
   });
 
-  /* ---------- Veli portalı ---------- */
-  // Kişisel veri tarayıcı/ara katman önbelleğinde kalmasın (çıkıştan sonra da)
-  app.use("/api/veli/*", async (c, next) => {
-    await next();
-    c.header("Cache-Control", "no-store");
+  /* ---------- KVKK (Bölüm 14) ---------- */
+  // Gönderim, işlem kaydı ve cihaz aboneliği istemciden yazılamadığı için anonimleştirme sunucuda yapılır
+  app.post("/api/kvkk/anonimlestir", personelGerekli, async (c) => {
+    const a = c.get("aktor");
+    if (a.kullanici.rol !== "genel-yonetici") return hata(c, "Anonimleştirmeyi yalnızca genel yönetici yapabilir.", 403);
+    const { tur, ids } = await c.req.json<{ tur: KvkkTur; ids: string[] }>();
+    if (!["ogrenci", "veli", "aday"].includes(tur) || !Array.isArray(ids) || !ids.length || ids.length > 5000 || !ids.every((x) => typeof x === "string")) return hata(c, "Geçersiz istek.");
+    let sonuc: ReturnType<typeof kvkkAnonimlestir> = { engel: null, sayi: 0 };
+    await sunucuDegisikligi((x) => {
+      sonuc = kvkkAnonimlestir(x, tur, ids, { kullanici: tamAd(a.personel), bugun: BUGUN, zaman: simdiZaman() });
+    });
+    if (sonuc.engel) return hata(c, sonuc.engel, 409);
+    if (tur === "veli")
+      for (const id of ids) {
+        await vt.q("delete from push_abonelik where veli_id = $1", [id]);
+        await tumOturumlariKapat(vt, "veli", id);
+      }
+    return c.json({ sayi: sonuc.sayi });
   });
+
+  /* ---------- Veli portalı ---------- */
   const hak = (anahtar: string, s: { sinir: number; pencere: number }) => denemeHakki(anahtar, s.sinir, s.pencere);
   const veliBul = (veliId: string) => {
     const v = durum.db.veliler.find((x) => x.id === veliId);
@@ -641,9 +716,9 @@ export async function uygulamaOlustur(s: Secenekler) {
   let sonYedekGunu = "";
   async function gunlukYedek() {
     if (SIMDI < "03:00" || sonYedekGunu === BUGUN) return;
+    // Başarıda işaretlenir: disk hatasında bir dakika sonra yeniden denenir
+    if (!(await yedekleriListele()).some((y) => y.ad.includes(BUGUN))) await yedekAl(durum.db);
     sonYedekGunu = BUGUN;
-    if ((await yedekleriListele()).some((y) => y.ad.includes(BUGUN))) return;
-    await yedekAl(durum.db);
   }
 
   return { app, durum, kuyrukCalistir, otomasyonCalistir, kaydet, gunlukYedek };

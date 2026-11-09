@@ -30,7 +30,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 11 | Veli ve öğrenci portalı | `app/src/bolumler/11-veli-portali` | 1 | ✅ |
 | 12 | Yönetim paneli ve raporlar | `app/src/bolumler/12-yonetim-paneli` | 2 | ✅ |
 | 13 | Personel | `app/src/bolumler/13-personel` | 3 | ✅ |
-| 14 | Altyapı, güvenlik, KVKK | `app/src/bolumler/14-altyapi` | 4 | ⏳ |
+| 14 | Altyapı, güvenlik, KVKK | `app/src/bolumler/14-altyapi` | 4 | ✅ |
 
 ## Kullanıcı kararları
 
@@ -94,7 +94,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-09 | Excel/CSV enjeksiyon temizliği | Ortak koda taşınır, 07 ve 14'e de uygulanır | Bölüm 12 ek iş ✅ |
 | 2026-11-09 | İçe aktarılan kayıtlar | Yeni kayıt grafiğinden **çıkarılır** | Bölüm 12 ek iş ✅ |
 | 2026-11-09 | Önceki aya göre değişim | Şimdilik "+N bu ay" (değişiklik yok) | — |
-| 2026-11-09 | Sekreterin finans yetkisi | Panel yönetime kalır; varsayılan rol yetkisi birlikte ele alınır | Bölüm 14 |
+| 2026-11-09 | Sekreterin finans yetkisi | Panel yönetime kalır; varsayılan yetki dokümanla uyumlu (değişiklik yok) | Bölüm 14 ✅ |
 | 2026-11-09 | Ödenmiş aya sonradan gelen düzeltme | Ödenen tutar **dondurulur**, fark sonraki aya taşınır | Bölüm 13 ek iş ✅ |
 | 2026-11-09 | Fazla avans | Sonraki aya **otomatik devreder** | Bölüm 13 ek iş ✅ |
 | 2026-11-09 | Ödeme gideri iptali | Hak ediş **"onaylandı"ya döner** | Bölüm 13 ek iş ✅ |

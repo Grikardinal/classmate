@@ -12,6 +12,7 @@ import { baglan, semaKur } from "./veritabani";
 import { pushHazirla, smsSaglayiciOlustur } from "./gonderim";
 import { uygulamaOlustur } from "./uygulama";
 import { zamaniGuncelle } from "../src/data/model";
+import { demoModu, uretimUyarilari } from "../src/bolumler/14-altyapi/kurallar";
 
 // .env dosyası varsa yükle (basit KEY=VALUE)
 if (existsSync(".env"))
@@ -25,7 +26,7 @@ process.env.TZ ||= "Europe/Istanbul";
 zamaniGuncelle();
 
 const uretim = process.env.NODE_ENV === "production" || process.argv.includes("--uretim");
-const demo = process.env.DEMO !== "0";
+const demo = demoModu(process.env.DEMO, uretim);
 const port = Number(process.env.PORT ?? 3001);
 
 const vt = await baglan();
@@ -35,6 +36,7 @@ const push = await pushHazirla(vt, process.env.PUSH_ILETISIM ?? "bilgi@classmate
   console.warn("Web push hazırlanamadı:", e.message);
   return null;
 });
+for (const u of uretimUyarilari({ uretim, demo, sms: sms.ad, postgres: !!process.env.DATABASE_URL })) console.warn("UYARI:", u);
 const { app, otomasyonCalistir, gunlukYedek } = await uygulamaOlustur({ vt, sms, push, demo, uretim });
 
 if (uretim) {
