@@ -34,6 +34,7 @@ const YonetimPaneli = React.lazy(() => import("@/bolumler/12-yonetim-paneli"));
 const Personel = React.lazy(() => import("@/bolumler/13-personel"));
 const HakEdisim = React.lazy(() => import("@/bolumler/13-personel/HakEdisim"));
 const Altyapi = React.lazy(() => import("@/bolumler/14-altyapi"));
+const Tanitim = React.lazy(() => import("@/tanitim"));
 
 function Yukleniyor() {
   return <div className="grid min-h-40 place-items-center text-sm text-muted-foreground">Yükleniyor…</div>;
@@ -56,6 +57,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           {/* Veli portalı: yönetim kabuğu dışında, telefona göre düzen */}
           <Route path="veli/*" element={<VeliPortaliUygulamasi />} />
           <Route path="giris" element={<GirisSayfasi />} />
+          <Route path="tanitim" element={<Tanitim />} />
           <Route element={<PersonelKapisi><AppShell /></PersonelKapisi>}>
             <Route index element={<YonetimPaneli />} />
             <Route path="kurum" element={<Korumali kod="01"><KurumYapisi /></Korumali>} />

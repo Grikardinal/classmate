@@ -213,6 +213,8 @@ export function PersonelKapisi({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ben?.kullanici.id]);
 
+  // Oturumsuz ziyaretçi ana sayfada tanıtımı görür; iç sayfa bağlantıları girişe gider
+  if (durum === "giris" && location.pathname === "/") return <Navigate to="/tanitim" replace />;
   if (durum === "giris") return <Navigate to="/giris" replace state={{ hedef: location.pathname + location.search }} />;
   if (durum === "hata")
     return (
