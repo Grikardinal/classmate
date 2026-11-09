@@ -71,6 +71,7 @@ import {
   virmanEngeli,
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
+import { finansIslemiMi } from "../src/bolumler/12-yonetim-paneli/kurallar";
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
 import { devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
@@ -188,6 +189,8 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
     if (k === "adaylar" && !genel && !yetki(db, a, "03") && !yetki(db, a, "04")) return false;
     // Şube tanımları kişisel veri içermez; nakil / devir hedefi seçilebilsin diye her personel görür (kapsam değişmez)
     if (k === "subeler") return true;
+    // İşlem kaydı detayındaki tutar da finans verisidir (Bölüm 12)
+    if (k === "islemler" && !finans && finansIslemiMi(String(s.islem))) return false;
     if (k === "islemler" && !s.subeId) return genel;
     if (k === "giderler" && s.subeId === "merkez") return genel;
     const l = satirSubeleri(db, k, s);
