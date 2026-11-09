@@ -6,7 +6,7 @@ import { gunAdlari, gunKisa } from "@/data/mock";
 import { BUGUN, SIMDI, aktifKayit, bildirimEkle, guncelle, islemYaz, personelAdi, sube, tamAd, tanimlar, useDb, yeniId, type EtutTuru, type Musaitlik, type Randevu } from "@/data/store";
 import { haftaBasi, haftaGunu, tarihEkle } from "@/lib/kurallar";
 import { cn } from "@/lib/utils";
-import { bosSlotlar, etutTurAd, randevuYeniEngeli, uygunPaket } from "./kurallar";
+import { bosSlotlar, etutTurAd, randevuYeniEngeli, uygunPaket, yaklasanRandevular } from "./kurallar";
 import { tarihKisa } from "./ortak";
 
 export function Takvim() {
@@ -17,9 +17,23 @@ export function Takvim() {
   const [yeni, setYeni] = React.useState<{ m: Musaitlik; tarih: string; bas: string; bit: string } | null>(null);
   const ogretmenler = d.personel.filter((p) => d.musaitlikler.some((m) => m.ogretmenId === p.id && subeGorunur(m.subeId)));
   const gunler = [1, 2, 3, 4, 5, 6, 7].map((g) => tarihEkle(hafta, g - 1));
+  const yaklasan = ogretmenMi ? yaklasanRandevular(d.randevular, personel.id, { bugun: BUGUN, simdi: SIMDI }) : [];
 
   return (
     <div className="grid gap-4">
+      {ogretmenMi && (
+        <div className="rounded-lg border border-primary/50 bg-accent/40 p-3">
+          <p className="text-sm font-semibold">Yaklaşan randevularım</p>
+          {yaklasan.length === 0 && <p className="mt-1 text-sm text-muted-foreground">Planlı randevunuz yok.</p>}
+          <ul className="mt-1 grid gap-1 text-sm">
+            {yaklasan.map((r) => (
+              <li key={r.id}>
+                <span className="font-medium tabular-nums">{r.tarih === BUGUN ? "Bugün" : tarihKisa(r.tarih)} {r.bas}</span> · {r.ogrenciIds.map((id) => d.ogrenciler.find((o) => o.id === id)?.ad).join(", ")} · {sube(r.subeId)?.kod}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Select aria-label="Öğretmen" className="w-48" value={ogretmenId} disabled={ogretmenMi} onChange={(e) => setOgretmenId(e.target.value)}>
           <option value="all">Tüm öğretmenler</option>
@@ -63,7 +77,7 @@ export function Takvim() {
           );
         })}
       </div>
-      <p className="text-xs text-muted-foreground">Boş slota tıklayarak randevu oluşturun. Randevudan 1 saat önce veli ve öğretmene otomatik hatırlatma gider.</p>
+      <p className="text-xs text-muted-foreground">Boş slota tıklayarak randevu oluşturun. Randevudan 1 saat önce veliye otomatik hatırlatma gider.</p>
       {yeni && <RandevuDialog {...yeni} onClose={() => setYeni(null)} />}
     </div>
   );

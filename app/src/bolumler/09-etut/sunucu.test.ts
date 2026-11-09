@@ -44,7 +44,7 @@ const KAPALI: Db = { ...db, moduller: { ...db.moduller, etut: false } };
 
 const randevu = (p: Partial<Randevu> = {}): Randevu => ({ id: "rX", ogretmenId: "p4", subeId: "s1", tarih: SALI, bas: "14:00", bit: "14:40", tur: "bireysel", ogrenciIds: [OGR], dersId: "l2", durum: "planli", link: "", paketId: null, olusturan: "yonetim", ...p });
 const paket = (p: Partial<Paket> = {}): Paket => ({ id: "pkX", ogrenciId: OGR, ogretmenId: "p4", dersId: "l2", toplam: 4, kalan: 2, fiyat: 900, tarih: "2026-10-01", ...p });
-const gonderim = (id: string, p: Partial<Gonderim> = {}): Gonderim => ({ id, zaman: "x", olay: "etutHatirlatma", veliId: VELI, alici: "a", ogrenciId: OGR, subeId: "s1", kanal: "push", metin: "m", durum: "bekliyor", maliyet: 0, ...p });
+const gonderim = (id: string, p: Partial<Gonderim> = {}): Gonderim => ({ id, zaman: "x", olay: "etutHatirlatma", veliId: VELI, alici: "a", ogrenciId: OGR, subeId: "s1", kanal: "push", metin: db.olaylar.find((o) => o.key === (p.olay ?? "etutHatirlatma"))!.sablon, durum: "bekliyor", maliyet: 0, ...p });
 const gecmis = (p: Partial<Randevu> = {}) => randevu({ tarih: GECEN_SALI, ...p });
 
 function dene(fn: (x: Db) => void, a: Aktor = MUDUR, kaynak: Db = db) {

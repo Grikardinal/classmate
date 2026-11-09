@@ -353,3 +353,11 @@ export const paketBilgiMetni = (dersAd: string, kalan: number) => `${dersAd} pak
 export function paketBildirimiGitti(gonderimler: Pick<Gonderim, "olay" | "ogrenciId" | "metin" | "paketId">[], p: Pick<Paket, "id" | "ogrenciId" | "kalan">, dersAd: string): boolean {
   return gonderimler.some((g) => (g.olay === "paketBitiyor" && g.paketId === p.id) || (g.olay === "duyuru" && g.ogrenciId === p.ogrenciId && g.metin.includes(paketBilgiMetni(dersAd, p.kalan))));
 }
+
+/** Öğretmenin takvimde göreceği yaklaşan randevuları (personel bildirim kanalı yok, karar 2026-11-09) */
+export function yaklasanRandevular<T extends Pick<Randevu, "ogretmenId" | "durum" | "tarih" | "bas">>(randevular: T[], ogretmenId: string, an: { bugun: string; simdi: string }, adet = 5): T[] {
+  return randevular
+    .filter((r) => r.ogretmenId === ogretmenId && r.durum === "planli" && (r.tarih > an.bugun || (r.tarih === an.bugun && r.bas >= an.simdi)))
+    .sort((a, b) => a.tarih.localeCompare(b.tarih) || a.bas.localeCompare(b.bas))
+    .slice(0, adet);
+}

@@ -124,7 +124,7 @@ describe("yoklama → devamsızlık bildirimi → gönderim kuyruğu", () => {
     const v = db.veliler.find((x) => x.id === ogr.birincilVeliId)!;
     const yok = { ...eski, durumlar: { [ogr.id]: "gelmedi" }, konu: "Test" };
     // Örnek yoklama sabit tarihli, 7 günlük pencere dışına düşer (Bölüm 10); kuyruk yolu tarihten bağımsız bir olayla sınanır
-    const g = { id: "gnTEST1", zaman: "x", olay: "hosgeldin", veliId: v.id, alici: "maskeli", ogrenciId: ogr.id, subeId: "s1", kanal: "sms", metin: `${ogr.ad} bugün 16:50 Matematik dersine katılmadı.`, durum: "iletildi", maliyet: 0 };
+    const g = { id: "gnTEST1", zaman: "x", olay: "hosgeldin", veliId: v.id, alici: "maskeli", ogrenciId: ogr.id, subeId: "s1", kanal: "sms", metin: db.olaylar.find((o) => o.key === "hosgeldin")!.sablon.replace("{ogrenci}", ogr.ad).replace("{sube_adi}", "Merkez"), durum: "iletildi", maliyet: 0 };
     const r = await iste("/api/degisiklik", { koleksiyonlar: { yoklamalar: { yaz: [yok], sil: [] }, gonderimler: { yaz: [g], sil: [] } }, tekil: {} });
     expect(r.durum).toBe(200);
     const kayit = app.durum.db.gonderimler.find((x) => x.id === "gnTEST1")!;

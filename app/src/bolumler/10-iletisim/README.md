@@ -33,7 +33,7 @@ Sunucu: `app/server/politika.ts · iletisimDenetle`, `veliVerisi`; `app/server/g
 **Personelin yazdığı gönderim satırı** (`iletisimDenetle`)
 - Olayı yalnızca üretebilen rol yazar (`olayUretmeYetkisi`); öğretmen yalnızca yoklama, ödev, etüt olaylarını.
 - Alıcı öğrencinin velisi, öğrenci şube kapsamında olmalı. Alıcı metni, şube, kanal, maliyet, durum sunucudan.
-- SMS yalnızca olay kanalı uygunsa ve metin şablon kalıbına uyuyorsa (`metinSablonaUyar`); uymayan metin uygulama bildirimi kalır.
+- Metin olayın şablonuna uymalı (`metinSablonaUyar`); uymayan satır, paketle birlikte reddedilir (karar 2026-11-09). `bildirimEkle` serbest değerleri 250 karaktere kısaltır, böylece ekranların ürettiği metin sınırı aşmaz.
 - Giriş kodu, düzeltme mesajları, etüt iptali, duyuru satırlarını yalnızca sunucu üretir.
 - Devamsızlık bildirimi aynı paketteki gerçek "gelmedi" kaydına bağlıdır; olay türü ve 7 günlük geç giriş penceresi sunucuda uygulanır.
 
@@ -59,16 +59,17 @@ Sunucu: `app/server/politika.ts · iletisimDenetle`, `veliVerisi`; `app/server/g
 ## Bilinen sınırlar
 - Veri süreç belleğinde tutulur; uygulama tek süreç varsayar. İki süreç aynı veritabanında çalışırsa çift gönderim engeli geçerli olmaz.
 - Şablon denetimi değişken yerlerine yazılan metni tanımaz; personel bu alanlara (en çok 300 karakter) kısa serbest metin koyabilir.
-- Şablona uymayan metin uygulama içi bildirim olarak gidebilir. Metin gönderim kaydında izlenebilir.
+- Yönetici şablonu değiştirdiğinde eski veriyle açık kalan sekmenin kaydı reddedilir; sayfa yenilenip tekrar denenir.
 - Duyurunun SMS yedeği yalnızca satır oluşurken push kapalı veliye gider; abonelik sonradan geçersizleşirse SMS'e düşmez (duyuru olayı varsayılanı "uygulama").
 - Veli portaldan çıkınca cihaz aboneliği silinmez (Bölüm 11 istemcisinin uç noktayı bildirmesi gerekir).
 - Unicode karakter içeren şablonlarda (“ ” —) maliyet ihtiyatlı hesaplanır; Netgsm `dil=TR` faturası farklı olabilir.
 - Gönderim aralığı olay bazında değil, kurum genelindedir.
 
-## Açık sorular
-1. **Öğretmene etüt onay/hatırlatma bildirimi:** personel bildirim kanalı yok (push aboneliği ve `Gonderim.veliId` yalnızca veli için). *Öneri:* yeni kanal kurmadan öğretmenin takvim ekranında göstermek; gerekirse ileride personel push'u ayrı iş olarak ele alınsın.
-2. **Devamsızlık ve SMS izni:** doküman devamsızlığın "herkese kesin ulaşmalı" olduğunu söylüyor, ama izni kapatan veliye SMS gitmiyor. *Öneri:* izne uyulsun (07, 08, 09 kararlarıyla tutarlı); izin kapatılırken ekranda uyarı gösterilsin.
-3. **Ders iptali ve acil duyurular gece beklesin mi?** Şu an aralık dışında bekliyor. *Öneri:* doküman gereği beklesin; gece iptali için sabah gönderim yeterli.
-4. **Takılı satır:** iletildiği bilinmiyor, otomatik tekrar yok. *Öneri:* böyle kalsın; çift SMS, eksik SMS'ten sonra personelce düzeltilebilir.
-5. **Netgsm kimliği URL'de gidiyor (GET).** *Öneri:* sağlayıcı hesabı netleşince Netgsm'in başlıkla kimlik doğrulayan API'sine geçilsin.
-6. **Serbest metinli uygulama bildirimi:** şablona uymayan satırın tamamen reddi önceki bölümlerin test verilerini de değiştirmeyi gerektirir. *Öneri:* ayrı temizlik işiyle reddedilsin.
+## Kapanan sorular (2026-11-09)
+Kararlar `docs/PROFESYONELLESME.md` tablosunda.
+1. **Öğretmene etüt bildirimi:** Kapandı (2026-11-09). Yeni kanal kurulmadı; öğretmen etüt takviminde "Yaklaşan randevularım" özetini görür (`09-etut · yaklasanRandevular`).
+2. **Devamsızlık ve SMS izni:** Kapandı (2026-11-09). İzne uyulur; veli portalında izni kapatırken uyarı çıkar ve onay istenir.
+3. **Sessiz saatte ders iptali:** Kapandı (2026-11-09). Değişmedi; aralık dışında bekler.
+4. **Takılı satır:** Kapandı (2026-11-09). Değişmedi; otomatik tekrar yok, personel karar verir.
+5. **Netgsm kimliği URL'de (GET):** Kapandı (2026-11-09). Canlıya almada: Netgsm hesabı netleşince başlıkla kimlik doğrulayan API'ye geçilecek.
+6. **Şablona uymayan metin:** Kapandı (2026-11-09). Reddedilir.

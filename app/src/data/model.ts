@@ -957,6 +957,8 @@ export function hedefVeliler(d: Db, hedef: Duyuru["hedef"], subeIds?: string[] |
   return [...new Set(hedefOgrencileri(d, hedef, subeIds).flatMap((o) => o.veliIds))];
 }
 
+const BILDIRIM_DEGER_SINIR = 250;
+
 /** Olaydan veli bildirimleri üretir (10). Olay kapalıysa hiçbir şey göndermez. */
 export function bildirimEkle(
   d: Db,
@@ -975,8 +977,10 @@ export function bildirimEkle(
   const veliler = ogrenciVelileri(d, o).filter((v) => !yalnizBirincil || v.id === o.birincilVeliId);
   for (const v of veliler) {
     const kanal = kanalSec(tanim.kanal, v.pushAcik);
+    // Serbest değerler (iptal nedeni, ödev başlığı) kısaltılır: mesaj uzamaz, sunucunun şablon denetimi (Bölüm 10) ekranı reddetmez
+    const kisa = Object.fromEntries(Object.entries(degiskenler).map(([a, x]) => [a, x.length > BILDIRIM_DEGER_SINIR ? `${x.slice(0, BILDIRIM_DEGER_SINIR - 1)}…` : x]));
     const metin = sablonDoldur(tanim.sablon, {
-      ogrenci: o.ad, grup: k ? grupEtiket(d, k.grupId) : "", sube_adi: s?.ad ?? "", sube_telefonu: s?.telefon ?? "", ...degiskenler,
+      ogrenci: o.ad, grup: k ? grupEtiket(d, k.grupId) : "", sube_adi: s?.ad ?? "", sube_telefonu: s?.telefon ?? "", ...kisa,
     });
     d.gonderimler.push({
       id: yeniId("gn"), zaman, olay, veliId: v.id, alici: `${tamAd(v)} · ${v.telefon}`, ogrenciId, subeId: k?.subeId ?? "s1", kanal, metin,

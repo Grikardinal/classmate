@@ -59,7 +59,7 @@ const reddedilir = (f: () => unknown, mesaj?: RegExp) => {
 };
 const kayitli = (y: Yoklama): Db => ({ ...db, yoklamalar: { [y.oturumId]: y } });
 const yazilan = (d: ReturnType<ReturnType<typeof yaz>>) => d.koleksiyonlar.yoklamalar!.yaz[0] as unknown as Yoklama;
-const gonderim = (id: string, p: Partial<Gonderim> = {}): Gonderim => ({ id, zaman: "x", olay: "devamsizlik", veliId: "v1", alici: "a", ogrenciId: OGR, subeId: "s1", kanal: "sms", metin: "Ali bugün 16:00 dersine katılmadı.", durum: "bekliyor", maliyet: 1, ...p });
+const gonderim = (id: string, p: Partial<Gonderim> = {}): Gonderim => ({ id, zaman: "x", olay: "devamsizlik", veliId: "v1", alici: "a", ogrenciId: OGR, subeId: "s1", kanal: "sms", metin: p.olay === "devamsizlikGecmis" ? "Ali 02.11.2026 tarihli 16:00 Matematik dersine katılmadı. Merkez 0212" : "Ali bugün 16:00 Matematik dersine katılmadı. Merkez 0212", durum: "bekliyor", maliyet: 1, ...p });
 
 describe("yetki ve zaman", () => {
   it("öğretmen kendi dersinin bugünkü yoklamasını alır", () => {

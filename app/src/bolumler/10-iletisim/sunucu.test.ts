@@ -3,9 +3,10 @@
  * Politika testlerinde zaman parametredir; gerçek saate bağlı sabit tarih yok. Gerçek SMS gönderilmez.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ornekVeriUret, type Aday, type Db, type Duyuru, type Gonderim, tanimKaynagi } from "@/data/model";
+import { bildirimEkle, ornekVeriUret, type Aday, type Db, type Duyuru, type Gonderim, tanimKaynagi } from "@/data/model";
 import { farkHesapla, farkUygula } from "@/data/fark";
-import { YetkiHatasi, okumaSuz, veliVerisi, yazmaDenetle, type Aktor } from "../../../server/politika";
+import { sablonDoldur } from "@/lib/kurallar";
+import { YetkiHatasi, iletisimDenetle, okumaSuz, veliVerisi, yazmaDenetle, type Aktor } from "../../../server/politika";
 import { KonsolSms, kuyruguIsle, type KuyrukBaglami, type PushGonderici, type SmsSonucu } from "../../../server/gonderim";
 import { otomasyonlariCalistir } from "../../../server/zamanlayici";
 import { uygulamaOlustur } from "../../../server/uygulama";
@@ -81,9 +82,8 @@ describe("personelin gönderim satırı", () => {
   it("öğretmen finans bildirimi yazamaz", () => {
     reddedilir(dene((x) => x.gonderimler.push(satir("g1", { olay: "gecikmisOdeme" })), OGRETMEN), /yetkiniz/);
   });
-  it("serbest metin SMS olmaz, uygulama bildirimine döner", () => {
-    const [g] = gonderimler(dene((x) => x.gonderimler.push(satir("g1", { metin: "Şu hesaba para yatırın" })), MUDUR, izinli({ pushAcik: false }))());
-    expect(g).toMatchObject({ kanal: "push", maliyet: 0 });
+  it("şablona uymayan metin reddedilir", () => {
+    reddedilir(dene((x) => x.gonderimler.push(satir("g1", { metin: "Şu hesaba para yatırın" }))), /şablona uymuyor/);
   });
   it("SMS izni kapalı veliye (kalan olaylarda) SMS gitmez", () => {
     const [g] = gonderimler(dene((x) => x.gonderimler.push(satir("g1")), MUDUR, izinli({ izinSms: false }))());
@@ -97,6 +97,61 @@ describe("personelin gönderim satırı", () => {
     expect(gonderimler(dene((x) => x.gonderimler.push(satir("g1")), MUDUR, k)())).toEqual([]);
     const f: Db = { ...db, moduller: { ...db.moduller, finans: false } };
     expect(gonderimler(dene((x) => x.gonderimler.push(satir("g1", { olay: "odemeAlindi" })), MUDUR, f)())).toEqual([]);
+  });
+});
+
+describe("ekranların ürettiği bildirimler şablon denetiminden geçer", () => {
+  const uzun = "Çok uzun bir açıklama: ".repeat(40);
+  // Çağrılar ekranlardakiyle aynı değişkenlerle (07, 06, 04, 02, 08, 09, 05)
+  const uretimler: [string, Parameters<typeof bildirimEkle>[1], Record<string, string>][] = [
+    ["07 yoklama", "devamsizlik", { saat: "16:00", ders: "Fen Bilimleri", tarih: "09.11.2026" }],
+    ["07 geç giriş", "devamsizlikGecmis", { saat: "16:00", ders: "Matematik", tarih: "02.11.2026" }],
+    ["07 boş ders adı", "devamsizlik", { saat: "16:00", ders: "", tarih: "09.11.2026" }],
+    ["06 iptal", "dersIptal", { tarih: "9 Kas", saat: "16:00", ders: "Türkçe", neden: "iptal edilmiştir (öğretmen rahatsız. Bilgi: bugün), telafi dersi 12 Kas" }],
+    ["06 uzun neden", "dersIptal", { tarih: "9 Kas", saat: "16:00", ders: "Türkçe", neden: `iptal edilmiştir (${uzun})` }],
+    ["06 program değişikliği", "dersIptal", { tarih: "yeni saat", saat: "17:00", ders: "Türkçe", neden: "saat değişti, 9 Kas tarihinden itibaren geçerli" }],
+    ["04 kayıt", "hosgeldin", {}],
+    ["08 yeni ödev", "yeniOdev", { ders: "Matematik", baslik: "Kesirler {tekrar}: sayfa 3. dersine", teslim: "12 Kas" }],
+    ["08 uzun başlık", "yeniOdev", { ders: "Matematik", baslik: uzun, teslim: "12 Kas" }],
+    ["08 yapmadı", "odevYapmadi", { ders: "Matematik", baslik: "Kesirler" }],
+    ["08 hatırlatma", "odevHatirlatma", { ders: "Matematik", baslik: "Kesirler" }],
+    ["09 randevu", "etutHatirlatma", { tarih: "10 Kas", saat: "14:00", ogretmen: "Can Öztürk" }],
+    ["09 paket", "paketBitiyor", { metin: "Matematik paketinizde 1 ders hakkı kaldı." }],
+    ["05 gecikmiş", "gecikmisOdeme", { tutar: "1.500,00 ₺", vade: "05.11.2026" }],
+    ["05 ödeme", "odemeAlindi", { tutar: "1.500,00 ₺", makbuz: "MRK-M-1, MRK-M-2" }],
+    ["05 taksit", "taksitHatirlatma", { tutar: "1.500,00 ₺", vade: "12 Kas" }],
+  ];
+  const denetle = (k: Db, rows: Gonderim[], a: Aktor) => {
+    const temiz = { koleksiyonlar: { gonderimler: { yaz: rows as never[], sil: [] } }, tekil: {} };
+    iletisimDenetle(k, k, temiz, a, ZAMAN);
+    return temiz.koleksiyonlar.gonderimler.yaz;
+  };
+  const uret = (k: Db, olay: Parameters<typeof bildirimEkle>[1], v: Record<string, string>) => {
+    const kutu = { ...k, gonderimler: [] as Gonderim[] } as Db;
+    bildirimEkle(kutu, olay, S1.id, v, undefined, true);
+    return kutu.gonderimler;
+  };
+  it.each(uretimler)("%s", (_ad, olay, v) => {
+    const rows = uret(db, olay, v);
+    expect(rows).toHaveLength(1);
+    expect(denetle(db, rows, YONETICI)).toHaveLength(1);
+  });
+  it("yönetici şablonu değiştirince de üretilen metin geçer", () => {
+    const k: Db = { ...db, olaylar: db.olaylar.map((o) => (o.key === "dersIptal" ? { ...o, sablon: "Sayın veli, {ders} ({saat}) {neden} — {sube_adi}" } : o)) };
+    expect(denetle(k, uret(k, "dersIptal", { saat: "16:00", ders: "Fen", neden: uzun, tarih: "x" }), YONETICI)).toHaveLength(1);
+  });
+  it("03 web formu metni geçer", () => {
+    const s = db.subeler.find((x) => x.id === "s1")!;
+    const sablon = db.olaylar.find((o) => o.key === "onKayitTesekkur")!.sablon;
+    const aday = { ...db.adaylar[0], id: "aF", veliAd: "Sema", veliTelefon: "0532 111 22 33", subeId: "s1", rizaVar: true } as Aday;
+    const temiz = { koleksiyonlar: { adaylar: { yaz: [aday as never], sil: [] }, gonderimler: { yaz: [satir("g", { olay: "onKayitTesekkur", veliId: null, ogrenciId: null, alici: "Sema · 0532 111 22 33", metin: sablonDoldur(sablon, { sube_adi: s.ad, sube_telefonu: s.telefon }) }) as never], sil: [] } }, tekil: {} };
+    iletisimDenetle(db, db, temiz, MUDUR, ZAMAN);
+    expect(temiz.koleksiyonlar.gonderimler.yaz).toHaveLength(1);
+  });
+  it("eski şablonla üretilen metin yenilemeye yönlendirilir", () => {
+    const rows = uret(db, "hosgeldin", {});
+    const k: Db = { ...db, olaylar: db.olaylar.map((o) => (o.key === "hosgeldin" ? { ...o, sablon: "Tamamen yeni {ogrenci} metni" } : o)) };
+    expect(() => denetle(k, rows, YONETICI)).toThrow(/yenileyip/);
   });
 });
 

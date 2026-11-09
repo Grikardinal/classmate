@@ -39,7 +39,7 @@ const S2_GRUP = db.gruplar.find((g) => g.subeId === "s2")!;
 
 const odev = (p: Partial<Odev> = {}): Odev => ({ id: "odX", ogretmenId: "p4", dersId: DERS, grupId: "g1", ogrenciIds: null, baslik: " Kesirler ", aciklama: "", kaynak: "", verilis: BUGUN, teslim: "2026-11-12", teslimler: {}, notlar: {}, kontrolEdildi: false, ...p });
 const vadesi = (p: Partial<Odev> = {}) => odev({ verilis: "2026-11-02", teslim: "2026-11-08", baslik: "Kesirler", ...p });
-const gonderim = (id: string, p: Partial<Gonderim> = {}): Gonderim => ({ id, zaman: "x", olay: "odevYapmadi", veliId: VELI, alici: "a", ogrenciId: OGR, subeId: "s1", kanal: "push", metin: "metin", durum: "bekliyor", maliyet: 0, ...p });
+const gonderim = (id: string, p: Partial<Gonderim> = {}): Gonderim => ({ id, zaman: "x", olay: "odevYapmadi", veliId: VELI, alici: "a", ogrenciId: OGR, subeId: "s1", kanal: "push", metin: db.olaylar.find((o) => o.key === (p.olay ?? "odevYapmadi"))!.sablon, durum: "bekliyor", maliyet: 0, ...p });
 
 function dene(fn: (x: Db) => void, a: Aktor = OGRETMEN, kaynak: Db = db, zaman = ZAMAN) {
   const taslak = { ...kaynak } as Db;

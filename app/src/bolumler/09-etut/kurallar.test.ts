@@ -24,6 +24,7 @@ import {
   ogrencileriCikar,
   veliRandevuPlani,
 } from "./kurallar";
+import { yaklasanRandevular } from "./kurallar";
 
 const AN = { bugun: "2026-11-09", simdi: "15:00" }; // pazartesi
 const SALI = "2026-11-10";
@@ -314,5 +315,18 @@ describe("bildirim tekilleştirme", () => {
     const eski = [{ olay: "duyuru" as const, ogrenciId: "o", metin: "Paket: Matematik paketinizde 1 ders hakkı kaldı." }];
     expect(paketBildirimiGitti(eski, p, "Matematik")).toBe(true);
     expect(paketBildirimiGitti(eski, { ...p, kalan: 0 }, "Matematik")).toBe(false);
+  });
+});
+
+describe("yaklasanRandevular", () => {
+  const r = (id: string, p: { ogretmenId?: string; durum?: string; tarih: string; bas: string }) => ({ id, ogretmenId: "p1", durum: "planli", ...p }) as Parameters<typeof yaklasanRandevular>[0][number] & { id: string };
+  const an = { bugun: "2030-01-10", simdi: "12:00" };
+  it("yalnızca kendi, planlı, gelecekteki randevular; yakından uzağa", () => {
+    const l = [r("c", { tarih: "2030-01-11", bas: "09:00" }), r("a", { tarih: "2030-01-10", bas: "12:00" }), r("gecmis", { tarih: "2030-01-10", bas: "11:59" }), r("baska", { ogretmenId: "p2", tarih: "2030-01-11", bas: "09:00" }), r("iptal", { durum: "iptal", tarih: "2030-01-12", bas: "09:00" })];
+    expect(yaklasanRandevular(l, "p1", an).map((x) => (x as { id: string }).id)).toEqual(["a", "c"]);
+  });
+  it("adet sınırı", () => {
+    const l = [1, 2, 3].map((g) => r(String(g), { tarih: `2030-02-0${g}`, bas: "09:00" }));
+    expect(yaklasanRandevular(l, "p1", an, 2)).toHaveLength(2);
   });
 });

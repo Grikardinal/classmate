@@ -96,13 +96,12 @@ describe("olay ve kanal", () => {
     expect(olayCalisir({ aktif: true, modul: "etut" }, { etut: false })).toBe(false);
     expect(olayCalisir({ aktif: true, modul: "etut" }, { etut: true })).toBe(true);
   });
-  it("kanalı olay, push durumu, SMS izni ve metin belirler", () => {
+  it("kanalı olay, push durumu ve SMS izni belirler", () => {
     const y = { kanal: "push+sms" } as const;
-    expect(gonderimKanali(y, { pushAcik: false }, true)).toBe("sms");
-    expect(gonderimKanali(y, { pushAcik: true }, true)).toBe("push");
-    expect(gonderimKanali(y, { pushAcik: false, izinSms: false }, true)).toBe("push");
-    expect(gonderimKanali(y, { pushAcik: false }, false)).toBe("push");
-    expect(gonderimKanali({ kanal: "push" }, { pushAcik: false }, true)).toBe("push");
+    expect(gonderimKanali(y, { pushAcik: false })).toBe("sms");
+    expect(gonderimKanali(y, { pushAcik: true })).toBe("push");
+    expect(gonderimKanali(y, { pushAcik: false, izinSms: false })).toBe("push");
+    expect(gonderimKanali({ kanal: "push" }, { pushAcik: false })).toBe("push");
   });
   it("metin boş veya aşırı uzun olamaz", () => {
     expect(metinEngeli("")).toMatch(/boş/);

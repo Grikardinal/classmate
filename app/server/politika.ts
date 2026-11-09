@@ -75,7 +75,7 @@ import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYaz
 import { devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
 import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
-import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi } from "../src/bolumler/10-iletisim/kurallar";
+import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi, SABLON_UYMUYOR_HATA } from "../src/bolumler/10-iletisim/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -510,7 +510,7 @@ export function programDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
  * - şablon yalnızca olayın değişkenlerini kullanır; olay tanımı (ad, finans, modül) değişmez; gönderim aralığı, birim fiyat geçerli
  * - duyuru: hedef gerçek; gönderilmiş duyuru değişmez; alıcı, gönderen, okundu, gönderim satırları sunucudan
  * - satırı yalnızca olayı üretebilen rol yazar; alıcı öğrencinin velisi ve şubesi kapsamda; adaya yalnızca bu paketteki, rızalı adayın numarasına
- * - alıcı, şube, kanal, maliyet sunucudan; şablona uymayan metin veya SMS izni olmayan veli için SMS yok
+ * - metin olayın şablonuna uymalı, uymayan satır reddedilir (karar 2026-11-09); alıcı, şube, kanal, maliyet sunucudan; SMS izni olmayan veliye SMS yok
  * Şube kapsamının genel kuralı yazmaDenetle() içinde. Sunucunun sonradan ürettiği satırlar (düzeltme, iptal) bu denetimden geçmez. `temiz` yerinde güncellenir.
  */
 export function iletisimDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
@@ -558,7 +558,7 @@ export function iletisimDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: A
       delete g.deneme;
       delete g.gonderimBasladi;
       delete g.adayId;
-      const uygun = metinSablonaUyar(g.metin, tanim.sablon);
+      if (!metinSablonaUyar(g.metin, tanim.sablon)) reddet(SABLON_UYMUYOR_HATA);
 
       if (g.veliId === null || g.veliId === undefined) {
         // Velisiz satır yalnızca bu pakette eklenen adayın teşekkür mesajıdır; numara adaydan, rıza şart (Bölüm 03 devri)
@@ -566,7 +566,7 @@ export function iletisimDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: A
         const tel = telefonNormalize(String(g.alici ?? "").split("·").pop() ?? "");
         const aday = ((K.adaylar?.yaz ?? []) as unknown as Aday[]).find((x) => !onceki.adaylar.some((y) => y.id === x.id) && !!tel && telefonNormalize(x.veliTelefon) === tel);
         if (!aday) throw new YetkiHatasi("Bildirim bu işlemdeki bir adaya ait olmalı.");
-        if (!aday.rizaVar || !uygun) return false;
+        if (!aday.rizaVar) return false;
         Object.assign(g, { veliId: null, adayId: aday.id, ogrenciId: null, subeId: aday.subeId, alici: `${aday.veliAd} · ${tel}`, kanal: "sms", maliyet: smsBoyuMaliyet(onceki, g.metin) });
         return true;
       }
@@ -576,7 +576,7 @@ export function iletisimDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: A
       if (!veli || !ogr || !ogr.veliIds.includes(veli.id)) throw new YetkiHatasi("Bildirim öğrencinin velisine yazılmalı.");
       const subeId = ogrenciSube(sonraki, ogr.id);
       if (!genel && (!subeId || !kap.has(subeId))) reddet("Öğrenci şube kapsamınız dışında.");
-      const kanal = gonderimKanali(tanim, veli, uygun);
+      const kanal = gonderimKanali(tanim, veli);
       Object.assign(g, { subeId: subeId ?? g.subeId, alici: `${tamAd(veli)} · ${veli.telefon}`, kanal, maliyet: kanal === "sms" ? smsBoyuMaliyet(onceki, g.metin) : 0 });
       return true;
     }) as unknown as Satir[];

@@ -12,8 +12,9 @@ export const METIN_SINIR = 1000;
 export const SABLON_SINIR = 500;
 /** Personelin başarısız satırı elle kaç kez yeniden kuyruğa alabileceği */
 export const MAKS_DENEME = 3;
-/** Şablon değişkenine sığabilecek en uzun değer (ödev başlığı, iptal nedeni gibi) */
+/** Şablon değişkenine sığabilecek en uzun değer (bildirimEkle değerleri 250 karaktere kısaltır) */
 const DEGISKEN_SINIR = 300;
+export const SABLON_UYMUYOR_HATA = "Bildirim metni güncel şablona uymuyor. Sayfayı yenileyip tekrar deneyin.";
 export const TAKILI_HATA = "Gönderim yarıda kaldı; iletilip iletilmediği bilinmiyor. Kontrol edip gerekirse elle tekrar gönderin.";
 export const RIZA_YOK_HATA = "Adayın iletişim izni (açık rıza) yok; SMS gönderilmedi.";
 
@@ -75,7 +76,7 @@ export function ayarEngeli(yeni: Partial<Ayarlar> | undefined, eski: Pick<Ayarla
 
 /**
  * Metin şablonun kalıbına uyuyor mu: sabit parçalar sırayla, aralarındaki değişkenler makul uzunlukta.
- * Personelin serbest metni kurumun başlığıyla SMS olarak gidemesin diye (doğrusal tarama; düzenli ifade yok).
+ * Personel serbest metinle veliye bildirim yazamasın diye (doğrusal tarama; düzenli ifade yok). Uymayan satır reddedilir.
  */
 export function metinSablonaUyar(metin: string, sablon: string): boolean {
   const parcalar = sablon.split(/\{\w+\}/);
@@ -121,10 +122,10 @@ export function olayCalisir(t: OlayDurumu, moduller: Record<string, boolean | un
   return !t.modul || moduller[t.modul] !== false;
 }
 
-/** Sunucunun kanal kararı: istemcinin kanalı dikkate alınmaz; izin yoksa veya metin şablona uymuyorsa SMS olmaz */
-export function gonderimKanali(tanim: Pick<BildirimOlayi, "kanal">, veli: { pushAcik: boolean; izinSms?: boolean }, metinUygun: boolean): "push" | "sms" {
+/** Sunucunun kanal kararı: istemcinin kanalı dikkate alınmaz; izin yoksa SMS olmaz */
+export function gonderimKanali(tanim: Pick<BildirimOlayi, "kanal">, veli: { pushAcik: boolean; izinSms?: boolean }): "push" | "sms" {
   const k = kanalSec(tanim.kanal, veli.pushAcik);
-  return k === "sms" && veli.izinSms !== false && metinUygun ? "sms" : "push";
+  return k === "sms" && veli.izinSms !== false ? "sms" : "push";
 }
 
 export const metinEngeli = (metin: unknown): Hata => (typeof metin !== "string" || !metin.trim() ? "Bildirim metni boş olamaz." : metin.length > METIN_SINIR ? "Bildirim metni çok uzun." : null);

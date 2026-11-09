@@ -822,6 +822,7 @@ function PortalProfil() {
   const navigate = useNavigate();
   const [talep, setTalep] = React.useState("");
   const izin = (p: Partial<Pick<Veli, "pushAcik" | "izinSms" | "izinTanitim">>) => void islem("/api/veli/tercih", p);
+  const [smsUyari, setSmsUyari] = React.useState(false);
   const talepGonder = async () => {
     if (await islem("/api/veli/talep", { metin: talep.trim() }, "Talebiniz şubeye iletildi.")) setTalep("");
   };
@@ -835,7 +836,16 @@ function PortalProfil() {
       </CardContent></Card>
       <Card><CardContent className="grid gap-3 p-4 text-sm">
         <div className="flex items-center justify-between"><span>Uygulama bildirimleri</span><Switch label="Bildirimler" checked={veli.pushAcik} onCheckedChange={(v) => izin({ pushAcik: v })} /></div>
-        <div className="flex items-center justify-between"><span>Bilgilendirme SMS'i</span><Switch label="SMS" checked={veli.izinSms} onCheckedChange={(v) => izin({ izinSms: v })} /></div>
+        <div className="flex items-center justify-between"><span>Bilgilendirme SMS'i</span><Switch label="SMS" checked={veli.izinSms} onCheckedChange={(v) => (v ? izin({ izinSms: true }) : setSmsUyari(true))} /></div>
+        {smsUyari && (
+          <div role="alert" className="grid gap-2 rounded-md border border-warning/50 bg-warning/10 p-3">
+            <p>SMS iznini kapatırsanız devamsızlık gibi önemli bilgiler yalnızca uygulama bildirimiyle gelir.</p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => { izin({ izinSms: false }); setSmsUyari(false); }}>SMS iznini kapat</Button>
+              <Button size="sm" variant="ghost" onClick={() => setSmsUyari(false)}>Vazgeç</Button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between"><span>Kampanya / tanıtım mesajları</span><Switch label="Tanıtım" checked={veli.izinTanitim} onCheckedChange={(v) => izin({ izinTanitim: v })} /></div>
         <div className="flex items-center justify-between"><span className="flex items-center gap-2">{dark ? <Moon className="size-4" /> : <Sun className="size-4" />} Koyu tema</span><Switch label="Koyu tema" checked={dark} onCheckedChange={setDark} /></div>
         <div className="flex items-center justify-between"><span>Öğrenci görünümü <span className="block text-xs text-muted-foreground">Ödemeler gizlenir; çocuğunuza gösterirken</span></span><Switch label="Öğrenci görünümü" checked={ogrenciModu} onCheckedChange={setOgrenciModu} /></div>
