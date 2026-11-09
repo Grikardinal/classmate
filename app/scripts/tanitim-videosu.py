@@ -1,7 +1,8 @@
-"""Classmate tanıtım filmi: hareketli grafikleri kare kare çizer, FFmpeg ile MP4 yapar.
+"""Classmate'in ilk (sessiz) tanıtım filmi: hareketli grafikleri kare kare çizer, FFmpeg ile MP4 yapar.
 
+Sitedeki public/tanitim.mp4 artık bu betikle üretilmiyor (Remotion ve müzikli sürüm seçildi); üzerine yazmayın.
 Sessizdir, ekran içerikleri örnek veridir; gerçek kişi veya müşteri bilgisi yoktur.
-Kullanım: python scripts/tanitim-videosu.py public/tanitim.mp4 [--kare saniye]
+Kullanım: python scripts/tanitim-videosu.py cikti.mp4 [--kare saniye]
 Gereksinim: Pillow, ffmpeg. Fiyat değişirse FIYAT_METNI de değişmelidir (src/tanitim/fiyat.ts).
 """
 import math
@@ -377,7 +378,7 @@ def s_kapanis(k, t):
     e = cik(ilerle(t, 1.6, 2.0))
     yaz(k, (W / 2, 504 + (1 - e) * 30), "Bizi arayın: 0532 783 76 95", 42, BEYAZ, a=e, capa="ma")
     e = cik(ilerle(t, 1.95, 2.35))
-    yaz(k, (W / 2, 590), "KESKİN BİLİŞİM", 24, BEYAZ, a=e * 0.85, capa="ma")
+    yaz(k, (W / 2, 590), "Keskin Bilişim", 24, BEYAZ, a=e * 0.85, capa="ma")
     yaz(k, (W / 2, 626), "SMS ücretleri ayrıdır", 16, BEYAZ, kalin=False, a=e * 0.55, capa="ma")
 
 

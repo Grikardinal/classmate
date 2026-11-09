@@ -66,7 +66,7 @@ export default function Tanitim() {
           </section>
 
           <section aria-label="Tanıtım filmi" className="mx-auto max-w-4xl px-4 pb-10 sm:px-6">
-            <video className="aspect-video w-full rounded-2xl border bg-black shadow-glow" src="/tanitim.mp4" controls muted playsInline preload="metadata">
+            <video className="aspect-video w-full rounded-2xl border bg-black shadow-glow" src="/tanitim.mp4" controls autoPlay muted playsInline preload="auto">
               Tarayıcınız video oynatmayı desteklemiyor.
             </video>
           </section>
