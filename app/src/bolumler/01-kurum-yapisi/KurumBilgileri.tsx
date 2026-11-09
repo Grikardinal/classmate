@@ -37,9 +37,11 @@ export function KurumBilgileri() {
     e.preventDefault();
     if (hata) return;
     guncelle((x) => {
+      const eskiEtut = x.kurum?.etutDersUcreti;
       // Cayma bedeli Fiyat listesi sekmesinden yönetilir (Bölüm 05); bu formun eski kopyası onu ezmez
       x.kurum = { ...temiz, caymaBedeli: x.kurum?.caymaBedeli };
       if (!x.kurum.caymaBedeli) delete x.kurum.caymaBedeli;
+      if (x.kurum.etutDersUcreti === undefined && eskiEtut !== undefined) x.kurum.etutDersUcreti = eskiEtut; // Bölüm 13 ekranından yönetilir
       islemYaz(x, ad, "Kurum bilgileri", "Kurum bilgileri güncellendi");
     });
     toast("Kurum bilgileri kaydedildi.");

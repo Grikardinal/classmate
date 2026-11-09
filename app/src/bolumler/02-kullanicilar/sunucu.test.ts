@@ -223,6 +223,9 @@ describe("oturumlar", () => {
   it("şube müdürü personeli pasife alınca hesabı ve oturumu da kapanır", async () => {
     const ayse = await giris("ayse@ornekkurum.com");
     const elif = await giris("elif@ornekkurum.com");
+    // Bölüm 13: dersi veya planlı etüdü olan öğretmen pasife alınamaz; dersler devredilmiş olmalı
+    app.durum.db.program = app.durum.db.program.map((x) => (x.ogretmenId === "p4" ? { ...x, bitis: "2000-01-01" } : x));
+    app.durum.db.randevular = app.durum.db.randevular.filter((x) => x.ogretmenId !== "p4");
     const p4 = app.durum.db.personel.find((p) => p.id === "p4")!;
     expect((await elif("/api/degisiklik", degisiklik({ personel: { yaz: [{ ...p4, aktif: false }], sil: [] } }))).durum).toBe(200);
     expect(app.durum.db.kullanicilar.find((k) => k.id === "u4")!.aktif).toBe(false);

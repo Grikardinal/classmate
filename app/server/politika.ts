@@ -78,6 +78,7 @@ import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni
 import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
 import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi, SABLON_UYMUYOR_HATA } from "../src/bolumler/10-iletisim/kurallar";
 import { ayrilanAcikBorclar, veliGonderimGorunur } from "../src/bolumler/11-veli-portali/kurallar";
+import { avansEngeli, etutUcretiEngeli, hakEdisHesabi, hakedisAnahtari, hakedisDurumEngeli, hakedisIslemiMi, MAAS_KATEGORISI, MASKELI_MAAS_ACIKLAMASI, maskeliAlanlariKoru, odemeAciklamasi, personelMaskele, personelSilmeEngeli, personelTemizle, personelYazmaEngeli, type Avans, type Goren, type HakedisDurumu } from "../src/bolumler/13-personel/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -178,11 +179,16 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
   const kap = new Set(kapsam(db, a.kullanici));
   const ogrGrup = ogretmen ? ogretmenGruplari(db, a.personel.id, bugun) : null;
   const finans = finansGorur(db, a);
+  const yetki13 = yetki(db, a, "13");
+  const goren: Goren = { rol: a.kullanici.rol, personelId: a.personel.id, yetki13 };
   const sonuc = { ...db } as unknown as Record<string, unknown>;
 
   const gorur = (k: Koleksiyon, s: Satir): boolean => {
     if (FINANS.includes(k) && !finans) return false;
     if (k === "girisler") return genel;
+    // Avans ve hak ediş işlem kaydı ücret verisidir (Bölüm 13): 13 yetkisi yoksa yalnızca kendi avansı
+    if (k === "avanslar" && !genel && !yetki13) return s.personelId === a.personel.id;
+    if (k === "islemler" && !genel && !yetki13 && hakedisIslemiMi(String(s.islem))) return false;
     if ((k === "kvkk" || k === "iceAktarmalar") && !yetki(db, a, "14")) return false;
     if (k === "kullanicilar" && !yetki(db, a, "02")) return s.id === a.kullanici.id;
     // Aday kişisel verisi (KVKK): yalnızca ön kayıt (03) veya kesin kayıt (04) yetkisi olan görür
@@ -224,8 +230,9 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
           .map((s) => ({ ...s, telefon: maskele(String(s.telefon)), eposta: "" }));
       if (k === "adaylar" || k === "duyurular" || k === "gonderimler" || k === "islemler" || k === "kvkk") l = [];
     }
-    if (k === "personel" && !genel && !yetki(db, a, "13"))
-      l = l.map((s) => (s.id === a.personel.id ? s : { ...s, telefon: "", eposta: "", sabitUcret: 0, dersUcreti: 0 }));
+    if (k === "personel") l = l.map((s) => personelMaskele(s as unknown as Personel, goren) as unknown as Satir);
+    // Finans görenin kasası tam kalsın diye tutar gider; kimin maaşı olduğu yalnızca 13 yetkisiyle (Bölüm 13)
+    if (k === "giderler" && !genel && !yetki13) l = l.map((s) => (s.kategori === MAAS_KATEGORISI ? { ...s, aciklama: MASKELI_MAAS_ACIKLAMASI } : s));
     if (k === "paketler" && !finans) l = l.map((s) => ({ ...s, fiyat: 0 }));
     // Kayıt ücreti finans verisidir; yazarken sunucu maskeli alanları eski değerle korur (yazmaDenetle)
     if (k === "kayitlar" && !finans)
@@ -239,7 +246,13 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
   // Karar 2026-11-08: şube müdürü öğretmenin diğer şubelerdeki derslerini yalnızca dolu saat olarak görür (ayrı alan: koleksiyon değil, geri yazılamaz)
   if (a.kullanici.rol === "sube-muduru") sonuc.doluSaatler = doluSaatleriHesapla(db, kap);
   // Personel ücret bilgisi yalnızca hak ediş yetkisi olanlara
-  if (!yetki(db, a, "13") && !genel) sonuc.hakedisDurum = {};
+  if (!yetki13 && !genel) sonuc.hakedisDurum = {};
+  else if (!genel) sonuc.hakedisDurum = Object.fromEntries(Object.entries(db.hakedisDurum ?? {}).filter(([ak]) => db.personel.some((p) => p.id === hakedisAnahtari(ak)?.personelId && p.subeIds.some((x) => kap.has(x)))));
+  if (!yetki13 && !genel && db.kurum) {
+    const { etutDersUcreti: _e, ...kurum } = db.kurum;
+    void _e;
+    sonuc.kurum = kurum;
+  }
   return sonuc as unknown as Db;
 }
 
@@ -456,6 +469,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
   yoklamaDenetle(onceki, sonrakiDb, temiz, a, zaman);
   odevDenetle(onceki, sonrakiDb, temiz, a, zaman);
   etutDenetle(onceki, sonrakiDb, temiz, a, zaman);
+  personelDenetle(onceki, sonrakiDb, temiz, a, zaman); // önce: pasife alma zinciri temizlenmiş kartı görür
   kullaniciDenetle(onceki, sonrakiDb, temiz, a);
   kayitDenetle(onceki, sonrakiDb, temiz, a, zaman);
   finansDenetle(onceki, temiz, a, zaman);
@@ -1042,6 +1056,96 @@ export function finansDenetle(onceki: Db, temiz: Degisiklik, a: Aktor, zaman: st
       reddet(virmanEngeli(v, onceki.virmanlar.find((x) => x.id === v.id), onceki, { finans, genel, bugun, rol, bakiye: (kasa) => kasaBakiyesi(hareketler, kasa) }));
       virmanlar.push(v);
     }
+  }
+}
+
+/* =========================== Bölüm 13 personel ve hak ediş =========================== */
+/**
+ * Personel kartı, avans, hak ediş durumu ve etüt ücreti (ekranla ortak: src/bolumler/13-personel/kurallar.ts):
+ * - maskeli gönderilen alanlar (iletişim, ücret, maaş gideri açıklaması) yazarken eski değerle korunur
+ * - kart: alan kuralları, tek biçim, yinelenen telefon / e-posta (kurum genelinde), yetki yükseltme yok, kendi görevi / şubesi / ücreti değişmez
+ * - dersi veya planlı etüdü olan öğretmen pasife alınamaz, görevi değişmez, o şubeden çıkarılamaz
+ * - silme yalnızca içe aktarma geri alınırken ve bağlı kayıt yokken; iceAktarmaId istemciden gelmez
+ * - avans: değişmez, tarih sunucudan, aynı pakette eşleşen Maaş gideriyle
+ * - hak ediş durumu: yok → onaylandi → odendi, ay bitince; ödeme yalnızca genel yönetici ve hesaplanan şube dağılımıyla
+ * Şube kapsamı yazmaDenetle() içinde. `temiz` yerinde güncellenir.
+ */
+export function personelDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  const tekil = temiz.tekil ?? {};
+  const bugun = zaman.slice(0, 10);
+  const rol = a.kullanici.rol;
+  const genel = rol === "genel-yonetici";
+  const yetki13 = yetki(onceki, a, "13");
+  const goren: Goren = { rol, personelId: a.personel.id, yetki13 };
+  const kap = new Set(kapsam(onceki, a.kullanici));
+  const tamKapsam = (p: Personel | undefined) => genel || (!!p && p.subeIds.length > 0 && p.subeIds.every((x) => kap.has(x)));
+  const moduller = { hakedisAcik: onceki.moduller?.hakedis === true, finansAcik: onceki.moduller?.finans === true };
+
+  if ("kurum" in tekil) reddet(etutUcretiEngeli((tekil.kurum as Kurum | undefined)?.etutDersUcreti));
+
+  // Personel kartı
+  if (K.personel) {
+    const aktarilanlar = new Set((K.iceAktarmalar?.yaz ?? []).map((x) => String(x.id)));
+    K.personel.yaz = (K.personel.yaz as unknown as Personel[]).map((ham) => {
+      const eski = onceki.personel.find((x) => x.id === ham.id);
+      const s = personelTemizle(maskeliAlanlariKoru(ham, eski, goren));
+      if (eski?.iceAktarmaId) s.iceAktarmaId = eski.iceAktarmaId;
+      else if (!s.iceAktarmaId || !aktarilanlar.has(s.iceAktarmaId)) delete s.iceAktarmaId;
+      reddet(personelYazmaEngeli(s, eski, sonraki, { rol, personelId: a.personel.id }, bugun));
+      return s;
+    }) as unknown as Satir[];
+    for (const id of K.personel.sil) reddet(personelSilmeEngeli(id, onceki));
+  }
+
+  // Maskeli maaş gideri iptal edilirken açıklama eski haliyle kalır
+  if (!genel && !yetki13)
+    for (const g of (K.giderler?.yaz ?? []) as unknown as Gider[]) {
+      const eski = onceki.giderler.find((x) => x.id === g.id);
+      if (eski) g.aciklama = eski.aciklama;
+    }
+  const yeniGiderler = ((K.giderler?.yaz ?? []) as unknown as Gider[]).filter((g) => !onceki.giderler.some((x) => x.id === g.id));
+
+  // Avans
+  if (K.avanslar) {
+    if (K.avanslar.sil.length) reddet("Avans kaydı silinemez.");
+    K.avanslar.yaz = (K.avanslar.yaz as unknown as Avans[]).map((av) => {
+      if (onceki.avanslar.some((x) => x.id === av.id)) reddet("Avans kaydı değiştirilemez.");
+      const p = onceki.personel.find((x) => x.id === av.personelId);
+      reddet(avansEngeli(av, p, { ...moduller, tamKapsam: tamKapsam(p) }));
+      const g = yeniGiderler.find((x) => x.id === av.giderId);
+      if (!g || g.kategori !== MAAS_KATEGORISI || kurusa(g.tutar) !== kurusa(av.tutar) || g.subeId !== av.subeId) throw new YetkiHatasi("Avans gideri aynı işlemde, aynı tutarla yazılmalı.");
+      g.tarih = bugun;
+      return { ...av, tarih: bugun, aciklama: av.aciklama.trim() || "Avans" };
+    }) as unknown as Satir[];
+  }
+
+  // Hak ediş durumu: kapsam dışı satırlar istemciye gitmez, burada korunur
+  if ("hakedisDurum" in tekil) {
+    const gelen = tekil.hakedisDurum;
+    if (!gelen || typeof gelen !== "object" || Array.isArray(gelen)) throw new YetkiHatasi("Hak ediş durumu geçersiz.");
+    const yeni = gelen as Record<string, HakedisDurumu>;
+    const eskiDurum = onceki.hakedisDurum ?? {};
+    const gorunur = (k: string) => genel || onceki.personel.some((p) => p.id === hakedisAnahtari(k)?.personelId && p.subeIds.some((x) => kap.has(x)));
+    for (const k of Object.keys(eskiDurum)) if (!(k in yeni) && gorunur(k)) reddet("Hak ediş durumu geri alınamaz.");
+    for (const [k, deger] of Object.entries(yeni)) {
+      if (deger === eskiDurum[k]) continue;
+      const anahtar = hakedisAnahtari(k);
+      const p = onceki.personel.find((x) => x.id === anahtar?.personelId);
+      reddet(hakedisDurumEngeli(k, deger, eskiDurum[k], { ...moduller, rol, bugun, tamKapsam: tamKapsam(p), personel: onceki.personel }));
+      if (deger !== "odendi") continue;
+      // Ödeme finansa hesaplanan şube dağılımıyla düşer; tutar istemciden alınmaz
+      const dagilim = hakEdisHesabi(onceki, p!, anahtar!.ay).dagilim;
+      const aciklama = odemeAciklamasi(p!, anahtar!.ay);
+      const giderler = yeniGiderler.filter((g) => g.kategori === MAAS_KATEGORISI && g.aciklama === aciklama);
+      const uyumlu = giderler.length === dagilim.length && dagilim.every((x) => giderler.some((g) => g.subeId === x.subeId && kurusa(g.tutar) === kurusa(x.tutar)));
+      if (!uyumlu) reddet("Ödeme tutarı hesaplanan hak edişle uyuşmuyor; sayfayı yenileyip tekrar deneyin.");
+      for (const g of giderler) g.tarih = bugun;
+    }
+    temiz.tekil.hakedisDurum = { ...eskiDurum, ...yeni };
   }
 }
 

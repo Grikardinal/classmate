@@ -53,7 +53,7 @@ export const varsayilanModuller: Record<ModulKey, boolean> = {
 
 /** Kayıt iptalinde cayma bedeli (Bölüm 05, karar 2026-11-08): yüzde (net üzerinden) veya sabit tutar; yoksa 0 */
 export type CaymaBedeli = { tur: "yuzde" | "sabit"; deger: number };
-export type Kurum = { ad: string; eposta: string; vergiNo: string; makbuzBasligi: string; logo?: string; caymaBedeli?: CaymaBedeli };
+export type Kurum = { ad: string; eposta: string; vergiNo: string; makbuzBasligi: string; logo?: string; caymaBedeli?: CaymaBedeli; /** Bölüm 13, karar 2026-11-08: yapılan etüt başına öğretmen ücreti; yoksa 0 */ etutDersUcreti?: number };
 export type { Sube, Sezon, Ders, Derslik, DersSaati, Grup, FiyatSatiri } from "./mock";
 
 /* =========================== Tipler =========================== */
@@ -440,7 +440,7 @@ export type Db = {
   iceAktarmalar: IceAktarma[];
   kvkk: KvkkBasvuru[];
   hakedisDurum: Record<string, "onaylandi" | "odendi">;
-  avanslar: { id: string; personelId: string; tarih: string; tutar: number; aciklama: string; subeId: string }[];
+  avanslar: { id: string; personelId: string; tarih: string; tutar: number; aciklama: string; subeId: string; /** Bağlı Maaş gideri: gider iptal edilirse avans düşülmez */ giderId?: string }[];
   ayarlar: Ayarlar;
   /** Sunucu otomasyonlarının tekrar üretmemek için tuttuğu kayıt (anahtar → tarih) */
   otomasyon: Record<string, string>;
