@@ -315,6 +315,12 @@ export type Gonderim = {
   oturumId?: string;
   /** Ödev bildirimlerinin ödevi (sunucu yazar; tekrar engeli, Bölüm 08) */
   odevId?: string;
+  /** Ön kayıt teşekkür mesajının adayı (sunucu yazar; gönderim anında rıza denetimi, Bölüm 10) */
+  adayId?: string;
+  /** Personelin elle "tekrar gönder" sayısı (sunucu yazar, sınırlı; Bölüm 10) */
+  deneme?: number;
+  /** SMS sağlayıcıya verilmeden hemen önce yazılır; sonuç yazılmadan süreç düşerse satır yeniden gönderilmez (Bölüm 10) */
+  gonderimBasladi?: string;
   /** bekliyor: sunucu gönderim kuyruğunda; iletildi/basarisiz: sağlayıcı yanıtı */
   durum: "bekliyor" | "iletildi" | "basarisiz" | "okundu";
   hata?: string;
@@ -326,6 +332,8 @@ export type Duyuru = {
   baslik: string;
   metin: string;
   hedef: { tur: "tum" | "sube" | "seviye" | "grup"; deger: string | null };
+  /** Şube personelinin seviye duyurusu yalnızca kendi şubelerine gider (sunucu yazar). Yoksa kurum geneli. */
+  subeIds?: string[] | null;
   kanal: "push" | "push+sms";
   zaman: string;
   zamanlanmis: boolean;
@@ -930,18 +938,23 @@ export function oturumlar(d: Db, tarih: string): Oturum[] {
     .sort((a, b) => dakika(a.bas) - dakika(b.bas));
 }
 
-/** Duyuru hedefinden veli listesi */
-export function hedefVeliler(d: Db, hedef: Duyuru["hedef"]): string[] {
-  const ogr = d.ogrenciler.filter((o) => {
+/** Hedefe giren aktif öğrenciler. subeIds verilirse yalnızca o şubelerin kayıtları (şube personelinin seviye duyurusu). */
+function hedefOgrencileri(d: Db, hedef: Duyuru["hedef"], subeIds?: string[] | null): Ogrenci[] {
+  return d.ogrenciler.filter((o) => {
     if (o.durum !== "aktif") return false;
     const k = aktifKayit(d, o.id);
     if (!k || k.durum !== "aktif") return false;
+    if (subeIds && !subeIds.includes(k.subeId)) return false;
     if (hedef.tur === "tum") return true;
     if (hedef.tur === "sube") return k.subeId === hedef.deger;
     if (hedef.tur === "grup") return k.grupId === hedef.deger;
     return String(grup(d, k.grupId)?.seviye) === hedef.deger;
   });
-  return [...new Set(ogr.flatMap((o) => o.veliIds))];
+}
+
+/** Duyuru hedefinden veli listesi (kişi başı tek satır) */
+export function hedefVeliler(d: Db, hedef: Duyuru["hedef"], subeIds?: string[] | null): string[] {
+  return [...new Set(hedefOgrencileri(d, hedef, subeIds).flatMap((o) => o.veliIds))];
 }
 
 /** Olaydan veli bildirimleri üretir (10). Olay kapalıysa hiçbir şey göndermez. */
@@ -975,12 +988,16 @@ export function bildirimEkle(
 }
 
 export function duyuruGonderimleri(d: Db, du: Duyuru) {
+  // Bildirim merkezinde kapalı olay gönderim üretmez (duyuru portalda yine görünür)
+  if (d.olaylar.find((o) => o.key === "duyuru")?.aktif === false) return;
+  const hedefte = hedefOgrencileri(d, du.hedef, du.subeIds);
   for (const vid of du.aliciVeliIds) {
     const v = d.veliler.find((x) => x.id === vid);
     if (!v) continue;
-    const ogr = d.ogrenciler.find((o) => o.veliIds.includes(vid));
+    // Şube adı / telefonu ve maliyet, velinin hedefteki çocuğunun şubesinden (başka şubede kardeşi olan veli doğru şubeyi arasın)
+    const ogr = hedefte.find((o) => o.veliIds.includes(vid)) ?? d.ogrenciler.find((o) => o.veliIds.includes(vid));
     const k = ogr ? aktifKayit(d, ogr.id) : undefined;
-    const kanal = du.kanal === "push+sms" ? kanalSec("push+sms", v.pushAcik) : "push";
+    const kanal = du.kanal === "push+sms" && v.izinSms !== false ? kanalSec("push+sms", v.pushAcik) : "push";
     const s = sube(k?.subeId);
     const metin = sablonDoldur(`${du.baslik}: ${du.metin}`, { sube_adi: s?.ad ?? "", sube_telefonu: s?.telefon ?? "", ogrenci: ogr?.ad ?? "" });
     d.gonderimler.push({

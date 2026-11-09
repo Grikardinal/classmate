@@ -36,7 +36,7 @@ export function otomasyonlariCalistir(db: Db): Db {
   // 1) Zamanlanmış duyurular
   x.duyurular = x.duyurular.map((du) => {
     if (!du.zamanlanmis || du.zaman > simdi) return du;
-    const yeni = { ...du, zamanlanmis: false, aliciVeliIds: hedefVeliler(x, du.hedef) };
+    const yeni = { ...du, zamanlanmis: false, aliciVeliIds: hedefVeliler(x, du.hedef, du.subeIds) };
     duyuruGonderimleri(x, yeni);
     return yeni;
   });
@@ -80,7 +80,9 @@ export function otomasyonlariCalistir(db: Db): Db {
       // İptal edilen / dondurulan kaydın kalan taksitine otomatik hatırlatma gitmez (Bölüm 05 · otomatikHatirlatmaUygun)
       if (!otomatikHatirlatmaUygun(t, x.kayitlar) || !hatirlatmaGunuMu(t.vade, BUGUN, x.ayarlar.hatirlatmaGunleri)) continue;
       birKez(`taksit:${t.id}:${BUGUN}`, () => {
+        const n = x.gonderimler.length;
         bildirimEkle(x, t.vade >= BUGUN ? "taksitHatirlatma" : "gecikmisOdeme", t.ogrenciId, { tutar: tl(taksitKalan(t)), vade: tarihKisa(t.vade) }, simdi, true);
+        for (const g of x.gonderimler.slice(n)) smsIzniUygula(g, x.veliler); // SMS izni kapalı veliye SMS gitmez (Bölüm 10)
       });
     }
 

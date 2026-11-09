@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { BUGUN, aktifKayit, bildirimEkle, islemYaz, taksitKalan, type Aday, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
+import { BUGUN, aktifKayit, bildirimEkle, duyuruGonderimleri, hedefVeliler, islemYaz, smsBoyuMaliyet, taksitKalan, tamAd, type Aday, type BildirimOlayi, type Duyuru, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -72,9 +72,10 @@ import {
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
 import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
-import { devamsizlikBildirimiMi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
+import { devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
 import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
+import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi } from "../src/bolumler/10-iletisim/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -139,6 +140,8 @@ export function satirSubeleri(db: Db, k: Koleksiyon, s: Satir): string[] | null 
       const h = s.hedef as { tur: string; deger: string | null };
       if (h?.tur === "sube") return tek(h.deger);
       if (h?.tur === "grup") return tek(grupSube(db, h.deger));
+      // Şube personelinin seviye duyurusu kendi şubeleriyle sınırlıdır (Bölüm 10)
+      if (h?.tur === "seviye" && Array.isArray(s.subeIds) && s.subeIds.length) return s.subeIds as string[];
       return null;
     }
     case "virmanlar":
@@ -325,8 +328,12 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
         case "gonderimler":
           if (eski) {
             // Yalnızca başarısız gönderimi yeniden kuyruğa alma
-            if (!(eski.durum === "basarisiz" && s.durum !== "basarisiz" && yetki(onceki, a, "10"))) hata("Gönderim kaydı değiştirilemez.");
-            yaz.push({ ...eski, durum: "bekliyor", hata: undefined, zaman });
+            if (s.durum === "basarisiz") hata("Gönderim kaydı değiştirilemez.");
+            {
+              const engel = tekrarEngeli(eski as unknown as Gonderim, yetki(onceki, a, "10"));
+              if (engel) hata(engel);
+            }
+            yaz.push({ ...eski, durum: "bekliyor", hata: undefined, gonderimBasladi: undefined, deneme: Number(eski.deneme ?? 0) + 1, zaman });
             continue;
           }
           s.durum = "bekliyor";
@@ -440,6 +447,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
     temiz.koleksiyonlar[k] = { yaz, sil };
   }
   tanimDenetle(onceki, sonrakiDb, temiz);
+  iletisimDenetle(onceki, sonrakiDb, temiz, a, zaman); // önce: yoklama, ödev, etüt denetimleri temizlenmiş satırları görür
   programDenetle(onceki, sonrakiDb, temiz, a, zaman);
   yoklamaDenetle(onceki, sonrakiDb, temiz, a, zaman);
   odevDenetle(onceki, sonrakiDb, temiz, a, zaman);
@@ -496,6 +504,92 @@ export function programDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
   }
 }
 
+/* =========================== Bölüm 10 iletişim =========================== */
+/**
+ * Olay ayarı, duyuru ve personelin yazdığı gönderim satırı (ekranla ortak: src/bolumler/10-iletisim/kurallar.ts):
+ * - şablon yalnızca olayın değişkenlerini kullanır; olay tanımı (ad, finans, modül) değişmez; gönderim aralığı, birim fiyat geçerli
+ * - duyuru: hedef gerçek; gönderilmiş duyuru değişmez; alıcı, gönderen, okundu, gönderim satırları sunucudan
+ * - satırı yalnızca olayı üretebilen rol yazar; alıcı öğrencinin velisi ve şubesi kapsamda; adaya yalnızca bu paketteki, rızalı adayın numarasına
+ * - alıcı, şube, kanal, maliyet sunucudan; şablona uymayan metin veya SMS izni olmayan veli için SMS yok
+ * Şube kapsamının genel kuralı yazmaDenetle() içinde. Sunucunun sonradan ürettiği satırlar (düzeltme, iptal) bu denetimden geçmez. `temiz` yerinde güncellenir.
+ */
+export function iletisimDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Aktor, zaman: string): void {
+  const reddet = (m: Hata) => {
+    if (m) throw new YetkiHatasi(m);
+  };
+  const K = temiz.koleksiyonlar;
+  const rol = a.kullanici.rol;
+  const genel = rol === "genel-yonetici";
+  const kap = new Set(kapsam(onceki, a.kullanici));
+  const tekil = temiz.tekil ?? {};
+
+  for (const o of (K.olaylar?.yaz ?? []) as unknown as BildirimOlayi[]) reddet(olayYazmaEngeli(o, onceki.olaylar.find((x) => x.key === o.key)));
+  if ("ayarlar" in tekil) reddet(ayarEngeli(tekil.ayarlar as Db["ayarlar"], onceki.ayarlar));
+
+  // Duyurular: gönderilenlerin satırları sunucuda üretilir (kişi başı bir satır, doğru şube, SMS izni)
+  const gidenDuyurular: Duyuru[] = [];
+  if (K.duyurular) {
+    K.duyurular.yaz = (K.duyurular.yaz as unknown as Duyuru[]).map((du) => {
+      const eski = onceki.duyurular.find((x) => x.id === du.id);
+      if (eski && !eski.zamanlanmis) reddet("Gönderilmiş duyuru değiştirilemez.");
+      if (eski && du.zamanlanmis) reddet("Zamanlanmış duyuru yalnızca gönderilebilir.");
+      const taban: Duyuru = eski
+        ? { ...eski, zamanlanmis: false, zaman }
+        : { ...du, baslik: String(du.baslik ?? "").trim(), metin: String(du.metin ?? "").trim(), gonderen: `${a.personel.ad} ${a.personel.soyad}`, okuyanVeliIds: [], zaman: du.zamanlanmis ? du.zaman : zaman };
+      reddet(duyuruEngeli(taban, sonraki, zaman));
+      const subeIds = eski ? (eski.subeIds ?? null) : taban.hedef.tur === "seviye" && !genel ? (du.subeIds ?? []).filter((s) => kap.has(s)) : null;
+      const yeni: Duyuru = { ...taban, subeIds, aliciVeliIds: hedefVeliler(sonraki, taban.hedef, subeIds) };
+      if (!yeni.zamanlanmis) gidenDuyurular.push(yeni);
+      return yeni;
+    }) as unknown as Satir[];
+  }
+
+  if (K.gonderimler) {
+    const moduller = onceki.moduller as unknown as Record<string, boolean | undefined>;
+    K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
+      if (onceki.gonderimler.some((x) => x.id === g.id)) return true; // yeniden kuyruğa alma: yazmaDenetle
+      if (yalnizSunucuOlayi(g.olay)) return false;
+      const tanim = onceki.olaylar.find((o) => o.key === g.olay);
+      if (!tanim) throw new YetkiHatasi("Bilinmeyen bildirim türü.");
+      if (!olayUretmeYetkisi(g.olay, rol, (b) => yetki(onceki, a, b))) reddet("Bu bildirimi oluşturma yetkiniz yok.");
+      if (!olayCalisir(tanim, moduller)) return false;
+      reddet(metinEngeli(g.metin));
+      delete g.hata;
+      delete g.deneme;
+      delete g.gonderimBasladi;
+      delete g.adayId;
+      const uygun = metinSablonaUyar(g.metin, tanim.sablon);
+
+      if (g.veliId === null || g.veliId === undefined) {
+        // Velisiz satır yalnızca bu pakette eklenen adayın teşekkür mesajıdır; numara adaydan, rıza şart (Bölüm 03 devri)
+        if (g.olay !== "onKayitTesekkur") reddet("Alıcısız bildirim yazılamaz.");
+        const tel = telefonNormalize(String(g.alici ?? "").split("·").pop() ?? "");
+        const aday = ((K.adaylar?.yaz ?? []) as unknown as Aday[]).find((x) => !onceki.adaylar.some((y) => y.id === x.id) && !!tel && telefonNormalize(x.veliTelefon) === tel);
+        if (!aday) throw new YetkiHatasi("Bildirim bu işlemdeki bir adaya ait olmalı.");
+        if (!aday.rizaVar || !uygun) return false;
+        Object.assign(g, { veliId: null, adayId: aday.id, ogrenciId: null, subeId: aday.subeId, alici: `${aday.veliAd} · ${tel}`, kanal: "sms", maliyet: smsBoyuMaliyet(onceki, g.metin) });
+        return true;
+      }
+
+      const veli = sonraki.veliler.find((v) => v.id === g.veliId);
+      const ogr = sonraki.ogrenciler.find((o) => o.id === g.ogrenciId);
+      if (!veli || !ogr || !ogr.veliIds.includes(veli.id)) throw new YetkiHatasi("Bildirim öğrencinin velisine yazılmalı.");
+      const subeId = ogrenciSube(sonraki, ogr.id);
+      if (!genel && (!subeId || !kap.has(subeId))) reddet("Öğrenci şube kapsamınız dışında.");
+      const kanal = gonderimKanali(tanim, veli, uygun);
+      Object.assign(g, { subeId: subeId ?? g.subeId, alici: `${tamAd(veli)} · ${veli.telefon}`, kanal, maliyet: kanal === "sms" ? smsBoyuMaliyet(onceki, g.metin) : 0 });
+      return true;
+    }) as unknown as Satir[];
+  }
+
+  if (gidenDuyurular.length) {
+    const kutu = { ...sonraki, gonderimler: [] as Gonderim[] } as Db;
+    for (const du of gidenDuyurular) duyuruGonderimleri(kutu, { ...du, zaman });
+    const hedef = (K.gonderimler ??= { yaz: [], sil: [] });
+    hedef.yaz.push(...(kutu.gonderimler as unknown as Satir[]));
+  }
+}
+
 /* =========================== Bölüm 07 yoklama =========================== */
 /**
  * Yoklama, veli izni ve devamsızlık bildirimi kuralları (ekranla ortak: src/bolumler/07-yoklama/kurallar.ts):
@@ -535,9 +629,12 @@ export function yoklamaDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
     const yeniMi = (g: Gonderim) => !onceki.gonderimler.some((x) => x.id === g.id);
     K.gonderimler.yaz = (K.gonderimler.yaz as unknown as Gonderim[]).filter((g) => {
       if (!devamsizlikBildirimiMi(g.olay) || !yeniMi(g)) return true;
+      // Bildirim gerçek bir "gelmedi" kaydına bağlanır; olay türü ve 7 günlük geç giriş penceresi sunucuda (Bölüm 10 devri)
+      const yk = yoklamalar.find((y) => y.durumlar[String(g.ogrenciId)] === "gelmedi");
+      if (!yk || devamsizlikOlayi(yk.tarih, baglam.bugun) !== g.olay) return false;
       if (devamsizlikYineleniyor(g, mevcut)) return false;
       mevcut.push(g);
-      g.oturumId = yoklamalar.find((y) => y.durumlar[String(g.ogrenciId)] === "gelmedi")?.oturumId;
+      g.oturumId = yk.oturumId;
       smsIzni(g);
       return true;
     }) as unknown as Satir[];
@@ -1248,10 +1345,11 @@ export function veliVerisi(db: Db, veliId: string): Db {
     paketler: etut.paketler,
     doluSaatler: etut.doluSaatler,
     olaylar: [],
-    gonderimler: db.gonderimler.filter((g) => g.veliId === veliId && g.olay !== "otp"),
+    // Sağlayıcı hatası, maliyet ve alıcı satırı veliye gitmez
+    gonderimler: db.gonderimler.filter((g) => g.veliId === veliId && g.olay !== "otp").map((g) => ({ ...g, hata: undefined, gonderimBasladi: undefined, deneme: undefined, adayId: undefined, alici: "", maliyet: 0 })),
     duyurular: db.duyurular
       .filter((d) => !d.zamanlanmis && d.aliciVeliIds.includes(veliId))
-      .map((d) => ({ ...d, aliciVeliIds: [veliId], okuyanVeliIds: d.okuyanVeliIds.includes(veliId) ? [veliId] : [] })),
+      .map((d) => ({ ...d, subeIds: undefined, aliciVeliIds: [veliId], okuyanVeliIds: d.okuyanVeliIds.includes(veliId) ? [veliId] : [] })),
     taksitler: db.moduller.finans ? db.taksitler.filter((t) => ogrIds.has(t.ogrenciId)) : [],
     tahsilatlar: [],
     giderler: [],

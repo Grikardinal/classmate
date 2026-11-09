@@ -151,9 +151,14 @@ describe("öğrenciler ve durumlar", () => {
   });
 });
 
+const gelmediEkle = (x: Db, tarih: string = BUGUN) => {
+  const y = yok(tarih, { durumlar: { [OGR]: "gelmedi" } });
+  x.yoklamalar = { ...x.yoklamalar, [y.oturumId]: y };
+};
+
 describe("bildirim", () => {
   const veli = db.veliler[0];
-  const paket = (g: Gonderim, a: Aktor = OGRETMEN, k: Db = db) => dene((x) => x.gonderimler.push(g), a, k)().koleksiyonlar.gonderimler!.yaz as unknown as Gonderim[];
+  const paket = (g: Gonderim, a: Aktor = OGRETMEN, k: Db = db) => dene((x) => { gelmediEkle(x); x.gonderimler.push(g); }, a, k)().koleksiyonlar.gonderimler!.yaz as unknown as Gonderim[];
   it("aynı gün aynı devamsızlık metni ikinci kez kuyruğa girmez", () => {
     const k = { ...db, gonderimler: [gonderim("g0", { veliId: veli.id, zaman: `${BUGUN}T16:10` })] };
     expect(paket(gonderim("g1", { veliId: veli.id }), OGRETMEN, k)).toEqual([]);
@@ -169,8 +174,17 @@ describe("bildirim", () => {
     expect(g.maliyet).toBe(0);
   });
   it("SMS izni açık veliye SMS gider", () => {
-    const k = { ...db, veliler: db.veliler.map((v) => (v.id === veli.id ? { ...v, izinSms: true } : v)) };
-    expect(paket(gonderim("g1", { veliId: veli.id }), OGRETMEN, k)[0].kanal).toBe("sms");
+    const k = { ...db, veliler: db.veliler.map((v) => (v.id === veli.id ? { ...v, izinSms: true, pushAcik: false } : v)) };
+    expect(paket(gonderim("g1", { veliId: veli.id, metin: "Ali bugün 16:00 Matematik dersine katılmadı. Merkez 0212" }), OGRETMEN, k)[0].kanal).toBe("sms");
+  });
+  it("7 günlük pencere sunucuda: daha eski yoklamanın bildirimi düşer, olay türü tarihe uymalı", () => {
+    const gonder = (tarih: string, olay: Gonderim["olay"]) => dene((x) => { gelmediEkle(x, tarih); x.gonderimler.push(gonderim("g1", { veliId: veli.id, olay })); }, YONETICI)().koleksiyonlar.gonderimler!.yaz;
+    expect(gonder("2026-11-02", "devamsizlikGecmis")).toHaveLength(1);
+    expect(gonder("2026-10-26", "devamsizlikGecmis")).toEqual([]);
+    expect(gonder("2026-11-02", "devamsizlik")).toEqual([]);
+  });
+  it("yoklaması olmayan devamsızlık bildirimi düşer", () => {
+    expect(dene((x) => x.gonderimler.push(gonderim("g1", { veliId: veli.id })), OGRETMEN)().koleksiyonlar.gonderimler!.yaz).toEqual([]);
   });
 });
 
@@ -213,7 +227,7 @@ describe("yok → var düzeltmesi", () => {
     expect(calistir([bil({ durum: "bekliyor" })], k)!.sil).toEqual(["g0"]);
   });
   it("silinen bildirimden sonra yeniden gelmedi: bildirim yine kuyruğa girer", () => {
-    expect(dene((x) => x.gonderimler.push(gonderim("g9", { veliId: vId, oturumId: undefined })), OGRETMEN)().koleksiyonlar.gonderimler!.yaz).toHaveLength(1);
+    expect(dene((x) => { gelmediEkle(x); x.gonderimler.push(gonderim("g9", { veliId: vId, oturumId: undefined })); }, OGRETMEN)().koleksiyonlar.gonderimler!.yaz).toHaveLength(1);
   });
   it("yeni bildirime oturum kimliği sunucudan yazılır", () => {
     const y = yok(BUGUN);
@@ -223,9 +237,9 @@ describe("yok → var düzeltmesi", () => {
   it("geçmişe dönük mesaj: aynı metin başka gün de yinelenmez, SMS izni uygulanır", () => {
     const v = db.veliler[0].id;
     const k = { ...db, gonderimler: [gonderim("g0", { olay: "devamsizlikGecmis", veliId: v, zaman: "2026-11-05T10:00" })] };
-    expect(dene((x) => x.gonderimler.push(gonderim("g1", { olay: "devamsizlikGecmis", veliId: v })), OGRETMEN, k)().koleksiyonlar.gonderimler!.yaz).toEqual([]);
+    expect(dene((x) => { gelmediEkle(x, "2026-11-02"); x.gonderimler.push(gonderim("g1", { olay: "devamsizlikGecmis", veliId: v })); }, YONETICI, k)().koleksiyonlar.gonderimler!.yaz).toEqual([]);
     const izinsiz = { ...db, veliler: db.veliler.map((x) => (x.id === v ? { ...x, izinSms: false } : x)) };
-    const [g] = dene((x) => x.gonderimler.push(gonderim("g1", { olay: "devamsizlikGecmis", veliId: v })), OGRETMEN, izinsiz)().koleksiyonlar.gonderimler!.yaz as unknown as Gonderim[];
+    const [g] = dene((x) => { gelmediEkle(x, "2026-11-02"); x.gonderimler.push(gonderim("g1", { olay: "devamsizlikGecmis", veliId: v })); }, YONETICI, izinsiz)().koleksiyonlar.gonderimler!.yaz as unknown as Gonderim[];
     expect(g.kanal).toBe("push");
   });
 });

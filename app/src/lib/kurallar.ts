@@ -170,7 +170,8 @@ export function kanalSec(varsayilan: VarsayilanKanal, pushAcik: boolean): "push"
 }
 
 export function sablonDoldur(sablon: string, degiskenler: Record<string, string>): string {
-  return sablon.replace(/\{(\w+)\}/g, (tam, ad: string) => degiskenler[ad] ?? tam);
+  // Tek geçiş: değerin içindeki "{x}" yeniden açılmaz. Yalnızca kendi anahtarlar ({constructor} gibi nesne alanları değil).
+  return sablon.replace(/\{(\w+)\}/g, (tam, ad: string) => (Object.prototype.hasOwnProperty.call(degiskenler, ad) && typeof degiskenler[ad] === "string" ? degiskenler[ad] : tam));
 }
 
 /** Gönderim saat aralığı (örn. 08:00–21:00) dışındaysa bir sonraki uygun zamana ertelenir. */
@@ -179,9 +180,23 @@ export function gonderimSaatindeMi(saat: string, bas: string, bit: string): bool
   return s >= dakika(bas) && s <= dakika(bit);
 }
 
-/** SMS uzunluğu: 160 karakter (Türkçe karakterli 155 yerine basit hesap: 160) başına 1 birim */
+const SMS_CIFT_KARAKTER = /[\^{}\\\[\]~|€]/g;
+const SMS_TURKCE = /[ğĞıİşŞ]/;
+// GSM 03.38 temel + uzantı + Türkçe tek kaydırma tablosu; dışındakiler (emoji, “ ” — vb.) Unicode kodlamaya geçer
+const SMS_GSM = /^[\n\r\x20-\x7E£¥èéùìòÇØøÅåÄÖÑÜ§äöñüàğĞıİşŞç€¡¿ÆæßÉΔΦΓΛΩΠΨΣΘΞ]*$/;
+
+/**
+ * Mesajın SMS parça sayısı (maliyet hesabı). Tek parça / çok parça karakter sınırı:
+ * GSM 160/153, Türkçe karakterli (Netgsm dil=TR) 155/150, Unicode 70/67. Uzantı karakterleri iki sayılır.
+ */
 export function smsBoyu(metin: string): number {
-  return Math.max(1, Math.ceil(metin.length / 160));
+  if (!SMS_GSM.test(metin)) {
+    const n = [...metin].reduce((t, c) => t + (c.codePointAt(0)! > 0xffff ? 2 : 1), 0);
+    return n <= 70 ? 1 : Math.ceil(n / 67);
+  }
+  const n = metin.length + (metin.match(SMS_CIFT_KARAKTER)?.length ?? 0);
+  const [tek, cok] = SMS_TURKCE.test(metin) ? [155, 150] : [160, 153];
+  return n <= tek ? 1 : Math.ceil(n / cok);
 }
 
 /* ---------- Finans (05) ---------- */

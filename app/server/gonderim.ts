@@ -7,8 +7,9 @@
  * Web push: VAPID anahtarları VAPID_PUBLIC / VAPID_PRIVATE ile verilir; yoksa ilk açılışta üretilip veritabanında saklanır.
  */
 import webpush from "web-push";
-import { SIMDI, smsBoyuMaliyet, tamAd, type Db, type Gonderim } from "../src/data/model";
+import { SIMDI, simdiZaman, smsBoyuMaliyet, tamAd, type Db, type Gonderim } from "../src/data/model";
 import { gonderimSaatindeMi, telefonNormalize } from "../src/lib/kurallar";
+import { RIZA_YOK_HATA, netgsmYanitiCoz, sirlariGizle } from "../src/bolumler/10-iletisim/kurallar";
 import type { Veritabani } from "./veritabani";
 
 export type SmsSonucu = { tamam: true; ref?: string } | { tamam: false; hata: string };
@@ -38,13 +39,10 @@ export class NetgsmSms implements SmsSaglayici {
     const p = new URLSearchParams({ usercode: this.kullanici, password: this.sifre, gsmno: no, message: metin, msgheader: this.baslik, dil: "TR" });
     try {
       const r = await fetch(`https://api.netgsm.com.tr/sms/send/get?${p}`, { signal: AbortSignal.timeout(15_000) });
-      const govde = (await r.text()).trim();
-      const kod = govde.split(/\s+/)[0];
-      if (["00", "01", "02"].includes(kod)) return { tamam: true, ref: govde.split(/\s+/)[1] };
-      const anlam: Record<string, string> = { "20": "Mesaj metni hatalı / çok uzun", "30": "Kullanıcı adı, şifre veya API yetkisi hatalı", "40": "Mesaj başlığı tanımlı değil", "50": "İYS kontrollü gönderim hatası", "70": "Hatalı parametre" };
-      return { tamam: false, hata: `Netgsm ${kod}: ${anlam[kod] ?? govde}` };
+      return netgsmYanitiCoz(r.status, await r.text());
     } catch (e) {
-      return { tamam: false, hata: `Netgsm bağlantı hatası: ${(e as Error).message}` };
+      // Hata metni gönderim kaydında görünür: URL'deki kimlik bilgileri sızmasın
+      return { tamam: false, hata: `Netgsm bağlantı hatası: ${sirlariGizle((e as Error).message, [this.sifre, this.kullanici]).slice(0, 200)}` };
     }
   }
 }
@@ -84,7 +82,7 @@ export async function pushHazirla(vt: Veritabani, iletisim: string): Promise<Pus
     acikAnahtar: pub!,
     async gonder(abonelik, veri) {
       try {
-        await webpush.sendNotification(abonelik, JSON.stringify(veri), { TTL: 24 * 3600 });
+        await webpush.sendNotification(abonelik, JSON.stringify(veri), { TTL: 24 * 3600, timeout: 15_000 });
         return { tamam: true };
       } catch (e) {
         const kod = (e as { statusCode?: number }).statusCode;
@@ -96,26 +94,36 @@ export async function pushHazirla(vt: Veritabani, iletisim: string): Promise<Pus
 
 /* ---------- Kuyruk ---------- */
 export type KuyrukBaglami = {
-  db: Db;
+  /** Her satırdan önce güncel veri okunur: gönderim sürerken silinen / değişen satır işlenmez */
+  db: () => Db;
   sms: SmsSaglayici;
   push: PushGonderici | null;
   abonelikler: (veliId: string) => Promise<{ endpoint: string; abonelik: PushAboneligi }[]>;
   abonelikSil: (endpoint: string) => Promise<void>;
+  /** Satırı kalıcı günceller; hata fırlatırsa kuyruk durur (işaret yazılamadan SMS gönderilmez) */
+  yamala: (id: string, yama: Partial<Gonderim>) => Promise<void>;
+  /** Test için; verilmezse sunucu saati */
+  saat?: () => string;
 };
 
 /**
- * Bekleyen gönderimleri işler. Değişen gönderim satırlarını döndürür (çağıran kaydeder).
+ * Bekleyen gönderimleri satır satır işler ve sonucu hemen yazar. İşlenen satır sayısını döndürür.
+ * - SMS izni kapalı veliye SMS gitmez (giriş kodu hariç); kuyruğa girdikten sonra kapatılsa da geçerli, satır uygulama bildirimine döner.
  * - Uygulama bildirimi: velinin cihaz aboneliği varsa web push; yoksa olay "uygulama + SMS" ise SMS'e düşer,
  *   değilse portaldaki bildirim kutusunda görünür (iletildi sayılır).
- * - SMS: gönderim saat aralığı dışındaysa sıradaki uygun saate kadar bekler (giriş kodu hariç).
+ * - SMS: gönderim saat aralığı dışındaysa sıradaki uygun saate kadar bekler.
+ * - Çift SMS engeli: sağlayıcıdan önce gonderimBasladi yazılır. Sonuç yazılamadan süreç düşerse satır takılı kalır;
+ *   takiliSatirlar ile başarısız işaretlenir, kendiliğinden yeniden gönderilmez.
  */
-export async function kuyruguIsle(b: KuyrukBaglami): Promise<Gonderim[]> {
-  const degisen: Gonderim[] = [];
-  const { db } = b;
-  for (const g of db.gonderimler) {
-    if (g.durum !== "bekliyor") continue;
+export async function kuyruguIsle(b: KuyrukBaglami): Promise<number> {
+  const kimlikler = b.db().gonderimler.filter((g) => g.durum === "bekliyor" && !g.gonderimBasladi).map((g) => g.id);
+  let islenen = 0;
+  for (const id of kimlikler) {
+    const db = b.db();
+    const g = db.gonderimler.find((x) => x.id === id);
+    if (!g || g.durum !== "bekliyor" || g.gonderimBasladi) continue;
     const v = db.veliler.find((x) => x.id === g.veliId);
-    let kanal = g.kanal;
+    let kanal: Gonderim["kanal"] = g.kanal === "sms" && g.olay !== "otp" && v?.izinSms === false ? "push" : g.kanal;
     let sonuc: Partial<Gonderim> = {};
 
     if (kanal === "push") {
@@ -127,21 +135,33 @@ export async function kuyruguIsle(b: KuyrukBaglami): Promise<Gonderim[]> {
         if (r.tamam) ulasti = true;
         else if (r.gecersiz) await b.abonelikSil(s.endpoint);
       }
-      if (ulasti) sonuc = { durum: "iletildi" };
-      else if (olay?.kanal === "push+sms" && v?.izinSms !== false) kanal = "sms"; // yedek
-      else sonuc = { durum: "iletildi", hata: subs.length ? "Cihaza ulaşılamadı; portal bildirim kutusunda" : undefined };
+      if (ulasti) sonuc = { durum: "iletildi", kanal: "push", maliyet: 0 };
+      else if (olay?.kanal === "push+sms" && v && v.izinSms !== false) kanal = "sms"; // yedek
+      else sonuc = { durum: "iletildi", kanal: "push", maliyet: 0, hata: subs.length ? "Cihaza ulaşılamadı; portal bildirim kutusunda" : undefined };
     }
 
     if (kanal === "sms") {
-      if (g.olay !== "otp" && !gonderimSaatindeMi(SIMDI, db.ayarlar.gonderimBas, db.ayarlar.gonderimBit)) continue;
+      if (g.adayId && db.adaylar.find((a) => a.id === g.adayId)?.rizaVar !== true) {
+        await b.yamala(id, { durum: "basarisiz", kanal: "sms", hata: RIZA_YOK_HATA, maliyet: 0 });
+        islenen++;
+        continue;
+      }
+      if (g.olay !== "otp" && !gonderimSaatindeMi(b.saat?.() ?? SIMDI, db.ayarlar.gonderimBas, db.ayarlar.gonderimBit)) continue;
       const telefon = v?.telefon ?? g.alici.split("·").pop()?.trim() ?? "";
-      const r = await b.sms.gonder(telefon, g.metin);
-      sonuc = r.tamam ? { durum: "iletildi", kanal: "sms", maliyet: smsBoyuMaliyet(db, g.metin) } : { durum: "basarisiz", kanal: "sms", hata: r.hata, maliyet: 0 };
+      await b.yamala(id, { gonderimBasladi: simdiZaman() });
+      let r: SmsSonucu;
+      try {
+        r = await b.sms.gonder(telefon, g.metin);
+      } catch {
+        r = { tamam: false, hata: "SMS sağlayıcısı yanıt vermedi" };
+      }
+      sonuc = r.tamam
+        ? { gonderimBasladi: undefined, durum: "iletildi", kanal: "sms", maliyet: smsBoyuMaliyet(db, g.metin) }
+        : { gonderimBasladi: undefined, durum: "basarisiz", kanal: "sms", hata: r.hata, maliyet: 0 };
     }
 
-    const yeni = { ...g, ...sonuc, alici: v ? `${tamAd(v)} · ${v.telefon}` : g.alici };
-    degisen.push(yeni);
+    await b.yamala(id, { ...sonuc, alici: v ? `${tamAd(v)} · ${v.telefon}` : g.alici });
+    islenen++;
   }
-  return degisen;
+  return islenen;
 }
-

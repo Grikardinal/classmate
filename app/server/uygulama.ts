@@ -50,6 +50,7 @@ import {
 import { izinEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { smsIzniUygula } from "../src/bolumler/08-odevler/kurallar";
 import { SLOT_DOLU, ogrencileriCikar, veliIptalEngeli, veliRandevuPlani } from "../src/bolumler/09-etut/kurallar";
+import { TAKILI_HATA, pushAbonelikTemizle, takiliSatirlar } from "../src/bolumler/10-iletisim/kurallar";
 import { YetkiHatasi, kapsam, okumaSuz, subeSutunu, veliVerisi, yazmaDenetle, type Aktor } from "./politika";
 import { kuyruguIsle, type PushAboneligi, type PushGonderici, type SmsSaglayici } from "./gonderim";
 import { otomasyonlariCalistir } from "./zamanlayici";
@@ -152,15 +153,26 @@ export async function uygulamaOlustur(s: Secenekler) {
     if (kuyrukCalisiyor || !durum.db.gonderimler.some((g) => g.durum === "bekliyor")) return;
     kuyrukCalisiyor = true;
     try {
-      const degisen = await kuyruguIsle({
-        db: durum.db,
+      // Tek süreçte aynı anda bir kuyruk çalışır; burada gonderimBasladi işareti taşıyan satır önceki çalışmadan kalmıştır
+      const takili = takiliSatirlar(durum.db.gonderimler);
+      if (takili.length) await sirali(() => kaydet({ koleksiyonlar: { gonderimler: { yaz: takili.map((g) => ({ ...g, durum: "basarisiz", gonderimBasladi: undefined, hata: TAKILI_HATA })), sil: [] } }, tekil: {} }));
+      await kuyruguIsle({
+        db: () => durum.db,
         sms,
         push,
         abonelikler: async (veliId) =>
           (await vt.q("select endpoint, abonelik from push_abonelik where veli_id = $1", [veliId])).map((r) => ({ endpoint: String(r.endpoint), abonelik: r.abonelik as PushAboneligi })),
         abonelikSil: async (endpoint) => void (await vt.q("delete from push_abonelik where endpoint = $1", [endpoint])),
+        // O anki satırın üstüne yazılır; gönderim sürerken silinen satır geri gelmez
+        yamala: (id, yama) =>
+          sirali(async () => {
+            const g = durum.db.gonderimler.find((x) => x.id === id);
+            if (g) await kaydet({ koleksiyonlar: { gonderimler: { yaz: [{ ...g, ...yama }], sil: [] } }, tekil: {} });
+          }),
       });
-      if (degisen.length) await sirali(() => kaydet({ koleksiyonlar: { gonderimler: { yaz: degisen, sil: [] } }, tekil: {} }));
+    } catch (e) {
+      // İstek sırasında tetiklenir: yakalanmayan hata süreci düşürmesin; bekleyen satırlar sonraki çalışmada işlenir
+      console.error("Gönderim kuyruğu hatası:", (e as Error).message);
     } finally {
       kuyrukCalisiyor = false;
     }
@@ -554,6 +566,8 @@ export async function uygulamaOlustur(s: Secenekler) {
     const b = await c.req.json<Partial<Pick<Veli, "pushAcik" | "izinSms" | "izinTanitim">>>();
     const p: Partial<Veli> = {};
     for (const k of ["pushAcik", "izinSms", "izinTanitim"] as const) if (typeof b[k] === "boolean") p[k] = b[k];
+    // Bildirimi kapatan velinin cihazlarına push gitmesin (yalnızca kendi abonelikleri)
+    if (p.pushAcik === false) await vt.q("delete from push_abonelik where veli_id = $1", [v.id]);
     await sunucuDegisikligi((x) => (x.veliler = x.veliler.map((y) => (y.id === v.id ? { ...y, ...p } : y))));
     return c.json({ tamam: true });
   });
@@ -561,7 +575,7 @@ export async function uygulamaOlustur(s: Secenekler) {
   app.post("/api/veli/okundu", veliGerekli, async (c) => {
     const v = c.get("veli");
     const { duyuruIds } = await c.req.json<{ duyuruIds: string[] }>();
-    const ids = new Set((duyuruIds ?? []).map(String));
+    const ids = new Set((Array.isArray(duyuruIds) ? duyuruIds : []).slice(0, 500).map(String));
     await sunucuDegisikligi((x) => {
       x.duyurular = x.duyurular.map((d) => (ids.has(d.id) && d.aliciVeliIds.includes(v.id) && !d.okuyanVeliIds.includes(v.id) ? { ...d, okuyanVeliIds: [...d.okuyanVeliIds, v.id] } : d));
     });
@@ -573,6 +587,7 @@ export async function uygulamaOlustur(s: Secenekler) {
     const { metin } = await c.req.json<{ metin: string }>();
     const t = String(metin ?? "").trim().slice(0, 500);
     if (!t) return hata(c, "Talep boş olamaz.");
+    if (!denemeHakki(`talep:${v.id}`, 5, 60 * 60_000)) return hata(c, "Çok fazla talep gönderildi. Bir saat sonra tekrar deneyin.", 429);
     const subeId = aktifKayit(durum.db, cocuklari(v.id)[0]?.id ?? "")?.subeId ?? null;
     await sunucuDegisikligi((x) => islemYaz(x, tamAd(v), "Bilgi güncelleme talebi", t, subeId));
     return c.json({ tamam: true });
@@ -580,8 +595,10 @@ export async function uygulamaOlustur(s: Secenekler) {
 
   app.post("/api/veli/push/abone", veliGerekli, async (c) => {
     const v = c.get("veli");
-    const { abonelik } = await c.req.json<{ abonelik: PushAboneligi }>();
-    if (!abonelik?.endpoint || !/^https:\/\//.test(abonelik.endpoint) || !abonelik.keys?.p256dh) return hata(c, "Geçersiz abonelik.");
+    const { abonelik: ham } = await c.req.json<{ abonelik: unknown }>();
+    const abonelik = pushAbonelikTemizle(ham);
+    if (!abonelik) return hata(c, "Geçersiz abonelik.");
+    if (!denemeHakki(`push:${v.id}`, 20, 60 * 60_000)) return hata(c, "Çok fazla istek. Bir saat sonra tekrar deneyin.", 429);
     await vt.q(
       "insert into push_abonelik (endpoint, veli_id, abonelik) values ($1, $2, $3) on conflict (endpoint) do update set veli_id = excluded.veli_id, abonelik = excluded.abonelik",
       [abonelik.endpoint, v.id, JSON.stringify(abonelik)],

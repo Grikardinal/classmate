@@ -170,7 +170,7 @@ describe("bildirim", () => {
   it("yeni ödev bildirimi ödeve bağlanır; hedef dışına gitmez", () => {
     const f = dene((x) => {
       x.odevler.push(odev({ ogrenciIds: [OGR2] }));
-      x.gonderimler.push(gonderim("g1", { olay: "yeniOdev", ogrenciId: OGR2 }), gonderim("g2", { olay: "yeniOdev", ogrenciId: OGR }));
+      x.gonderimler.push(gonderim("g1", { olay: "yeniOdev", ogrenciId: OGR2, veliId: db.ogrenciler.find((o) => o.id === OGR2)!.veliIds[0] }), gonderim("g2", { olay: "yeniOdev", ogrenciId: OGR }));
     });
     const l = gonderimler(f);
     expect(l.map((g) => g.id)).toEqual(["g1"]);
