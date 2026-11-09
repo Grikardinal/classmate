@@ -2,6 +2,7 @@ import * as React from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { Menu, Moon, Sun, X, Building, ChevronDown, CalendarClock, KeyRound, LogOut } from "lucide-react";
 import { Logo } from "@/components/brand/Logo";
+import { YapimciBilgisi } from "@/components/brand/Yapimci";
 import { Button, Select, Toaster } from "@/components/ui";
 import { useApp, useOturum } from "@/context/AppContext";
 import { bolumler, hakEdisimMenu } from "@/bolumler/registry";
@@ -219,6 +220,9 @@ export function AppShell() {
             </HataSiniri>
           </React.Suspense>
         </main>
+        <footer className="px-4 pb-4 print:hidden">
+          <YapimciBilgisi />
+        </footer>
         <Toaster />
       </div>
     </div>

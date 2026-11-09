@@ -1,6 +1,7 @@
 /** Veli girişi: telefon + SMS kodu */
 import * as React from "react";
 import { LogoMark } from "@/components/brand/Logo";
+import { YapimciBilgisi } from "@/components/brand/Yapimci";
 import { Button, Field, Input } from "@/components/ui";
 import { telefonNormalize } from "@/lib/kurallar";
 import { api } from "@/lib/api";
@@ -80,6 +81,7 @@ export function PortalGiris({ onGiris }: { onGiris: () => void }) {
           <p className="text-center text-xs text-muted-foreground">Bu cihazda {durum ? "uzun süre" : ""} oturum açık kalır; ortak cihazda çıkış yapmayı unutmayın.</p>
         </div>
       )}
+      <YapimciBilgisi />
     </div>
   );
 }

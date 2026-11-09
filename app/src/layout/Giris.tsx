@@ -6,6 +6,7 @@ import * as React from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { BellRing, CalendarDays, ClipboardCheck, KeyRound, Loader2, LogIn, ShieldCheck, Smartphone, Sparkles } from "lucide-react";
 import { Logo, LogoMark } from "@/components/brand/Logo";
+import { YapimciBilgisi } from "@/components/brand/Yapimci";
 import { Alert, Button, Card, CardContent, Dialog, Field, Input, toast } from "@/components/ui";
 import { useApp, type BenBilgisi } from "@/context/AppContext";
 import { rolAdlari, useVeriHazir, veriYukle, veriyiTemizle, type Rol } from "@/data/store";
@@ -173,6 +174,7 @@ export function GirisSayfasi() {
               </CardContent>
             </Card>
           )}
+          <YapimciBilgisi className="mt-8" />
         </div>
       </div>
     </div>
