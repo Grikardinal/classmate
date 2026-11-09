@@ -95,13 +95,13 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 | 2026-11-09 | İçe aktarılan kayıtlar | Yeni kayıt grafiğinden **çıkarılır** | Bölüm 12 ek iş ✅ |
 | 2026-11-09 | Önceki aya göre değişim | Şimdilik "+N bu ay" (değişiklik yok) | — |
 | 2026-11-09 | Sekreterin finans yetkisi | Panel yönetime kalır; varsayılan rol yetkisi birlikte ele alınır | Bölüm 14 |
-| 2026-11-09 | Ödenmiş aya sonradan gelen düzeltme | Ödenen tutar **dondurulur**, fark sonraki aya taşınır | Bölüm 13 ek iş |
-| 2026-11-09 | Fazla avans | Sonraki aya **otomatik devreder** | Bölüm 13 ek iş |
-| 2026-11-09 | Ödeme gideri iptali | Hak ediş **"onaylandı"ya döner** | Bölüm 13 ek iş |
+| 2026-11-09 | Ödenmiş aya sonradan gelen düzeltme | Ödenen tutar **dondurulur**, fark sonraki aya taşınır | Bölüm 13 ek iş ✅ |
+| 2026-11-09 | Fazla avans | Sonraki aya **otomatik devreder** | Bölüm 13 ek iş ✅ |
+| 2026-11-09 | Ödeme gideri iptali | Hak ediş **"onaylandı"ya döner** | Bölüm 13 ek iş ✅ |
 | 2026-11-09 | Sabit maaşlı öğretmene etüt ücreti | Ek iş sayılır, eklenir (değişiklik yok) | — |
-| 2026-11-09 | Ay ortası başlayan sabit maaşlı | Oranlama yok, **yönetici elle düzeltir** | Bölüm 13 ek iş |
-| 2026-11-09 | Öğretmenin hak ediş görünümü | Salt okunur **"Hak edişim"** | Bölüm 13 ek iş |
-| 2026-11-09 | Yedek öğretmen | **Oturum bazlı** atama | Bölüm 13 ek iş |
+| 2026-11-09 | Ay ortası başlayan sabit maaşlı | Oranlama yok, **yönetici elle düzeltir** | Bölüm 13 ek iş ✅ |
+| 2026-11-09 | Öğretmenin hak ediş görünümü | Salt okunur **"Hak edişim"** | Bölüm 13 ek iş ✅ |
+| 2026-11-09 | Yedek öğretmen | **Oturum bazlı** atama | Bölüm 13 ek iş ✅ |
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır

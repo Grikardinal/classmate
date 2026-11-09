@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ornekVeriUret, type Db, type Personel, type Randevu, type Yoklama } from "@/data/model";
 import { farkHesapla, farkUygula } from "@/data/fark";
 import { YetkiHatasi, okumaSuz, yazmaDenetle, type Aktor } from "../../../server/politika";
+import type { HakedisKaydi } from "@/data/model";
 import { odemeAciklamasi } from "./kurallar";
 
 const BUGUN = "2026-11-09";
@@ -192,11 +193,72 @@ describe("hak ediş durumu ve ödeme", () => {
     const k: Db = { ...db, personel: db.personel.map((p) => (p.id === "p8" ? { ...p, subeIds: ["s2"], anaSubeId: "s2" } : p)), hakedisDurum: { "2026-09_p8": "odendi" } };
     const f = { koleksiyonlar: {}, tekil: { hakedisDurum: { [`${AY}_p4`]: "onaylandi" } } };
     const t = yazmaDenetle(k, farkUygula(k, f), f, kisi("u1", k), ZAMAN);
-    expect(t.tekil.hakedisDurum).toEqual({ "2026-09_p8": "odendi", [`${AY}_p4`]: "onaylandi" });
+    expect(t.tekil.hakedisDurum).toEqual({ "2026-09_p8": "odendi", [`${AY}_p4`]: { durum: "onaylandi" } });
   });
   it("sekreter durum yazamaz; finans kapalıyken onay yok", () => {
     reddedilir(dene(durum(`${AY}_p4`, "onaylandi"), SEKRETER));
     reddedilir(dene(durum(`${AY}_p4`, "onaylandi"), YONETICI, { ...db, moduller: { ...db.moduller, finans: false } }), /modülleri/);
+  });
+});
+
+describe("ek kararlar 2026-11-09", () => {
+  const oturum = `pr_${AY}-06`;
+  const yok = { oturumId: oturum, satirId: "pr", grupId: db.program.find((p) => p.ogretmenId === "p4")!.grupId, tarih: `${AY}-06`, ogretmenId: "p4", konu: "", durumlar: {}, kayitZamani: "" } as Yoklama;
+  const onayli: Db = { ...db, yoklamalar: { [oturum]: yok }, hakedisDurum: { [`${AY}_p4`]: "onaylandi" } };
+  const aciklama = odemeAciklamasi(per("p4"), AY);
+  const ode = (x: Db) => {
+    x.hakedisDurum = { ...x.hakedisDurum, [`${AY}_p4`]: "odendi" };
+    x.giderler.push({ id: "g1", tarih: BUGUN, subeId: "s1", kategori: "Maaş", aciklama, tutar: 450, kasa: "banka" });
+  };
+  const durumu = (t: { tekil: Record<string, unknown> }, k = `${AY}_p4`) => (t.tekil.hakedisDurum as Record<string, HakedisKaydi>)[k];
+
+  it("ödemede tutar sunucuda dondurulur; istemcinin donmus alanı dikkate alınmaz", () => {
+    const t = dene((x) => { ode(x); x.hakedisDurum[`${AY}_p4`] = { durum: "odendi", donmus: { tutar: 1 } as never }; }, YONETICI, onayli)();
+    expect(durumu(t).donmus).toMatchObject({ tutar: 450, dersSayisi: 1, birimDers: 450, odenecek: 450, giderIds: ["g1"], aktarilan: 0 });
+  });
+  const odenmis = (): Db => {
+    const t = dene(ode, YONETICI, onayli)();
+    return { ...onayli, hakedisDurum: t.tekil.hakedisDurum as Db["hakedisDurum"], giderler: t.koleksiyonlar.giderler!.yaz as unknown as Db["giderler"] };
+  };
+  const iptal = (x: Db, neden = "yanlış ödeme") => (x.giderler = x.giderler.map((g) => (g.id === "g1" ? { ...g, iptal: { neden, kullanici: "sahte", zaman: "x" } } : g)));
+  it("gider iptal edilince onaylandıya döner, dondurulan tutar silinir", () => {
+    const t = dene(iptal, YONETICI, odenmis())();
+    expect(durumu(t).durum).toBe("onaylandi");
+    expect(durumu(t).donmus).toBeUndefined();
+  });
+  it("finansın iptal kuralı korunur: gerekçesiz iptal reddedilir, sekreter iptal edemez", () => {
+    reddedilir(dene((x) => iptal(x, "a"), YONETICI, odenmis()), /gerekçesi/);
+    reddedilir(dene(iptal, SEKRETER, odenmis()), /yönetici/);
+  });
+  it("çok şubeli ödemede diğer şube gideri de iptal olur; kapsam dışıysa müdür iptal edemez", () => {
+    const k = odenmis();
+    const iki: Db = { ...k, giderler: [...k.giderler, { id: "g2", tarih: BUGUN, subeId: "s2", kategori: "Maaş", aciklama, tutar: 10, kasa: "banka" }], hakedisDurum: { [`${AY}_p4`]: { ...(k.hakedisDurum[`${AY}_p4`] as HakedisKaydi) } } };
+    const t = dene(iptal, YONETICI, iki)();
+    expect(t.koleksiyonlar.giderler!.yaz.map((g) => g.id).sort()).toEqual(["g1", "g2"]);
+    expect((t.koleksiyonlar.giderler!.yaz.find((g) => g.id === "g2") as { iptal?: unknown }).iptal).toBeTruthy();
+    reddedilir(dene(iptal, MUDUR, iki), /genel yönetici/);
+  });
+  it("elle düzeltme: kim, ne zaman sunucudan; işlem kaydına yazılır; ödenmiş ayda yok", () => {
+    const yaz = (x: Db) => (x.hakedisDurum = { ...x.hakedisDurum, [`${AY}_p4`]: { durum: "onaylandi", duzeltme: { tutar: 100, neden: " ay ortası ", kullanici: "sahte", zaman: "x" } } });
+    const t = dene(yaz, YONETICI, onayli)();
+    expect(durumu(t).duzeltme).toEqual({ tutar: 100, neden: "ay ortası", kullanici: "Ahmet Er", zaman: ZAMAN });
+    expect(t.koleksiyonlar.islemler!.yaz[0]).toMatchObject({ islem: "Hak ediş düzeltmesi", kullanici: "Ahmet Er", subeId: "s1" });
+    reddedilir(dene(yaz, YONETICI, odenmis()), /Ödenmiş/);
+    reddedilir(dene(yaz, SEKRETER, onayli));
+  });
+  it("Hak edişim: yalnızca öğretmene ve yalnızca kendi verisi; yazma yok", () => {
+    const v = okumaSuz(onayli, OGRETMEN, BUGUN);
+    expect(v.hakedisim!.find((r) => r.ay === AY)).toMatchObject({ durum: "onaylandi", dersSayisi: 1, odenecek: 450 });
+    expect(v.hakedisDurum).toEqual({});
+    expect(okumaSuz(onayli, kisi(rolden("ogretmen", "p6")), BUGUN).hakedisim!.find((r) => r.ay === AY)?.dersSayisi ?? 0).toBe(0);
+    expect(okumaSuz(onayli, MUDUR, BUGUN).hakedisim).toBeUndefined();
+    expect(okumaSuz({ ...onayli, moduller: { ...onayli.moduller, hakedis: false } }, OGRETMEN, BUGUN).hakedisim).toBeUndefined();
+    reddedilir(dene((x) => (x.hakedisDurum = { ...x.hakedisDurum, [`${AY}_p4`]: "odendi" }), OGRETMEN, onayli));
+  });
+  it("yedekle alınan ders hak edişte yedeğe yazılır", () => {
+    const k: Db = { ...db, yoklamalar: { [oturum]: { ...yok, ogretmenId: "p7" } } };
+    expect(okumaSuz(k, kisi(rolden("ogretmen", "p7")), BUGUN).hakedisim!.find((r) => r.ay === AY)?.dersSayisi).toBe(1);
+    expect(okumaSuz(k, OGRETMEN, BUGUN).hakedisim!.find((r) => r.ay === AY)?.dersSayisi ?? 0).toBe(0);
   });
 });
 

@@ -7,7 +7,7 @@
 import { BUGUN, SIMDI, aktifKayit, type Db, type DoluSaat, type EtutTuru, type Gonderim, type Musaitlik, type Paket, type ProgramSatiri, type Randevu, type RandevuSonucu, type Rol } from "../../data/model";
 import { dakika, haftaGunu } from "../../lib/kurallar";
 import type { Hata } from "../01-kurum-yapisi/kurallar";
-import { satirGecerliMi, tarihGecerli } from "../06-ders-programi/kurallar";
+import { satirGecerliMi, tarihGecerli, yedekAraliklari, type YedekVerisi } from "../06-ders-programi/kurallar";
 
 export const etutTurAd: Record<EtutTuru, string> = { bireysel: "Bireysel etüt", grup: "Grup etüdü", online: "Online etüt", ozel: "Özel ders" };
 export const SLOT_DK = 40;
@@ -56,9 +56,9 @@ export function ogrenciDersiCakisir(d: DersVerisi & Pick<Db, "kayitlar">, ogrenc
 }
 
 /** Öğretmenin o tarihte yapılan grup dersleri ve görünmeyen şubelerdeki dolu saatleri */
-export function ogretmenDersAraliklari(d: DersVerisi & Pick<Db, "doluSaatler">, ogretmenId: string, tarih: string): { bas: number; bit: number }[] {
+export function ogretmenDersAraliklari(d: DersVerisi & Pick<Db, "doluSaatler"> & YedekVerisi, ogretmenId: string, tarih: string): { bas: number; bit: number }[] {
   const gun = haftaGunu(tarih);
-  const sonuc = yapilanDersler(d, tarih, (p) => p.ogretmenId === ogretmenId);
+  const sonuc = [...yapilanDersler(d, tarih, (p) => p.ogretmenId === ogretmenId), ...yedekAraliklari(d, ogretmenId, tarih)];
   for (const s of d.doluSaatler ?? [])
     if (s.ogretmenId === ogretmenId && s.gun === gun && satirGecerliMi(s, tarih)) sonuc.push({ bas: dakika(s.bas), bit: dakika(s.bit) });
   return sonuc;

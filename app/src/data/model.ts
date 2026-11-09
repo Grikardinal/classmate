@@ -57,6 +57,25 @@ export type Kurum = { ad: string; eposta: string; vergiNo: string; makbuzBasligi
 export type { Sube, Sezon, Ders, Derslik, DersSaati, Grup, FiyatSatiri } from "./mock";
 
 /* =========================== Tipler =========================== */
+/** Ödeme anında sunucunun dondurduğu hak ediş (karar 2026-11-09) */
+export type DonmusHakedis = {
+  tutar: number; dersSayisi: number; etutSayisi: number; birimDers: number; birimEtut: number;
+  avans: number; devredenAvans: number; fazlaAvans: number; oncekiFark: number; odenecek: number;
+  farkKaynak: { ay: string; tutar: number }[];
+  /** Sonraki aylara taşınmış fark; aynı fark iki kez sayılmaz */
+  aktarilan: number;
+  giderIds: string[];
+};
+export type HakedisDuzeltme = { tutar: number; neden: string; kullanici: string; zaman: string };
+export type HakedisKaydi = { durum?: "onaylandi" | "odendi"; donmus?: DonmusHakedis; duzeltme?: HakedisDuzeltme };
+/** Eski kayıtlarda düz metin; yeni kayıtlarda nesne */
+export type HakedisDegeri = "onaylandi" | "odendi" | HakedisKaydi;
+/** Öğretmenin kendi hak ediş dökümü: sunucuda hesaplanır, koleksiyon değildir, geri yazılamaz */
+export type HakedisimSatiri = {
+  ay: string; durum: "bekliyor" | "onaylandi" | "odendi"; dersSayisi: number; etutSayisi: number; tutar: number; avans: number;
+  devredenAvans: number; fazlaAvans: number; oncekiFark: number; duzeltme: number; duzeltmeNeden: string; odenecek: number;
+};
+
 export type Rol = "genel-yonetici" | "sube-muduru" | "sekreter" | "ogretmen";
 export const rolAdlari: Record<Rol, string> = {
   "genel-yonetici": "Genel yönetici",
@@ -187,6 +206,8 @@ export type DoluSaat = { ogretmenId: string; gun: number; bas: string; bit: stri
 
 export type Tatil = { id: string; tarih: string; ad: string; subeId: string | null };
 export type Iptal = { oturumId: string; neden: string; tarih: string; telafi?: string };
+/** Oturum bazlı yedek öğretmen (karar 2026-11-09). atayan ve zaman sunucudan. */
+export type YedekAtama = { oturumId: string; ogretmenId: string; atayan: string; zaman: string };
 
 export type Yoklama = {
   oturumId: string;
@@ -439,7 +460,9 @@ export type Db = {
   islemler: IslemKaydi[];
   iceAktarmalar: IceAktarma[];
   kvkk: KvkkBasvuru[];
-  hakedisDurum: Record<string, "onaylandi" | "odendi">;
+  hakedisDurum: Record<string, HakedisDegeri>;
+  yedekAtamalari: YedekAtama[];
+  hakedisim?: HakedisimSatiri[];
   avanslar: { id: string; personelId: string; tarih: string; tutar: number; aciklama: string; subeId: string; /** Bağlı Maaş gideri: gider iptal edilirse avans düşülmez */ giderId?: string }[];
   ayarlar: Ayarlar;
   /** Sunucu otomasyonlarının tekrar üretmemek için tuttuğu kayıt (anahtar → tarih) */
@@ -652,6 +675,7 @@ export function ornekVeriUret(): Db {
     program,
     tatiller,
     iptaller: [],
+    yedekAtamalari: [],
     yoklamalar: {},
     izinler: [],
     adaylar: [],
@@ -915,7 +939,7 @@ export function ogrenciVelileri(d: Db, o: Ogrenci) {
   return o.veliIds.map((id) => d.veliler.find((v) => v.id === id)).filter(Boolean) as Veli[];
 }
 
-export type Oturum = { id: string; tarih: string; satir: ProgramSatiri; bas: string; bit: string; subeId: string; iptal: Iptal | null; tatil: Tatil | null };
+export type Oturum = { id: string; tarih: string; satir: ProgramSatiri; bas: string; bit: string; subeId: string; iptal: Iptal | null; tatil: Tatil | null; yedek: YedekAtama | null; /** Yedek varsa yedek, yoksa satırın öğretmeni */ ogretmenId: string };
 
 /** Haftalık şablondan o güne ait ders oturumları üretilir (06). */
 export function oturumlar(d: Db, tarih: string): Oturum[] {
@@ -929,7 +953,9 @@ export function oturumlar(d: Db, tarih: string): Oturum[] {
       const g = grup(d, p.grupId)!;
       const h = saat(p.saatId)!;
       const oid = `${p.id}_${tarih}`;
+      const yedek = (d.yedekAtamalari ?? []).find((y) => y.oturumId === oid) ?? null;
       return {
+        yedek, ogretmenId: yedek?.ogretmenId ?? p.ogretmenId,
         id: oid, tarih, satir: p, bas: h.baslangic, bit: h.bitis, subeId: g.subeId,
         iptal: d.iptaller.find((i) => i.oturumId === oid) ?? null,
         tatil: d.tatiller.find((t) => t.tarih === tarih && (!t.subeId || t.subeId === g.subeId)) ?? null,

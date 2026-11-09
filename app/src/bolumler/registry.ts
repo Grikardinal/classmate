@@ -45,3 +45,6 @@ export const bolumler: Bolum[] = [
   { kod: "01", yol: "/kurum", ad: "Kurum ve tanımlar", ikon: Building2, surum: "MVP", grup: "Yönetim" },
   { kod: "14", yol: "/altyapi", ad: "Veri, güvenlik, KVKK", ikon: ServerCog, surum: "Tümü", grup: "Yönetim" },
 ];
+
+/** Öğretmenin salt okunur hak ediş sayfası (karar 2026-11-09): rol yetki tablosunda ayrı satır değildir */
+export const hakEdisimMenu: (typeof bolumler)[number] = { kod: "13", yol: "/hak-edisim", ad: "Hak edişim", ikon: Wallet, surum: "v2", grup: "Yönetim" };

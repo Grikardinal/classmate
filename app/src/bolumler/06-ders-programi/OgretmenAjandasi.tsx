@@ -20,7 +20,7 @@ export function OgretmenAjandasi({ ogretmenId, hafta }: { ogretmenId: string; ha
       <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {gunler.map((g) => {
           const t = tarihEkle(hafta, g - 1);
-          const liste = oturumlar(d, t).filter((o) => o.satir.ogretmenId === ogretmenId);
+          const liste = oturumlar(d, t).filter((o) => o.ogretmenId === ogretmenId);
           const slotlar = liste.map((o) => satirSlotu(d, o.satir)!);
           // Şube müdürü: diğer şubelerdeki dersler ayrıntısız (karar 2026-11-08)
           const dolu = (d.doluSaatler ?? []).filter((s) => s.ogretmenId === ogretmenId && s.gun === g && satirGecerliMi(s, t)).sort((a, b) => dakika(a.bas) - dakika(b.bas));
@@ -41,7 +41,7 @@ export function OgretmenAjandasi({ ogretmenId, hafta }: { ogretmenId: string; ha
                   return (
                     <div key={o.id} className={cn("rounded-md border-l-4 p-1.5 text-xs", (o.iptal || o.tatil) && "opacity-50 line-through")} style={{ borderLeftColor: ds.renk, background: `color-mix(in oklab, ${ds.renk} 10%, var(--color-card))` }}>
                       <p className="font-medium tabular-nums">{o.bas}–{o.bit}</p>
-                      <p>{ds.ad} · {grupEtiket(d, o.satir.grupId)}</p>
+                      <p>{ds.ad} · {grupEtiket(d, o.satir.grupId)}{o.yedek ? " (yedek)" : ""}</p>
                       <p className="text-muted-foreground">{sube(o.subeId)?.ad} · {derslikAdi(o.satir.derslikId)}</p>
                       {gecis && <p className="mt-0.5 flex items-center gap-1 text-warning"><AlertTriangle className="size-3" /> Şube geçişi kısa</p>}
                     </div>

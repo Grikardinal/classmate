@@ -7,7 +7,7 @@ import type { Db } from "./model";
 export const KOLEKSIYONLAR = [
   "subeler", "sezonlar", "dersler", "derslikler", "dersSaatleri", "gruplar",
   "personel", "kullanicilar", "girisler", "veliler", "ogrenciler", "kayitlar",
-  "program", "tatiller", "iptaller", "yoklamalar", "izinler", "adaylar", "odevler",
+  "program", "tatiller", "iptaller", "yedekAtamalari", "yoklamalar", "izinler", "adaylar", "odevler",
   "musaitlikler", "randevular", "paketler", "olaylar", "gonderimler", "duyurular",
   "taksitler", "tahsilatlar", "giderler", "virmanlar", "iadeler", "islemler", "iceAktarmalar", "kvkk", "avanslar",
 ] as const;
@@ -23,7 +23,7 @@ export type Degisiklik = {
 
 /** Satır anahtarı: çoğu koleksiyonda id; yoklama ve iptallerde oturumId */
 export const anahtar = (k: Koleksiyon, s: Satir) =>
-  String(k === "yoklamalar" || k === "iptaller" ? s.oturumId : k === "olaylar" ? s.key : s.id);
+  String(k === "yoklamalar" || k === "iptaller" || k === "yedekAtamalari" ? s.oturumId : k === "olaylar" ? s.key : s.id);
 
 export const satirlar = (db: Db, k: Koleksiyon): Satir[] => {
   const v = (db as unknown as Record<string, unknown>)[k];

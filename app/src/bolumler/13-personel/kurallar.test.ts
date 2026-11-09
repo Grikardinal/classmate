@@ -1,8 +1,8 @@
 /** Bölüm 13 saf kuralları. Tarihler parametreyle verilir; gerçek saate bağlı değildir. */
 import { describe, expect, it } from "vitest";
-import type { Db, Personel, ProgramSatiri, Randevu, Yoklama } from "@/data/model";
+import type { Db, DonmusHakedis, Personel, ProgramSatiri, Randevu, Yoklama } from "@/data/model";
 import {
-  acikProgram, atamaEngeli, avansEngeli, ayGecerli, etutSayilir, etutUcretiEngeli, gecerliAvanslar, hakEdisHesabi, hakEdisteGorunur, hakedisAnahtari, hakedisAylari,
+  acikProgram, farkAktar, hakedisDuzeltmeEngeli, hakedisimOzeti, atamaEngeli, avansEngeli, ayGecerli, etutSayilir, etutUcretiEngeli, gecerliAvanslar, hakEdisHesabi, hakEdisteGorunur, hakedisAnahtari, hakedisAylari,
   hakedisDurumEngeli, islenenOturumlar, kartYetkiEngeli, maskeliAlanlariKoru, pasifeAlmaEngeli, personelDogrula, personelMaskele, personelSilmeEngeli, personelTemizle, ucretEngeli, ucretGorur,
   type Avans, type DurumBaglami, type Goren,
 } from "./kurallar";
@@ -58,10 +58,20 @@ describe("hak ediş: avans", () => {
     expect(h.odenecek).toBe(150);
     expect(h.dagilim.reduce((t, x) => t + x.tutar, 0)).toBe(150);
   });
-  it("avans hak edişi aşarsa gider yazılmaz, ödenecek eksi görünür", () => {
+  it("avans hak edişi aşarsa gider yazılmaz, net eksi çıkmaz, fazlası sonraki aya devreder", () => {
     const h = hakEdisHesabi(d({ avanslar: [av({ tutar: 500 })] }), p(), AY);
     expect(h.dagilim).toEqual([]);
-    expect(h.odenecek).toBe(-300);
+    expect(h.odenecek).toBe(0);
+    expect(h.fazlaAvans).toBe(300);
+    const kasim = hakEdisHesabi(hesap({ yoklamalar: yok(y("a"), y("k", { tarih: "2026-11-02" })), avanslar: [av({ tutar: 500 })] }), p(), "2026-11");
+    expect(kasim.devredenAvans).toBe(400);
+    expect(kasim.fazlaAvans).toBe(300);
+    expect(kasim.odenecek).toBe(0);
+  });
+  it("ayrılan öğretmenin kalan devri görünür kalır", () => {
+    const h = hakEdisHesabi(hesap({ avanslar: [av({ tutar: 90 })] }), p({ aktif: false }), "2026-12");
+    expect(h.devredenAvans).toBe(90);
+    expect(hakEdisteGorunur({ aktif: false, baslangic: "2020-01-01" }, "2026-12", h)).toBe(true);
   });
   it("gideri iptal edilen avans düşülmez; başka ayın avansı düşülmez", () => {
     expect(gecerliAvanslar({ avanslar: [av({ giderId: "gd" })], giderler: [{ id: "gd", iptal: { neden: "x" } }] } as never, "t", AY)).toEqual([]);
@@ -97,6 +107,63 @@ describe("hak ediş: etüt (karar 2026-11-08)", () => {
     expect(etutUcretiEngeli(-1)).toMatch(/pozitif/);
     expect(etutUcretiEngeli(1.234)).toMatch(/kuruş/);
     expect(etutUcretiEngeli("5")).toMatch(/pozitif/);
+  });
+});
+
+describe("hak ediş: dondurma ve fark (karar 2026-11-09)", () => {
+  const donmus = (x: Partial<DonmusHakedis> = {}): DonmusHakedis => ({ tutar: 100, dersSayisi: 1, etutSayisi: 0, birimDers: 100, birimEtut: 0, avans: 0, devredenAvans: 0, fazlaAvans: 0, oncekiFark: 0, odenecek: 100, farkKaynak: [], aktarilan: 0, giderIds: [], ...x });
+  const iki = yok(y("a"), y("b", { tarih: `${AY}-13` }));
+  const kasim = "2026-11";
+  it("ödenmiş ay dondurulan tutarı gösterir, ücret değişimi etkilemez", () => {
+    const h = hakEdisHesabi(hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: { durum: "odendi", donmus: donmus() } } }), p({ dersUcreti: 999 }), AY);
+    expect([h.tutar, h.dersSayisi, h.odenecek, h.donduruldu]).toEqual([100, 1, 100, true]);
+  });
+  it("sonradan gelen ders farkı sonraki ödenmemiş aya girer (ödeme anındaki birimle)", () => {
+    const h = hakEdisHesabi(hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: { durum: "odendi", donmus: donmus() } } }), p({ dersUcreti: 999 }), kasim);
+    expect(h.oncekiFark).toBe(100);
+    expect(h.odenecek).toBe(100);
+    expect(h.farkKaynak).toEqual([{ ay: AY, tutar: 100 }]);
+  });
+  it("fark yalnızca ilk ödenmemiş aya girer, ara ödenmiş ay atlanır", () => {
+    const hd = { [`${AY}_t`]: { durum: "odendi" as const, donmus: donmus() }, "2026-11_t": { durum: "odendi" as const, donmus: donmus({ tutar: 0, dersSayisi: 0 }) } };
+    const d = hesap({ yoklamalar: iki, hakedisDurum: hd });
+    expect(hakEdisHesabi(d, p(), "2026-12").oncekiFark).toBe(100);
+    expect(hakEdisHesabi(d, p(), "2027-01").oncekiFark).toBe(0);
+  });
+  it("taşınan fark iki kez sayılmaz; ödeme iptali geri açar", () => {
+    const v = { durum: "odendi" as const, donmus: donmus() };
+    const aktarilmis = farkAktar(v, 100);
+    expect(hakEdisHesabi(hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: aktarilmis } }), p(), kasim).oncekiFark).toBe(0);
+    expect(hakEdisHesabi(hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: farkAktar(aktarilmis, -100) } }), p(), kasim).oncekiFark).toBe(100);
+  });
+  it("negatif fark net eksiye düşürmez, kalanı devreder", () => {
+    const d = hesap({ yoklamalar: {}, hakedisDurum: { [`${AY}_t`]: { durum: "odendi", donmus: donmus() } } });
+    const h = hakEdisHesabi(d, p(), kasim);
+    expect([h.oncekiFark, h.odenecek, h.fazlaAvans]).toEqual([-100, 0, 100]);
+  });
+  it("dondurulmamış eski ödenmiş satırda fark hesaplanmaz", () => {
+    expect(hakEdisHesabi(hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: "odendi" } }), p(), kasim).oncekiFark).toBe(0);
+    expect(hakEdisHesabi(hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: "odendi" } }), p(), AY).donduruldu).toBe(false);
+  });
+  it("elle düzeltme hak edişe ve ana şubeye girer; eksi tutar kesinti olur", () => {
+    const d = (tutar: number) => hesap({ yoklamalar: iki, hakedisDurum: { [`${AY}_t`]: { duzeltme: { tutar, neden: "ay ortası", kullanici: "", zaman: "" } } } });
+    expect(hakEdisHesabi(d(50), p(), AY)).toMatchObject({ tutar: 250, duzeltme: 50, odenecek: 250 });
+    expect(hakEdisHesabi(d(-50), p(), AY)).toMatchObject({ tutar: 150, odenecek: 150 });
+  });
+  it("düzeltme kuralları", () => {
+    const b: DurumBaglami = { hakedisAcik: true, finansAcik: true, rol: "genel-yonetici", bugun: BUGUN, tamKapsam: true, personel: [{ id: "t", gorev: "ogretmen" }] };
+    const k = `${AY}_t`;
+    expect(hakedisDuzeltmeEngeli(k, { tutar: -5, neden: "abc" }, {}, b)).toBeNull();
+    expect(hakedisDuzeltmeEngeli(k, { tutar: 5, neden: "ab" }, {}, b)).toMatch(/3 karakter/);
+    expect(hakedisDuzeltmeEngeli(k, { tutar: 0, neden: "abc" }, {}, b)).toMatch(/sıfırdan/);
+    expect(hakedisDuzeltmeEngeli(k, { tutar: 5, neden: "abc" }, { durum: "odendi" }, b)).toMatch(/Ödenmiş/);
+    expect(hakedisDuzeltmeEngeli(k, { tutar: 5, neden: "abc" }, {}, { ...b, rol: "sube-muduru", tamKapsam: false })).toMatch(/genel yönetici/);
+    expect(hakedisDuzeltmeEngeli(k, { tutar: 5, neden: "abc" }, {}, { ...b, rol: "sekreter" })).toMatch(/yönetici/);
+  });
+  it("Hakedişim dökümü; finans kapalıyken tutar yok", () => {
+    const d = hesap({ yoklamalar: yok(y("a")), hakedisDurum: { [`${AY}_t`]: "onaylandi" } });
+    expect(hakedisimOzeti(d, p(), BUGUN, true).find((r) => r.ay === AY)).toMatchObject({ durum: "onaylandi", dersSayisi: 1, tutar: 100, odenecek: 100 });
+    expect(hakedisimOzeti(d, p(), BUGUN, false).find((r) => r.ay === AY)).toMatchObject({ dersSayisi: 1, tutar: 0, odenecek: 0 });
   });
 });
 
@@ -205,6 +272,9 @@ describe("dersi olan öğretmen", () => {
     expect(pasifeAlmaEngeli("t", atama({ program: [satir()] }), BUGUN)).toMatch(/1 dersi/);
     expect(pasifeAlmaEngeli("t", atama({ randevular: [r({ durum: "planli", tarih: "2026-11-10" })] }), BUGUN)).toMatch(/etüt/);
     expect(pasifeAlmaEngeli("t", atama({ randevular: [r({ durum: "yapildi", tarih: "2026-11-01" })], program: [satir({ bitis: "2026-11-01" })] }), BUGUN)).toBeNull();
+  });
+  it("yaklaşan yedek görevi varken pasife alınamaz", () => {
+    expect(pasifeAlmaEngeli("t", atama({ yedekAtamalari: [{ oturumId: "pr_2026-11-10", ogretmenId: "t", atayan: "", zaman: "" }] }), BUGUN)).toMatch(/yedek/);
   });
   it("görev değişimi ve dersi olan şubeden çıkarma engellenir; dersi olmayan şubeden çıkarılır", () => {
     const iki = p({ subeIds: ["s1", "s2"] });

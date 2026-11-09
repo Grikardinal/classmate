@@ -47,6 +47,13 @@ Sunucu denetimi: `app/server/politika.ts · programDenetle`. Pasif derslik / der
 - Öğretmen yalnızca kendi ajandasını görür; okuma filtresi `okumaSuz` kendi gruplarının satırlarını gönderir.
 - Program değişikliği ve kaldırma grubun birincil velilerine bildirilir, geçerlilik tarihi mesajdadır; pencerede kapatılabilir, sürükle-bırakta her zaman gider. İptalde tüm veliler bildirilir. Bildirimi ekran üretir.
 
+**Oturum bazlı yedek öğretmen (karar 2026-11-09)**
+- `yedekAtamalari` (anahtar oturum kimliği); ekran: `YedekAtamaAlani.tsx`, ders penceresinde. Haftalık satır değişmez, `oturumlar` yedek bilgisini taşır (`yedek`, `ogretmenId`).
+- Yalnızca şube müdürü veya genel yönetici atar; atayan ve zaman sunucudan. Öğretmen aktif, şubede görevli olmalı, asıl öğretmen olamaz; branş şartı aranmaz.
+- Çakışma tüm şubelerde aranır: fiili dersleri (yedeğe devrettikleri hariç, yedek aldıkları dahil) ve etüt randevuları. Yeni program satırı ve etüt de yedek göreviyle çakışır.
+- Geçmiş tarihe, iptal veya tatile atanamaz; yoklaması alınmış oturumun yedeği değişmez. Veliye bildirim gitmez.
+- Yedek gruba kalıcı erişim kazanmaz (`ogretmenGruplariHesapla` değişmedi). `yedekErisimi`: program ve grup etiketi yaklaşan görevde; öğrenci listesi yalnızca ders günü ve 7 günlük geç giriş penceresinde, yoklaması alınmış geçmiş oturumda erişim biter.
+
 ## Testler
 `npx vitest run src/bolumler/06-ders-programi`. Tarih ve örtüşme, çakışma, öğretmen uygunluğu, satır alanları, geçmişin korunması, ortak denetim, tatil, iptal; sunucuda yetki, şube kapsamı, kapsam dışı çakışma, bölme, yoklamalı satır.
 

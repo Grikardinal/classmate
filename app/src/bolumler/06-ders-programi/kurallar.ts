@@ -4,7 +4,7 @@
  * Sunucu da içe aktardığı için burada yalnızca göreli içe aktarma kullanılır.
  * Hata dönen fonksiyonlar Türkçe mesaj, sorun yoksa null döndürür.
  */
-import type { Db, DoluSaat, Iptal, Personel, ProgramSatiri, Rol, Sezon, Tatil } from "../../data/model";
+import type { Db, DoluSaat, Iptal, Personel, ProgramSatiri, Randevu, Rol, Sezon, Tatil, YedekAtama } from "../../data/model";
 import { cakismaBul, dakika, haftaGunu, subeGecisUyarisi, tarihEkle, type Cakisma, type Slot } from "../../lib/kurallar";
 import { programAtamaEngeli, tanimAktif, type Hata } from "../01-kurum-yapisi/kurallar";
 
@@ -228,7 +228,7 @@ export function degisiklikDenetle(d: Db, eski: ProgramSatiri | undefined, yeni: 
 
 /* ---------- Sunucu: satır yazma / silme ---------- */
 
-type DenetimVerisi = SatirTanimlari & Kayitlar & Pick<Db, "program">;
+type DenetimVerisi = SatirTanimlari & Kayitlar & Pick<Db, "program"> & YedekVerisi;
 
 const ALANLAR: (keyof ProgramSatiri)[] = ["grupId", "gun", "saatId", "dersId", "ogretmenId", "derslikId", "baslangic"];
 
@@ -256,7 +256,8 @@ export function programYazmaEngeli(s: ProgramSatiri, eski: ProgramSatiri | undef
   const m = programSatirEngeli(s, eski, d, secenek);
   if (m) return m;
   const c = programCakismalari(s, d.program, d);
-  return c.length ? cakismaMesaji(c[0]) : null;
+  if (c.length) return cakismaMesaji(c[0]);
+  return yedekProgramCakisiyor(s, d) ? "Öğretmen bu saatte dolu." : null;
 }
 
 export function programSilmeEngeli(eski: ProgramSatiri, d: Kayitlar, bugun: string): Hata {
@@ -311,6 +312,109 @@ export function iptalGeriAlmaEngeli(i: Iptal, d: Pick<Db, "yoklamalar">, bugun: 
   if (k.tarih < bugun) return "Tarihi geçmiş dersin iptali geri alınamaz.";
   if (d.yoklamalar?.[i.oturumId]) return "Yoklaması alınmış dersin iptali geri alınamaz.";
   return null;
+}
+
+/* ---------- Oturum bazlı yedek öğretmen (karar 2026-11-09) ---------- */
+
+export type YedekVerisi = { yedekAtamalari?: YedekAtama[] };
+
+export const oturumYedegi = (d: YedekVerisi, oturumId: string) => (d.yedekAtamalari ?? []).find((y) => y.oturumId === oturumId);
+
+const ortusur = (a1: number, a2: number, b1: number, b2: number) => a1 < b2 && b1 < a2;
+
+type CakismaVerisi = Tanimlar & Pick<Db, "program" | "iptaller" | "tatiller"> & YedekVerisi & { randevular?: Pick<Randevu, "ogretmenId" | "tarih" | "bas" | "bit" | "durum">[] };
+
+/** O tarihte öğretmenin fiilen vereceği derslerin aralıkları: yedeğe devrettikleri girmez, yedek olarak aldıkları girer */
+export function ogretmenGunAraliklari(d: CakismaVerisi, ogretmenId: string, tarih: string, haricOturum?: string): { bas: number; bit: number }[] {
+  const gun = haftaGunu(tarih);
+  const sonuc: { bas: number; bit: number }[] = [];
+  for (const p of d.program) {
+    if (p.gun !== gun || !satirGecerliMi(p, tarih)) continue;
+    const oid = `${p.id}_${tarih}`;
+    if (oid === haricOturum || (oturumYedegi(d, oid)?.ogretmenId ?? p.ogretmenId) !== ogretmenId || d.iptaller.some((i) => i.oturumId === oid)) continue;
+    const s = satirSlotu(d, p);
+    if (s && !d.tatiller.some((t) => t.tarih === tarih && (!t.subeId || t.subeId === s.subeId))) sonuc.push({ bas: s.bas, bit: s.bit });
+  }
+  return sonuc;
+}
+
+/** Etüt çakışması için: öğretmenin o tarihteki yedek görevleri */
+export function yedekAraliklari(d: Tanimlar & Pick<Db, "program"> & YedekVerisi, ogretmenId: string, tarih: string): { bas: number; bit: number }[] {
+  const sonuc: { bas: number; bit: number }[] = [];
+  for (const y of d.yedekAtamalari ?? []) {
+    const k = oturumKimligi(y.oturumId);
+    const p = k && k.tarih === tarih && y.ogretmenId === ogretmenId ? d.program.find((x) => x.id === k.satirId) : undefined;
+    const s = p && satirSlotu(d, p);
+    if (s) sonuc.push({ bas: s.bas, bit: s.bit });
+  }
+  return sonuc;
+}
+
+/** Yeni program satırı, öğretmenin yürürlük içindeki yedek göreviyle çakışıyor mu */
+function yedekProgramCakisiyor(s: ProgramSatiri, d: Tanimlar & Pick<Db, "program"> & YedekVerisi): boolean {
+  const slot = satirSlotu(d, s);
+  if (!slot) return false;
+  return (d.yedekAtamalari ?? []).some((y) => {
+    const k = oturumKimligi(y.oturumId);
+    if (!k || y.ogretmenId !== s.ogretmenId || haftaGunu(k.tarih) !== s.gun || !satirGecerliMi(s, k.tarih)) return false;
+    const p = d.program.find((x) => x.id === k.satirId);
+    const o = p && satirSlotu(d, p);
+    return !!o && ortusur(o.bas, o.bit, slot.bas, slot.bit);
+  });
+}
+
+type YedekDenetimi = CakismaVerisi & Pick<Db, "personel" | "sezonlar" | "yoklamalar">;
+
+/** Atama veya değiştirme. Branş dışı kuralı: atayan zaten yönetici olduğundan branş şartı aranmaz. */
+export function yedekAtamaEngeli(y: Pick<YedekAtama, "oturumId" | "ogretmenId">, d: YedekDenetimi, bugun: string, rol: Rol): Hata {
+  if (!bransDisiAtayabilir(rol)) return "Yedek öğretmeni yalnızca şube müdürü veya genel yönetici atar.";
+  const k = oturumKimligi(y.oturumId);
+  const p = k && d.program.find((x) => x.id === k.satirId);
+  if (!k || !p || p.gun !== haftaGunu(k.tarih) || !satirGecerliMi(p, k.tarih)) return "Bu tarihte böyle bir ders yok.";
+  const g = d.gruplar.find((x) => x.id === p.grupId);
+  const h = d.dersSaatleri.find((x) => x.id === p.saatId);
+  if (!g || !h) return "Bu tarihte böyle bir ders yok.";
+  const sezon = d.sezonlar.find((z) => z.id === g.sezonId);
+  if (sezon && k.tarih > sezon.bitis) return "Bu tarihte böyle bir ders yok.";
+  if (k.tarih < bugun) return "Geçmiş tarihli derse yedek atanamaz.";
+  if (d.yoklamalar?.[y.oturumId]) return "Yoklaması alınmış dersin yedeği değiştirilemez.";
+  if (d.iptaller.some((i) => i.oturumId === y.oturumId)) return "İptal edilen derse yedek atanamaz.";
+  if (d.tatiller.some((t) => t.tarih === k.tarih && (!t.subeId || t.subeId === g.subeId))) return "Bu tarih tatil; yedek atanamaz.";
+  if (y.ogretmenId === p.ogretmenId) return "Yedek, dersin asıl öğretmeni olamaz.";
+  const m = ogretmenUygunlukEngeli(y.ogretmenId, p.dersId, g.subeId, d.personel, true);
+  if (m) return m;
+  const bas = dakika(h.baslangic);
+  const bit = dakika(h.bitis);
+  if (ogretmenGunAraliklari(d, y.ogretmenId, k.tarih, y.oturumId).some((a) => ortusur(a.bas, a.bit, bas, bit))) return "Öğretmen bu saatte dolu.";
+  if ((d.randevular ?? []).some((r) => r.ogretmenId === y.ogretmenId && r.tarih === k.tarih && r.durum !== "iptal" && ortusur(dakika(r.bas), dakika(r.bit), bas, bit))) return "Öğretmenin bu saatte etüt randevusu var.";
+  return null;
+}
+
+export function yedekKaldirmaEngeli(oturumId: string, d: Pick<Db, "yoklamalar">, bugun: string, rol: Rol): Hata {
+  if (!bransDisiAtayabilir(rol)) return "Yedek öğretmeni yalnızca şube müdürü veya genel yönetici değiştirir.";
+  const k = oturumKimligi(oturumId);
+  if (!k || k.tarih < bugun) return "Geçmiş tarihli dersin yedeği değiştirilemez.";
+  return d.yoklamalar?.[oturumId] ? "Yoklaması alınmış dersin yedeği değiştirilemez." : null;
+}
+
+/**
+ * Yedeğin geçici erişimi: gruba kalıcı erişim vermez (ogretmenGruplariHesapla değişmez).
+ * Program ve grup etiketi yaklaşan görevler için, öğrenci listesi yalnızca dersin günü ve geç giriş penceresinde;
+ * yoklaması alınmış geçmiş oturumda erişim biter.
+ */
+export function yedekErisimi(d: Pick<Db, "program" | "yoklamalar"> & YedekVerisi, personelId: string, bugun: string, pencereGun: number) {
+  const sonuc = { satirlar: new Set<string>(), gruplar: new Set<string>(), listeGruplari: new Set<string>(), oturumlar: new Set<string>() };
+  for (const y of d.yedekAtamalari ?? []) {
+    const k = oturumKimligi(y.oturumId);
+    const p = k && y.ogretmenId === personelId ? d.program.find((x) => x.id === k.satirId) : undefined;
+    if (!k || !p || k.tarih < tarihEkle(bugun, -pencereGun) || (k.tarih < bugun && d.yoklamalar?.[y.oturumId])) continue;
+    sonuc.satirlar.add(p.id);
+    sonuc.gruplar.add(p.grupId);
+    if (k.tarih > bugun) continue;
+    sonuc.listeGruplari.add(p.grupId);
+    sonuc.oturumlar.add(y.oturumId);
+  }
+  return sonuc;
 }
 
 /* ---------- Görünürlük (kararlar 2026-11-08) ---------- */

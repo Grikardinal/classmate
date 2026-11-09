@@ -4,7 +4,7 @@
  * - yazmaDenetle(): her eklenen/değişen/silinen satır için rol, bölüm yetkisi, şube kapsamı ve alan kuralları
  * - veliVerisi(): veli yalnızca kendi çocuklarına ait veriyi görür
  */
-import { BUGUN, aktifKayit, bildirimEkle, duyuruGonderimleri, hedefVeliler, islemYaz, smsBoyuMaliyet, taksitKalan, tamAd, type Aday, type BildirimOlayi, type Duyuru, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli } from "../src/data/model";
+import { BUGUN, aktifKayit, bildirimEkle, duyuruGonderimleri, hedefVeliler, islemYaz, smsBoyuMaliyet, taksitKalan, tamAd, type Aday, type BildirimOlayi, type Duyuru, type Db, type Ders, type Derslik, type DersSaati, type Grup, type Iptal, type Kayit, type Kullanici, type Kurum, type Ogrenci, type Personel, type HakedisDegeri, type ProgramSatiri, type Sezon, type Sube, type Tatil, type Veli, type YedekAtama } from "../src/data/model";
 import {
   aktifSezonDenetle,
   dersDogrula,
@@ -72,13 +72,13 @@ import {
   yeniMakbuzNo,
 } from "../src/bolumler/05-finans/kurallar";
 import { finansIslemiMi } from "../src/bolumler/12-yonetim-paneli/kurallar";
-import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
-import { devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
+import { bransDisiAtayabilir, doluSaatleriHesapla, iptalGeriAlmaEngeli, iptalYazmaEngeli, ogretmenGruplariHesapla, oturumYedegi, programSilmeEngeli, programYazmaEngeli, tatilSilmeEngeli, tatilYazmaEngeli, yedekAtamaEngeli, yedekErisimi, yedekKaldirmaEngeli } from "../src/bolumler/06-ders-programi/kurallar";
+import { GEC_YOKLAMA_GUN, kayitGrubu, devamsizlikBildirimiMi, devamsizlikOlayi, devamsizlikYineleniyor, duzeltmePlani, kaldirilanGelmeyenler, oturumBildirimleri, tarihMetni, yoklamaOturumu, yoklamaYazmaEngeli } from "../src/bolumler/07-yoklama/kurallar";
 import { odevBildirimiMi, odevBildirimiYineleniyor, odevHedefleri, odevOgretmeni, odevSilmeEngeli, odevTemizle, odevYazmaEngeli, smsIzniUygula, veliOdevleri, yapmadiBildirimleri, type OdevBaglami } from "../src/bolumler/08-odevler/kurallar";
 import { etutBildirimiMi, etutBildirimiYineleniyor, kalanHakUygula, kontenjanGecerli, musaitlikEngeli, ogrencileriCikar, paketBilgiMetni, paketBildirimiGitti, paketDegisimEngeli, paketYeniEngeli, randevuDurumEngeli, randevuYeniEngeli, sonucHakFarklari, veliEtutVerisi } from "../src/bolumler/09-etut/kurallar";
 import { ayarEngeli, duyuruEngeli, gonderimKanali, metinEngeli, metinSablonaUyar, olayCalisir, olayUretmeYetkisi, olayYazmaEngeli, tekrarEngeli, yalnizSunucuOlayi, SABLON_UYMUYOR_HATA } from "../src/bolumler/10-iletisim/kurallar";
 import { ayrilanAcikBorclar, veliGonderimGorunur } from "../src/bolumler/11-veli-portali/kurallar";
-import { avansEngeli, etutUcretiEngeli, hakEdisHesabi, hakedisAnahtari, hakedisDurumEngeli, hakedisIslemiMi, MAAS_KATEGORISI, MASKELI_MAAS_ACIKLAMASI, maskeliAlanlariKoru, odemeAciklamasi, personelMaskele, personelSilmeEngeli, personelTemizle, personelYazmaEngeli, type Avans, type Goren, type HakedisDurumu } from "../src/bolumler/13-personel/kurallar";
+import { avansEngeli, donmusOlustur, etutUcretiEngeli, farkAktar, hakEdisHesabi, hakedisAnahtari, hakedisDurumEngeli, hakedisDuzeltmeEngeli, hakedisIslemiMi, hakedisimOzeti, hakedisKaydi, MAAS_KATEGORISI, MASKELI_MAAS_ACIKLAMASI, maskeliAlanlariKoru, odemeAciklamasi, personelMaskele, personelSilmeEngeli, personelTemizle, personelYazmaEngeli, type Avans, type Goren, type HakedisKaydi } from "../src/bolumler/13-personel/kurallar";
 import { farkUygula } from "../src/data/fark";
 import type { Gider, Gonderim, Iade, Musaitlik, Odev, Paket, Randevu, Tahsilat, Taksit, Virman, Yoklama } from "../src/data/model";
 
@@ -122,7 +122,7 @@ export function satirSubeleri(db: Db, k: Koleksiyon, s: Satir): string[] | null 
       return tek(s.subeId);
     case "program": case "yoklamalar": case "odevler":
       return tek(grupSube(db, s.grupId));
-    case "iptaller": {
+    case "iptaller": case "yedekAtamalari": {
       const p = db.program.find((x) => String(s.oturumId).startsWith(x.id + "_"));
       return tek(p && grupSube(db, p.grupId));
     }
@@ -181,6 +181,8 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
   const finans = finansGorur(db, a);
   const yetki13 = yetki(db, a, "13");
   const goren: Goren = { rol: a.kullanici.rol, personelId: a.personel.id, yetki13 };
+  // Yedek öğretmen: yalnızca görevli olduğu oturum için gereken satırlar (kalıcı grup erişimi yok, karar 2026-11-09)
+  const yedek = ogretmen ? yedekErisimi(db, a.personel.id, bugun, GEC_YOKLAMA_GUN) : null;
   const sonuc = { ...db } as unknown as Record<string, unknown>;
 
   const gorur = (k: Koleksiyon, s: Satir): boolean => {
@@ -211,22 +213,34 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
     if (ogrGrup) {
       // Öğretmen yalnızca kendi gruplarını görür; finans ve aday verisi yok
       const ogrIds = new Set(db.kayitlar.filter((x) => ogrGrup.has(x.grupId)).map((x) => x.ogrenciId));
-      if (k === "gruplar") l = l.filter((s) => ogrGrup.has(String(s.id)));
-      if (k === "kayitlar") l = l.filter((s) => ogrGrup.has(String(s.grupId)));
+      const listeOturumlari = [...yedek!.oturumlar].map((o) => ({ tarih: o.slice(o.lastIndexOf("_") + 1), grupId: db.program.find((p) => p.id === o.slice(0, o.lastIndexOf("_")))!.grupId }));
+      const yedekOgr = new Set(db.kayitlar.filter((x) => !ogrIds.has(x.ogrenciId) && x.durum === "aktif" && listeOturumlari.some((o) => kayitGrubu(x, o.tarih) === o.grupId)).map((x) => x.ogrenciId));
+      if (k === "yedekAtamalari") l = l.filter((s) => s.ogretmenId === a.personel.id || db.program.some((p) => ogrGrup.has(p.grupId) && String(s.oturumId).startsWith(p.id + "_")));
+      if (k === "gruplar") l = l.filter((s) => ogrGrup.has(String(s.id)) || yedek!.gruplar.has(String(s.id)));
+      if (k === "kayitlar") l = l.filter((s) => ogrGrup.has(String(s.grupId)) || yedekOgr.has(String(s.ogrenciId)));
       // Kendi etüt randevusundaki başka grubun öğrencisi: yalnızca adı görünür (Bölüm 09)
       const etutOgr = k === "ogrenciler" ? new Set(db.randevular.filter((r) => r.ogretmenId === a.personel.id && r.durum !== "iptal").flatMap((r) => r.ogrenciIds)) : null;
-      if (etutOgr) l = l.filter((s) => ogrIds.has(String(s.id)) || etutOgr.has(String(s.id))).map((s) => (ogrIds.has(String(s.id)) ? s : { ...s, dogum: "", okul: "", okulSinifi: "", saglikNotu: "", veliIds: [], birincilVeliId: "", notlar: [] }));
+      if (etutOgr)
+        l = l
+          .filter((s) => ogrIds.has(String(s.id)) || etutOgr.has(String(s.id)) || yedekOgr.has(String(s.id)))
+          .map((s) => {
+            if (ogrIds.has(String(s.id))) return s;
+            const gizli = { ...s, dogum: "", okul: "", okulSinifi: "", saglikNotu: "", notlar: [] };
+            // Yedeğin ekranı devamsızlık bildirimini veliye bağlar; kimlik dışında bilgi gitmez
+            return yedekOgr.has(String(s.id)) ? gizli : { ...gizli, veliIds: [], birincilVeliId: "" };
+          });
       // Öğretmen yalnızca kendi etüt kayıtlarını görür; paket ücreti finans verisidir (Bölüm 09)
       if (k === "randevular" || k === "musaitlikler" || k === "paketler") l = l.filter((s) => s.ogretmenId === a.personel.id);
       // Devredilen grubun yoklama ve ödevi (öğrenci kimlikli veri) gitmez; öğretmenin kendi eski program satırı kalır (öğrenci verisi yok)
-      if (k === "yoklamalar" || k === "odevler") l = l.filter((s) => ogrGrup.has(String(s.grupId)));
-      if (k === "program") l = l.filter((s) => ogrGrup.has(String(s.grupId)) || s.ogretmenId === a.personel.id);
+      if (k === "yoklamalar") l = l.filter((s) => ogrGrup.has(String(s.grupId)) || yedek!.oturumlar.has(String(s.oturumId)));
+      if (k === "odevler") l = l.filter((s) => ogrGrup.has(String(s.grupId)));
+      if (k === "program") l = l.filter((s) => ogrGrup.has(String(s.grupId)) || s.ogretmenId === a.personel.id || yedek!.satirlar.has(String(s.id)));
       if (k === "iptaller") l = l.filter((s) => db.program.some((p) => ogrGrup.has(p.grupId) && String(s.oturumId).startsWith(p.id + "_")));
       // Veli izni (sağlık notu içerebilir) yalnızca kendi gruplarının öğrencileri için
-      if (k === "izinler") l = l.filter((s) => ogrIds.has(String(s.ogrenciId)));
+      if (k === "izinler") l = l.filter((s) => ogrIds.has(String(s.ogrenciId)) || yedekOgr.has(String(s.ogrenciId))).map((s) => (ogrIds.has(String(s.ogrenciId)) ? s : { ...s, not: "" }));
       if (k === "veliler")
         l = l
-          .filter((s) => db.ogrenciler.some((o) => ogrIds.has(o.id) && o.veliIds.includes(String(s.id))))
+          .filter((s) => db.ogrenciler.some((o) => (ogrIds.has(o.id) || yedekOgr.has(o.id)) && o.veliIds.includes(String(s.id))))
           .map((s) => ({ ...s, telefon: maskele(String(s.telefon)), eposta: "" }));
       if (k === "adaylar" || k === "duyurular" || k === "gonderimler" || k === "islemler" || k === "kvkk") l = [];
     }
@@ -248,6 +262,8 @@ export function okumaSuz(db: Db, a: Aktor, bugun: string = BUGUN): Db {
   // Personel ücret bilgisi yalnızca hak ediş yetkisi olanlara
   if (!yetki13 && !genel) sonuc.hakedisDurum = {};
   else if (!genel) sonuc.hakedisDurum = Object.fromEntries(Object.entries(db.hakedisDurum ?? {}).filter(([ak]) => db.personel.some((p) => p.id === hakedisAnahtari(ak)?.personelId && p.subeIds.some((x) => kap.has(x)))));
+  // Öğretmenin kendi dökümü sunucuda hesaplanır: etüt ücreti, gider ve başkasının kaydı gitmez (karar 2026-11-09)
+  if (ogretmen && db.moduller?.hakedis === true) sonuc.hakedisim = hakedisimOzeti(db, a.personel, bugun, db.moduller?.finans === true);
   if (!yetki13 && !genel && db.kurum) {
     const { etutDersUcreti: _e, ...kurum } = db.kurum;
     void _e;
@@ -264,7 +280,7 @@ const YAZMA: Record<Koleksiyon, string[]> = {
   subeler: ["01"], sezonlar: ["01"], dersler: ["01"], derslikler: ["01"], dersSaatleri: ["01"], gruplar: ["01"],
   personel: ["13", "02"], kullanicilar: ["02", "13"], girisler: [],
   veliler: ["04", "14", "02"], ogrenciler: ["04", "14"], kayitlar: ["04", "14"],
-  program: ["06"], tatiller: ["06"], iptaller: ["06"], yoklamalar: ["07"], izinler: ["07"],
+  program: ["06"], tatiller: ["06"], iptaller: ["06"], yedekAtamalari: ["06"], yoklamalar: ["07"], izinler: ["07"],
   adaylar: ["03", "04", "14"], odevler: ["08"], musaitlikler: ["09"], randevular: ["09"], paketler: ["09", "04"],
   olaylar: ["10"], gonderimler: ["*"], duyurular: ["10"],
   taksitler: ["05", "04", "09"], tahsilatlar: ["05"], giderler: ["05", "13"], virmanlar: ["05"], iadeler: ["05"],
@@ -274,7 +290,7 @@ const TEKIL_YAZMA: Record<Tekil, string[]> = {
   kurum: ["01"], moduller: ["01"], fiyatListesi: ["01"], rolYetkileri: ["02"], ayarlar: ["10", "14"], hakedisDurum: ["13"], otomasyon: [],
 };
 /** Silinebilen koleksiyonlar (diğerleri yalnızca pasife alınır / iptal edilir) */
-const SILINEBILIR = new Set<Koleksiyon>(["musaitlikler", "odevler", "tatiller", "program", "iptaller", "derslikler", "dersSaatleri"]);
+const SILINEBILIR = new Set<Koleksiyon>(["musaitlikler", "odevler", "tatiller", "program", "iptaller", "yedekAtamalari", "derslikler", "dersSaatleri"]);
 /** Yalnızca genel yöneticinin değiştirebildiği kurum geneli tanımlar */
 const GENEL_TANIM = new Set<Koleksiyon>(["subeler", "sezonlar", "dersler", "olaylar"]);
 
@@ -376,7 +392,7 @@ export function yazmaDenetle(onceki: Db, sonrakiDb: Db, d: Degisiklik, a: Aktor,
           break;
         case "yoklamalar":
           if (ogrGrup) {
-            if (!ogrGrup.has(String(s.grupId))) hata("Yalnızca kendi gruplarınızın yoklamasını alabilirsiniz.");
+            if (!ogrGrup.has(String(s.grupId)) && oturumYedegi(onceki, String(s.oturumId))?.ogretmenId !== a.personel.id) hata("Yalnızca kendi gruplarınızın yoklamasını alabilirsiniz.");
           }
           // Ayrıntılı kurallar: yoklamaDenetle() (Bölüm 07)
           break;
@@ -497,6 +513,13 @@ export function programDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
   const programSil = K.program?.sil ?? [];
   const tatilSil = K.tatiller?.sil ?? [];
   const iptalSil = K.iptaller?.sil ?? [];
+  // Oturum bazlı yedek (karar 2026-11-09): atayan ve zaman sunucudan; veliye bildirim yok
+  for (const id of K.yedekAtamalari?.sil ?? []) reddet(yedekKaldirmaEngeli(id, onceki, zaman.slice(0, 10), a.kullanici.rol));
+  for (const y of (K.yedekAtamalari?.yaz ?? []) as unknown as YedekAtama[]) {
+    reddet(yedekAtamaEngeli(y, sonraki, zaman.slice(0, 10), a.kullanici.rol));
+    y.atayan = `${a.personel.ad} ${a.personel.soyad}`;
+    y.zaman = zaman;
+  }
   if (!programYaz.length && !tatilYaz.length && !iptalYaz.length && !programSil.length && !tatilSil.length && !iptalSil.length) return;
   if (a.kullanici.rol === "ogretmen") reddet("Ders programını yalnızca yönetim değiştirebilir.");
   const bugun = zaman.slice(0, 10);
@@ -630,7 +653,7 @@ export function yoklamaDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: Ak
   for (const y of (K.yoklamalar?.yaz ?? []) as unknown as Yoklama[]) {
     const eski = onceki.yoklamalar[y.oturumId];
     reddet(yoklamaYazmaEngeli(y, eski, sonraki, baglam));
-    y.ogretmenId = sonraki.program.find((p) => p.id === y.satirId)!.ogretmenId; // hak ediş buna dayanır (Bölüm 13)
+    y.ogretmenId = oturumYedegi(sonraki, y.oturumId)?.ogretmenId ?? sonraki.program.find((p) => p.id === y.satirId)!.ogretmenId; // hak ediş buna dayanır (Bölüm 13); yedek varsa ders yedeğe yazılır
     y.konu = y.konu.trim();
     y.kayitZamani = zaman;
     if (eski) y.durumlar = { ...eski.durumlar, ...y.durumlar };
@@ -1079,6 +1102,7 @@ export function personelDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: A
   const bugun = zaman.slice(0, 10);
   const rol = a.kullanici.rol;
   const genel = rol === "genel-yonetici";
+  const ad = `${a.personel.ad} ${a.personel.soyad}`;
   const yetki13 = yetki(onceki, a, "13");
   const goren: Goren = { rol, personelId: a.personel.id, yetki13 };
   const kap = new Set(kapsam(onceki, a.kullanici));
@@ -1124,29 +1148,84 @@ export function personelDenetle(onceki: Db, sonraki: Db, temiz: Degisiklik, a: A
   }
 
   // Hak ediş durumu: kapsam dışı satırlar istemciye gitmez, burada korunur
+  const eskiDurum = onceki.hakedisDurum ?? {};
+  let sonDurum: Record<string, HakedisDegeri> | null = null;
   if ("hakedisDurum" in tekil) {
     const gelen = tekil.hakedisDurum;
     if (!gelen || typeof gelen !== "object" || Array.isArray(gelen)) throw new YetkiHatasi("Hak ediş durumu geçersiz.");
-    const yeni = gelen as Record<string, HakedisDurumu>;
-    const eskiDurum = onceki.hakedisDurum ?? {};
+    const yeni = gelen as Record<string, HakedisDegeri>;
     const gorunur = (k: string) => genel || onceki.personel.some((p) => p.id === hakedisAnahtari(k)?.personelId && p.subeIds.some((x) => kap.has(x)));
     for (const k of Object.keys(eskiDurum)) if (!(k in yeni) && gorunur(k)) reddet("Hak ediş durumu geri alınamaz.");
+    const durumlar: Record<string, HakedisDegeri> = { ...eskiDurum };
     for (const [k, deger] of Object.entries(yeni)) {
-      if (deger === eskiDurum[k]) continue;
+      const eskiK = hakedisKaydi(eskiDurum[k]);
+      const gelenK = hakedisKaydi(deger);
       const anahtar = hakedisAnahtari(k);
       const p = onceki.personel.find((x) => x.id === anahtar?.personelId);
-      reddet(hakedisDurumEngeli(k, deger, eskiDurum[k], { ...moduller, rol, bugun, tamKapsam: tamKapsam(p), personel: onceki.personel }));
-      if (deger !== "odendi") continue;
-      // Ödeme finansa hesaplanan şube dağılımıyla düşer; tutar istemciden alınmaz
-      const dagilim = hakEdisHesabi(onceki, p!, anahtar!.ay).dagilim;
+      const baglam = { ...moduller, rol, bugun, tamKapsam: tamKapsam(p), personel: onceki.personel };
+      let kayit: HakedisKaydi = eskiK;
+      const duzeltmeDegisti = gelenK.duzeltme?.tutar !== eskiK.duzeltme?.tutar || gelenK.duzeltme?.neden?.trim() !== eskiK.duzeltme?.neden;
+      if (duzeltmeDegisti) {
+        reddet(hakedisDuzeltmeEngeli(k, gelenK.duzeltme, eskiK, baglam));
+        const { duzeltme: _d, ...kalan } = eskiK;
+        void _d;
+        kayit = gelenK.duzeltme ? { ...kalan, duzeltme: { tutar: gelenK.duzeltme.tutar, neden: gelenK.duzeltme.neden.trim(), kullanici: ad, zaman } } : kalan;
+        durumlar[k] = kayit;
+        const islemler = (K.islemler ??= { yaz: [], sil: [] });
+        islemler.yaz.push({ id: `ik-hd-${k}-${zaman}`.replace(/[^A-Za-z0-9_\-:.]/g, "-").slice(0, 80), zaman, kullanici: ad, islem: "Hak ediş düzeltmesi", detay: `${p!.ad} ${p!.soyad} — ${anahtar!.ay}: ${gelenK.duzeltme ? `${gelenK.duzeltme.tutar} TL · ${gelenK.duzeltme.neden.trim()}` : "kaldırıldı"}`, subeId: p!.anaSubeId });
+      }
+      if (gelenK.durum === eskiK.durum) continue;
+      reddet(hakedisDurumEngeli(k, gelenK.durum, eskiK.durum, baglam));
+      if (gelenK.durum !== "odendi") {
+        durumlar[k] = { ...kayit, durum: gelenK.durum };
+        continue;
+      }
+      // Ödeme finansa hesaplanan şube dağılımıyla düşer; tutar istemciden alınmaz, ödeme anında dondurulur
+      const h = hakEdisHesabi({ ...onceki, hakedisDurum: durumlar }, p!, anahtar!.ay);
       const aciklama = odemeAciklamasi(p!, anahtar!.ay);
       const giderler = yeniGiderler.filter((g) => g.kategori === MAAS_KATEGORISI && g.aciklama === aciklama);
-      const uyumlu = giderler.length === dagilim.length && dagilim.every((x) => giderler.some((g) => g.subeId === x.subeId && kurusa(g.tutar) === kurusa(x.tutar)));
+      const uyumlu = giderler.length === h.dagilim.length && h.dagilim.every((x) => giderler.some((g) => g.subeId === x.subeId && kurusa(g.tutar) === kurusa(x.tutar)));
       if (!uyumlu) reddet("Ödeme tutarı hesaplanan hak edişle uyuşmuyor; sayfayı yenileyip tekrar deneyin.");
       for (const g of giderler) g.tarih = bugun;
+      durumlar[k] = { ...kayit, durum: "odendi", donmus: donmusOlustur(h, giderler.map((g) => g.id)) };
+      for (const f of h.farkKaynak) durumlar[`${f.ay}_${p!.id}`] = farkAktar(durumlar[`${f.ay}_${p!.id}`], f.tutar);
     }
-    temiz.tekil.hakedisDurum = { ...eskiDurum, ...yeni };
+    sonDurum = durumlar;
   }
+
+  // Ödeme gideri iptal edilince hak ediş "onaylandı"ya döner, dondurulan tutar temizlenir; diğer şubelerin gideri birlikte iptal olur
+  const giderYaz = (K.giderler?.yaz ?? []) as unknown as Gider[];
+  const islenen = new Set<string>();
+  for (const g of [...giderYaz]) {
+    const eski = onceki.giderler.find((x) => x.id === g.id);
+    if (!eski || eski.iptal || !g.iptal || eski.kategori !== MAAS_KATEGORISI) continue;
+    const kaynak = sonDurum ?? eskiDurum;
+    const bulunan = Object.entries(kaynak).find(([k, v]) => {
+      const r = hakedisKaydi(v);
+      const an = hakedisAnahtari(k);
+      const p = onceki.personel.find((x) => x.id === an?.personelId);
+      return r.durum === "odendi" && !!p && !!an && (r.donmus?.giderIds.includes(g.id) || eski.aciklama === odemeAciklamasi(p, an.ay));
+    });
+    if (!bulunan || islenen.has(bulunan[0])) continue;
+    const [k, v] = bulunan;
+    islenen.add(k);
+    const r = hakedisKaydi(v);
+    const an = hakedisAnahtari(k)!;
+    const p = onceki.personel.find((x) => x.id === an.personelId)!;
+    const aciklama = odemeAciklamasi(p, an.ay);
+    for (const s of onceki.giderler) {
+      if (s.id === g.id || s.iptal || !(r.donmus?.giderIds.includes(s.id) || s.aciklama === aciklama) || giderYaz.some((x) => x.id === s.id)) continue;
+      if (!genel && !kap.has(s.subeId)) reddet("Bu ödemenin başka şubedeki gideri de var; iptali genel yönetici yapar.");
+      giderYaz.push({ ...s, iptal: g.iptal });
+    }
+    const durumlar = { ...kaynak };
+    for (const f of r.donmus?.farkKaynak ?? []) durumlar[`${f.ay}_${p.id}`] = farkAktar(durumlar[`${f.ay}_${p.id}`], -f.tutar);
+    const { donmus: _m, ...kalan } = r;
+    void _m;
+    durumlar[k] = { ...kalan, durum: "onaylandi" };
+    sonDurum = durumlar;
+  }
+  if (sonDurum) temiz.tekil.hakedisDurum = sonDurum;
 }
 
 /* =========================== Bölüm 04 öğrenci, veli ve kayıt =========================== */
@@ -1454,6 +1533,7 @@ export function veliVerisi(db: Db, veliId: string): Db {
     kayitlar: kayitlar.map((k) => ({ id: k.id, ogrenciId: k.ogrenciId, sezonId: k.sezonId, subeId: k.subeId, grupId: k.grupId, sozlesmeNo: "", durum: k.durum, tarih: k.tarih, grupGecmisi: [], ekHizmetler: [], kvkkOnay: null, listeFiyati: 0, indirimler: [], net: 0 })),
     gruplar: db.gruplar.filter((g) => grupIds.has(g.id)),
     program,
+    yedekAtamalari: [],
     tatiller: db.tatiller.filter((t) => !t.subeId || subeIds.has(t.subeId)),
     iptaller: db.iptaller.filter((i) => program.some((p) => i.oturumId.startsWith(p.id + "_"))),
     yoklamalar: Object.fromEntries(

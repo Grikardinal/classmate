@@ -13,7 +13,9 @@ export function GunlukDersler({ onAc }: { onAc: (id: string, tarih: string) => v
   const d = useDb();
   const { grupGorunur, ogretmenMi, personel, ad } = useOturum();
   const [tarih, setTarih] = React.useState(BUGUN);
-  const liste = oturumlar(d, tarih).filter((o) => grupGorunur(o.satir.grupId) && (!ogretmenMi || o.satir.ogretmenId === personel.id));
+  // Öğretmen kendi dersleri + yedek olduğu oturumlar; yedeğe devrettiği oturum listesinden çıkar
+  const benim = React.useCallback((o: Oturum) => (ogretmenMi ? o.ogretmenId === personel.id && (!!o.yedek || grupGorunur(o.satir.grupId)) : grupGorunur(o.satir.grupId)), [ogretmenMi, personel.id, grupGorunur]);
+  const liste = oturumlar(d, tarih).filter(benim);
   const durumu = React.useCallback((o: Oturum) => oturumDurumu(o, !!d.yoklamalar[o.id], BUGUN, SIMDI, d.ayarlar.yoklamaHatirlatmaDk), [d]);
   const sayac = (s: OturumDurumu) => liste.filter((o) => durumu(o) === s).length;
   const gecikenler = liste.filter((o) => durumu(o) === "gecikti");
@@ -23,13 +25,13 @@ export function GunlukDersler({ onAc }: { onAc: (id: string, tarih: string) => v
     const l: Oturum[] = [];
     for (let i = 1; i <= 7; i++) {
       const t = tarihEkle(BUGUN, -i);
-      l.push(...oturumlar(d, t).filter((o) => grupGorunur(o.satir.grupId) && (!ogretmenMi || o.satir.ogretmenId === personel.id) && durumu(o) === "gecikti"));
+      l.push(...oturumlar(d, t).filter((o) => benim(o) && durumu(o) === "gecikti"));
     }
     return l;
-  }, [d, durumu, grupGorunur, ogretmenMi, personel.id]);
+  }, [d, durumu, benim]);
 
   const hatirlat = () => {
-    const ogretmenler = [...new Set(gecikenler.map((o) => o.satir.ogretmenId))];
+    const ogretmenler = [...new Set(gecikenler.map((o) => o.ogretmenId))];
     guncelle((x) => islemYaz(x, ad, "Yoklama hatırlatma", `${ogretmenler.map((p) => personelAdi(x, p)).join(", ")} için hatırlatma istendi`));
     // Personele bildirim kanalı yok: yalnızca işlem kaydına düşer (README · bilinen sınırlar)
     toast(`${ogretmenler.length} öğretmen için hatırlatma işlem kaydına yazıldı.`);
@@ -105,7 +107,7 @@ export function GunlukDersler({ onAc }: { onAc: (id: string, tarih: string) => v
                   {s === "iptal" && <Badge variant="secondary">{o.tatil ? o.tatil.ad : "İptal"}</Badge>}
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
-                  <span>{personelAdi(d, o.satir.ogretmenId)}</span>
+                  <span>{personelAdi(d, o.ogretmenId)}{o.yedek ? " (yedek)" : ""}</span>
                   <span>{y ? <><b className={gelmeyen ? "text-danger" : "text-success"}>{gelmeyen} yok</b> / {ogrSayi}</> : `${ogrSayi} öğrenci`}</span>
                 </div>
                 {y?.konu && <p className="mt-2 truncate text-xs">Konu: {y.konu}</p>}

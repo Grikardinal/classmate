@@ -5,7 +5,7 @@
  * Hata dönen fonksiyonlar Türkçe mesaj, sorun yoksa null döndürür.
  * Testler: kurallar.test.ts, sunucu.test.ts
  */
-import type { Db, Personel, ProgramSatiri, Randevu, Rol, Yoklama } from "../../data/model";
+import type { Db, DonmusHakedis, HakedisDegeri, HakedisDuzeltme, HakedisKaydi, HakedisimSatiri, Personel, ProgramSatiri, Randevu, Rol, Yoklama } from "../../data/model";
 import { epostaGecerli, hakEdis, telefonNormalize } from "../../lib/kurallar";
 import { ROL_SEVIYESI, epostaNormalize, rolAtamaEngeli, rolGecerli, type Hata } from "../02-kullanicilar/kurallar";
 import { adTemizle } from "../03-on-kayit/kurallar";
@@ -14,13 +14,14 @@ import { tarihGecerli } from "../06-ders-programi/kurallar";
 
 export type Avans = Db["avanslar"][number];
 export type HakedisDurumu = "onaylandi" | "odendi";
+export type { HakedisKaydi };
 
 export const AD_UZUNLUK = 60;
 export const EPOSTA_UZUNLUK = 120;
 export const ACIKLAMA_UZUNLUK = 200;
 export const UCRET_TIPLERI: Personel["ucretTipi"][] = ["sabit", "ders", "karma"];
 /** Maaş / hak ediş tutarı içeren işlem kayıtları: hak ediş yetkisi olmayana gitmez */
-const HAKEDIS_ISLEMLERI = new Set(["Hak ediş onayı", "Hak ediş ödemesi", "Avans", "Etüt ücreti"]);
+const HAKEDIS_ISLEMLERI = new Set(["Hak ediş onayı", "Hak ediş ödemesi", "Hak ediş düzeltmesi", "Avans", "Etüt ücreti"]);
 export const hakedisIslemiMi = (islem: string) => HAKEDIS_ISLEMLERI.has(islem);
 export const MAAS_KATEGORISI = "Maaş";
 export const MASKELI_MAAS_ACIKLAMASI = "Personel ödemesi";
@@ -64,7 +65,7 @@ export const acikProgram = (program: ProgramSatiri[], personelId: string, bugun:
 export const gelecekRandevular = (randevular: Randevu[], personelId: string, bugun: string) =>
   randevular.filter((r) => r.ogretmenId === personelId && r.durum === "planli" && r.tarih >= bugun);
 
-type AtamaVerisi = Pick<Db, "program" | "randevular" | "gruplar">;
+type AtamaVerisi = Pick<Db, "program" | "randevular" | "gruplar"> & { yedekAtamalari?: Db["yedekAtamalari"] };
 
 /** Pasife alma: açık dersi veya planlı etüdü olan öğretmen önce devredilmeli */
 export function pasifeAlmaEngeli(personelId: string, d: AtamaVerisi, bugun: string): Hata {
@@ -72,6 +73,7 @@ export function pasifeAlmaEngeli(personelId: string, d: AtamaVerisi, bugun: stri
   if (n) return `Bu öğretmenin programda ${n} dersi var; pasife almadan önce dersleri başka öğretmene aktarın (Bölüm 06).`;
   const r = gelecekRandevular(d.randevular, personelId, bugun).length;
   if (r) return `Bu öğretmenin ${r} planlı etüt randevusu var; önce randevuları iptal edin veya taşıyın (Bölüm 09).`;
+  if ((d.yedekAtamalari ?? []).some((y) => y.ogretmenId === personelId && y.oturumId.slice(y.oturumId.lastIndexOf("_") + 1) >= bugun)) return "Bu öğretmenin yaklaşan yedek görevi var; önce yedeği değiştirin (Bölüm 06).";
   return null;
 }
 
@@ -171,6 +173,7 @@ export function personelYazmaEngeli(s: Personel, eski: Personel | undefined, d: 
 export function personelSilmeEngeli(id: string, d: AtamaVerisi & Pick<Db, "yoklamalar" | "musaitlikler" | "avanslar" | "hakedisDurum" | "odevler">): Hata {
   const bagli =
     d.program.some((p) => p.ogretmenId === id) ||
+    (d.yedekAtamalari ?? []).some((y) => y.ogretmenId === id) ||
     Object.values(d.yoklamalar).some((y) => y.ogretmenId === id) ||
     d.randevular.some((r) => r.ogretmenId === id) ||
     d.musaitlikler.some((m) => m.ogretmenId === id) ||
@@ -214,21 +217,41 @@ export function etutUcretiEngeli(u: unknown): Hata {
   return tutarGecerli(u, { sifirOlur: true }) ? null : "Etüt ders ücreti sıfır veya pozitif, kuruş hassasiyetinde olmalı.";
 }
 
-type HesapVerisi = Pick<Db, "yoklamalar" | "randevular" | "gruplar" | "iptaller" | "tatiller" | "avanslar" | "giderler"> & { kurum?: { etutDersUcreti?: number } };
+type HesapVerisi = Pick<Db, "yoklamalar" | "randevular" | "gruplar" | "iptaller" | "tatiller" | "avanslar" | "giderler"> & { kurum?: { etutDersUcreti?: number }; hakedisDurum?: Db["hakedisDurum"] };
 
 export type SubeSatiri = { s: string; n: number; e: number };
 export type HakEdisHesabi = {
   subeBazinda: SubeSatiri[];
   dersSayisi: number;
   etutSayisi: number;
+  birimDers: number;
+  birimEtut: number;
+  /** Ayın kendi hak edişi (elle düzeltme dahil; önceki ay farkı hariç) */
   tutar: number;
+  duzeltme: number;
+  oncekiFark: number;
+  farkKaynak: { ay: string; tutar: number }[];
   avans: number;
+  devredenAvans: number;
+  /** Bu ayın hak edişini aşıp sonraki aya taşınan avans */
+  fazlaAvans: number;
   odenecek: number;
   /** Şube → finansa yazılacak gider (avanslar düşülmüş) */
   dagilim: { subeId: string; tutar: number }[];
+  /** Ödenmiş ayda dondurulan tutarlar gösteriliyor */
+  donduruldu: boolean;
 };
 
-/** "İşlenen ders": yoklaması alınmış, iptal veya tatile denk gelmeyen kendi oturumu. Oturum kimliği tekil olduğundan bir ders iki kişiye sayılmaz. */
+/** Eski kayıt düz metin, yeni kayıt nesne: tek biçime çevirir */
+export function hakedisKaydi(v: HakedisDegeri | undefined): HakedisKaydi {
+  if (!v) return {};
+  return typeof v === "string" ? { durum: v } : v;
+}
+
+const ayIleri = (ay: string) => ayGeri(ay, -1);
+const kaydi = (d: HesapVerisi, personelId: string, ay: string) => hakedisKaydi(d.hakedisDurum?.[`${ay}_${personelId}`]);
+
+/** "İşlenen ders": yoklaması alınmış, iptal veya tatile denk gelmeyen kendi oturumu. Oturum kimliği tekil olduğundan bir ders iki kişiye sayılmaz. Yedek varsa yoklamadaki öğretmen yedektir. */
 export function islenenOturumlar(d: Pick<HesapVerisi, "yoklamalar" | "gruplar" | "iptaller" | "tatiller">, personelId: string, ay: string): Yoklama[] {
   return Object.values(d.yoklamalar).filter((y) => {
     if (y.ogretmenId !== personelId || !y.tarih.startsWith(ay)) return false;
@@ -243,49 +266,146 @@ export function gecerliAvanslar(d: Pick<HesapVerisi, "avanslar" | "giderler">, p
   return d.avanslar.filter((a) => a.personelId === personelId && a.tarih.startsWith(ay) && !d.giderler.find((g) => g.id === a.giderId)?.iptal);
 }
 
-export function hakEdisHesabi(d: HesapVerisi, p: Personel, ay: string): HakEdisHesabi {
+function bazHesap(d: HesapVerisi, p: Personel, ay: string) {
   const oturumlar = islenenOturumlar(d, p.id, ay);
   const etutler = d.randevular.filter((r) => r.ogretmenId === p.id && r.tarih.startsWith(ay) && etutSayilir(r));
-  const etutUcreti = d.kurum?.etutDersUcreti ?? 0;
+  const birimEtut = d.kurum?.etutDersUcreti ?? 0;
+  const birimDers = p.ucretTipi === "sabit" ? 0 : p.dersUcreti;
   const sayac = new Map<string, SubeSatiri>([[p.anaSubeId, { s: p.anaSubeId, n: 0, e: 0 }]]);
   const satir = (s: string) => sayac.get(s) ?? sayac.set(s, { s, n: 0, e: 0 }).get(s)!;
   for (const y of oturumlar) satir(d.gruplar.find((g) => g.id === y.grupId)?.subeId ?? p.anaSubeId).n++;
   for (const r of etutler) satir(r.subeId).e++;
-
   // Tutarlar kuruş tamsayısıyla: şube payları toplama tam eşittir
-  const dersUcreti = p.ucretTipi === "sabit" ? 0 : p.dersUcreti;
   const paylar = new Map<string, number>();
-  for (const x of sayac.values()) paylar.set(x.s, kurusa(hakEdis("ders", x.n, dersUcreti, 0)) + kurusa(x.e * etutUcreti));
+  for (const x of sayac.values()) paylar.set(x.s, kurusa(hakEdis("ders", x.n, birimDers, 0)) + kurusa(x.e * birimEtut));
   if (p.ucretTipi !== "ders") paylar.set(p.anaSubeId, paylar.get(p.anaSubeId)! + kurusa(p.sabitUcret));
-  const tutarK = [...paylar.values()].reduce((t, x) => t + x, 0);
+  return { sayac, paylar, dersSayisi: oturumlar.length, etutSayisi: etutler.length, birimDers, birimEtut };
+}
 
-  // Avans gideri zaten kendi şubesine yazıldı: önce o şubenin payından düşülür, artarsa diğerlerinden
+/** Ödenmiş ayın henüz taşınmamış farkı (kuruş). Dondurulmamış eski ödenmiş satırda fark hesaplanmaz; ücret değişimi fark doğurmaz (ödeme anındaki birim). */
+function ayFarkiK(d: HesapVerisi, p: Personel, ay: string): number {
+  const { durum, donmus: m } = kaydi(d, p.id, ay);
+  if (durum !== "odendi" || !m) return 0;
+  const b = bazHesap(d, p, ay);
+  return kurusa((b.dersSayisi - m.dersSayisi) * m.birimDers) + kurusa((b.etutSayisi - m.etutSayisi) * m.birimEtut) - kurusa(m.aktarilan);
+}
+
+/** Bu aya girecek farklar: kaynağı ödenmiş, ondan sonraki ilk ödenmemiş ay bu ay olanlar. Fark tek bir aya girer. */
+function oncekiFarklar(d: HesapVerisi, p: Personel, ay: string): { ay: string; tutar: number }[] {
+  const sonuc: { ay: string; tutar: number }[] = [];
+  for (const k of Object.keys(d.hakedisDurum ?? {})) {
+    const an = hakedisAnahtari(k);
+    if (!an || an.personelId !== p.id || an.ay >= ay) continue;
+    let sonraki = ayIleri(an.ay);
+    while (kaydi(d, p.id, sonraki).durum === "odendi") sonraki = ayIleri(sonraki);
+    if (sonraki !== ay) continue;
+    const f = ayFarkiK(d, p, an.ay);
+    if (f) sonuc.push({ ay: an.ay, tutar: f / 100 });
+  }
+  return sonuc.sort((a, b) => a.ay.localeCompare(b.ay));
+}
+
+function canliHesap(d: HesapVerisi, p: Personel, ay: string, devirK: number): HakEdisHesabi {
+  const b = bazHesap(d, p, ay);
+  const paylar = new Map(b.paylar);
+  const ana = p.anaSubeId;
+  const bazK = [...paylar.values()].reduce((t, x) => t + x, 0);
+  const duzeltmeK = kurusa(kaydi(d, p.id, ay).duzeltme?.tutar ?? 0);
+  const farkKaynak = oncekiFarklar(d, p, ay);
+  const farkK = farkKaynak.reduce((t, f) => t + kurusa(f.tutar), 0);
+  // Pozitif düzeltme ve fark ana şubeye eklenir; negatifler kesinti gibi işlenir
+  for (const x of [duzeltmeK, farkK]) if (x > 0) paylar.set(ana, paylar.get(ana)! + x);
   const avanslar = gecerliAvanslar(d, p.id, ay);
-  for (const a of avanslar) {
-    let kalan = kurusa(a.tutar);
-    for (const s of [a.subeId, ...paylar.keys()]) {
+  // Avans gideri zaten kendi şubesine yazıldı: önce o şubenin payından düşülür, artarsa diğerlerinden
+  const kesintiler = [
+    ...avanslar.map((a) => ({ s: a.subeId, k: kurusa(a.tutar) })),
+    { s: ana, k: devirK },
+    { s: ana, k: Math.max(0, -duzeltmeK) },
+    { s: ana, k: Math.max(0, -farkK) },
+  ];
+  let fazlaK = 0;
+  for (const x of kesintiler) {
+    let kalan = x.k;
+    for (const s of [x.s, ...paylar.keys()]) {
       const pay = paylar.get(s) ?? 0;
       const dus = Math.min(pay, kalan);
       if (dus > 0) paylar.set(s, pay - dus);
       kalan -= dus;
     }
+    fazlaK += kalan;
   }
-  const avansK = avanslar.reduce((t, a) => t + kurusa(a.tutar), 0);
+  const dagilim = [...paylar].filter(([, k]) => k > 0).map(([subeId, k]) => ({ subeId, tutar: k / 100 }));
   return {
-    subeBazinda: [...sayac.values()].filter((x) => x.n > 0 || x.e > 0 || x.s === p.anaSubeId),
-    dersSayisi: oturumlar.length,
-    etutSayisi: etutler.length,
-    tutar: tutarK / 100,
-    avans: avansK / 100,
-    odenecek: (tutarK - avansK) / 100,
-    dagilim: [...paylar].filter(([, k]) => k > 0).map(([subeId, k]) => ({ subeId, tutar: k / 100 })),
+    subeBazinda: [...b.sayac.values()].filter((x) => x.n > 0 || x.e > 0 || x.s === ana),
+    dersSayisi: b.dersSayisi,
+    etutSayisi: b.etutSayisi,
+    birimDers: b.birimDers,
+    birimEtut: b.birimEtut,
+    tutar: (bazK + duzeltmeK) / 100,
+    duzeltme: duzeltmeK / 100,
+    oncekiFark: farkK / 100,
+    farkKaynak,
+    avans: avanslar.reduce((t, a) => t + kurusa(a.tutar), 0) / 100,
+    devredenAvans: devirK / 100,
+    fazlaAvans: fazlaK / 100,
+    odenecek: dagilim.reduce((t, x) => t + kurusa(x.tutar), 0) / 100,
+    dagilim,
+    donduruldu: false,
   };
 }
 
-/** Pasif öğretmen ve işe başlamamış öğretmen için, o ayda dersi yoksa boş satır (ve sabit maaş) çıkmaz */
-export function hakEdisteGorunur(p: Pick<Personel, "aktif" | "baslangic">, ay: string, h: Pick<HakEdisHesabi, "dersSayisi" | "etutSayisi">, durum?: HakedisDurumu): boolean {
-  if (h.dersSayisi > 0 || h.etutSayisi > 0 || durum) return true;
+/** Bu aya devreden fazla avans (kuruş): geçmiş aylar sırayla katlanır; dondurulmuş ayda dondurulan devir esas alınır */
+function devredenAvansK(d: HesapVerisi, p: Personel, ay: string): number {
+  const durumAylari = Object.keys(d.hakedisDurum ?? {}).map(hakedisAnahtari).filter((k) => k?.personelId === p.id).map((k) => k!.ay);
+  const avansAylari = d.avanslar.filter((a) => a.personelId === p.id).map((a) => a.tarih.slice(0, 7));
+  const ilgili = new Set([...durumAylari, ...avansAylari].filter((a) => a < ay));
+  if (!ilgili.size) return 0;
+  let kalan = 0;
+  for (let a = [...ilgili].sort()[0]; a < ay; a = ayIleri(a)) {
+    const k = kaydi(d, p.id, a);
+    if (k.durum === "odendi" && k.donmus) kalan = kurusa(k.donmus.fazlaAvans);
+    else if (kalan > 0 || ilgili.has(a)) kalan = kurusa(canliHesap(d, p, a, kalan).fazlaAvans);
+  }
+  return kalan;
+}
+
+export function hakEdisHesabi(d: HesapVerisi, p: Personel, ay: string): HakEdisHesabi {
+  const k = kaydi(d, p.id, ay);
+  const canli = canliHesap(d, p, ay, k.durum === "odendi" && k.donmus ? 0 : devredenAvansK(d, p, ay));
+  if (k.durum !== "odendi" || !k.donmus) return canli;
+  const m = k.donmus;
+  return { ...canli, dersSayisi: m.dersSayisi, etutSayisi: m.etutSayisi, birimDers: m.birimDers, birimEtut: m.birimEtut, tutar: m.tutar, duzeltme: k.duzeltme?.tutar ?? 0, oncekiFark: m.oncekiFark, farkKaynak: m.farkKaynak, avans: m.avans, devredenAvans: m.devredenAvans, fazlaAvans: m.fazlaAvans, odenecek: m.odenecek, dagilim: [], donduruldu: true };
+}
+
+/** Sunucu ödeme anında yazar */
+export function donmusOlustur(h: HakEdisHesabi, giderIds: string[]): DonmusHakedis {
+  return { tutar: h.tutar, dersSayisi: h.dersSayisi, etutSayisi: h.etutSayisi, birimDers: h.birimDers, birimEtut: h.birimEtut, avans: h.avans, devredenAvans: h.devredenAvans, fazlaAvans: h.fazlaAvans, oncekiFark: h.oncekiFark, odenecek: h.odenecek, farkKaynak: h.farkKaynak, aktarilan: 0, giderIds };
+}
+
+/** Kaynak ayın taşınan farkını işler (ödemede +, ödeme iptalinde −); fark iki kez sayılmaz */
+export function farkAktar(v: HakedisDegeri | undefined, tutar: number): HakedisDegeri {
+  const r = hakedisKaydi(v);
+  return r.donmus ? { ...r, donmus: { ...r.donmus, aktarilan: (kurusa(r.donmus.aktarilan) + kurusa(tutar)) / 100 } } : r;
+}
+
+/** Pasif öğretmen ve işe başlamamış öğretmen için, o ayda hareketi yoksa boş satır (ve sabit maaş) çıkmaz; kalan devir görünür kalır */
+export function hakEdisteGorunur(p: Pick<Personel, "aktif" | "baslangic">, ay: string, h: Pick<HakEdisHesabi, "dersSayisi" | "etutSayisi"> & Partial<HakEdisHesabi>, durum?: HakedisDurumu): boolean {
+  if (h.dersSayisi > 0 || h.etutSayisi > 0 || durum || h.devredenAvans || h.oncekiFark || h.duzeltme || h.avans) return true;
   return p.aktif && p.baslangic.slice(0, 7) <= ay;
+}
+
+/** Öğretmenin kendi dökümü. Finans kapalıyken yalnızca ders sayıları gider. */
+export function hakedisimOzeti(d: HesapVerisi, p: Personel, bugun: string, finansAcik: boolean): HakedisimSatiri[] {
+  const aylar = hakedisAylari({ yoklamalar: d.yoklamalar, randevular: d.randevular, hakedisDurum: d.hakedisDurum ?? {} }, bugun);
+  const sonuc: HakedisimSatiri[] = [];
+  for (const ay of aylar) {
+    const h = hakEdisHesabi(d, p, ay);
+    const k = kaydi(d, p.id, ay);
+    if (!hakEdisteGorunur(p, ay, h, k.durum)) continue;
+    const para = (n: number) => (finansAcik ? n : 0);
+    sonuc.push({ ay, durum: k.durum ?? "bekliyor", dersSayisi: h.dersSayisi, etutSayisi: h.etutSayisi, tutar: para(h.tutar), avans: para(h.avans), devredenAvans: para(h.devredenAvans), fazlaAvans: para(h.fazlaAvans), oncekiFark: para(h.oncekiFark), duzeltme: para(h.duzeltme), duzeltmeNeden: finansAcik ? (k.duzeltme?.neden ?? "") : "", odenecek: para(h.odenecek) });
+  }
+  return sonuc;
 }
 
 export const odemeAciklamasi = (p: Pick<Personel, "ad" | "soyad">, ay: string) => `${p.ad} ${p.soyad} ${ay} hak edişi`;
@@ -295,6 +415,22 @@ export const odemeAciklamasi = (p: Pick<Personel, "ad" | "soyad">, ay: string) =
 export function hakedisAnahtari(k: string): { ay: string; personelId: string } | null {
   const m = /^(\d{4}-\d{2})_(.+)$/.exec(k);
   return m && ayGecerli(m[1]) ? { ay: m[1], personelId: m[2] } : null;
+}
+
+/** Elle düzeltme (karar 2026-11-09): yönetici, tam kapsamda; ödenmiş ayda yapılamaz; işaretli tutar */
+export function hakedisDuzeltmeEngeli(anahtar: string, yeni: Pick<HakedisDuzeltme, "tutar" | "neden"> | undefined, eski: HakedisKaydi, b: DurumBaglami): Hata {
+  const k = hakedisAnahtari(anahtar);
+  if (!k || !b.personel.some((p) => p.id === k.personelId && p.gorev === "ogretmen")) return "Hak ediş kaydı geçersiz.";
+  if (!b.hakedisAcik || !b.finansAcik) return "Hak ediş ve Finans modülleri açık olmalı.";
+  if (b.rol !== "genel-yonetici" && !(b.rol === "sube-muduru" && b.tamKapsam)) return "Hak edişi yalnızca yönetici düzeltir; başka şubede de çalışan öğretmende genel yönetici.";
+  if (eski.durum === "odendi") return "Ödenmiş ayda düzeltme yapılamaz.";
+  if (k.ay > b.bugun.slice(0, 7)) return "Gelecek ay düzeltilemez.";
+  if (!yeni) return null;
+  if (typeof yeni.tutar !== "number" || !tutarGecerli(Math.abs(yeni.tutar))) return "Düzeltme tutarı sıfırdan farklı, kuruş hassasiyetinde olmalı.";
+  const neden = typeof yeni.neden === "string" ? yeni.neden.trim() : "";
+  if (neden.length < 3) return "Düzeltme gerekçesi en az 3 karakter olmalı.";
+  if (neden.length > ACIKLAMA_UZUNLUK) return `Gerekçe en fazla ${ACIKLAMA_UZUNLUK} karakter olabilir.`;
+  return null;
 }
 
 export type DurumBaglami = {

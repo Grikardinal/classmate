@@ -54,6 +54,11 @@ Sunucu denetimi: `app/server/politika.ts · yoklamaDenetle`; veli izni: `app/ser
 
 **Görünürlük:** Şube kapsamı `yazmaDenetle` / `okumaSuz` içindedir. Öğretmene yalnızca kendi gruplarının yoklaması ve velilerin izinleri gider.
 
+**Yedek öğretmen (karar 2026-11-09)**
+- Yedek atanmış oturumun yoklamasını yalnızca yedek (ve yönetici) alır; asıl öğretmen alamaz. 7 gün kuralı aynıdır.
+- `yoklamaDenetle` `ogretmenId` alanını yedekten yazar; hak ediş buna dayanır.
+- Yedeğe öğrencinin yalnızca adı, veli bağı ve maskeli veli gider; doğum, okul, sağlık ve personel notu, izin notu gitmez.
+
 ## Testler
 `npx vitest run src/bolumler/07-yoklama`. Oturum gerçekliği, tarihe göre grup, kim-ne zaman, durum ve öğrenci doğrulaması, bildirim tekrarı, izin, rapor; sunucuda yetki, şube, devreden öğretmen, alan temizliği, satır birleştirme, SMS izni, izin görünürlüğü. Tarihler sabittir, gerçek saate bağlı değildir.
 

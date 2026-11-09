@@ -4,7 +4,7 @@ import { Menu, Moon, Sun, X, Building, ChevronDown, CalendarClock, KeyRound, Log
 import { Logo } from "@/components/brand/Logo";
 import { Button, Select, Toaster } from "@/components/ui";
 import { useApp, useOturum } from "@/context/AppContext";
-import { bolumler } from "@/bolumler/registry";
+import { bolumler, hakEdisimMenu } from "@/bolumler/registry";
 import { BUGUN, SIMDI, rolAdlari, useDb } from "@/data/store";
 import { cn } from "@/lib/utils";
 import { ParolaDegistir, cikisYap } from "./Giris";
@@ -21,8 +21,8 @@ const grupRenk: Record<(typeof gruplar)[number], string> = {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { moduller } = useApp();
-  const { yetki } = useOturum();
-  const gorunen = bolumler.filter((b) => (!b.modul || moduller[b.modul]) && yetki(b.kod));
+  const { yetki, ogretmenMi } = useOturum();
+  const gorunen = [...bolumler.filter((b) => (!b.modul || moduller[b.modul]) && yetki(b.kod)), ...(ogretmenMi && moduller.hakedis ? [hakEdisimMenu] : [])];
 
   return (
     <nav className="no-scrollbar flex h-full flex-col gap-5 overflow-y-auto px-3 py-5">

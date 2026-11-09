@@ -7,9 +7,10 @@ import { BUGUN, dersAdi, derslikAdi, grup, grupEtiket, guncelle, islemYaz, perso
 import { haftaGunu, tarihEkle } from "@/lib/kurallar";
 import { pasifEki, secilebilirTanimlar, tanimAktif } from "@/bolumler/01-kurum-yapisi/kurallar";
 import { bildirimGrubaDersDegisikligi, tarihKisa } from "./ortak";
+import { YedekAtamaAlani } from "./YedekAtamaAlani";
 import { OGRETMEN_SECILMELI, bransDisiAtayabilir, bransDisiOgretmenler, degisiklikDenetle, enErkenGecerlilik, programDegistir, uygunOgretmenler } from "./kurallar";
 
-export function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: ProgramSatiri; gun: number; saatId: string; grupId: string; onClose: () => void }) {
+export function DersDialog({ satir, gun, saatId, grupId, hafta, onClose }: { satir?: ProgramSatiri; gun: number; saatId: string; grupId: string; hafta?: string; onClose: () => void }) {
   const d = useDb();
   const { ad, rol } = useOturum();
   const yonetici = bransDisiAtayabilir(rol);
@@ -141,6 +142,7 @@ export function DersDialog({ satir, gun, saatId, grupId, onClose }: { satir?: Pr
           </Alert>
         );
       })}
+      {satir && yonetici && hafta && <YedekAtamaAlani satir={satir} tarih={tarihEkle(hafta, gun - 1)} />}
       {satir && <Checkbox checked={form.bildir} onChange={(v) => setForm({ ...form, bildir: v })} label="Grup velilerine değişiklik bildirimi gönder" />}
     </Dialog>
   );

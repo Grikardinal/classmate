@@ -141,7 +141,7 @@ export function HaftalikProgram() {
             : "Programı yalnızca yönetim düzenleyebilir."}
         </p>
       )}
-      {duzenle && <DersDialog {...duzenle} onClose={() => setDuzenle(null)} />}
+      {duzenle && <DersDialog {...duzenle} hafta={hafta} onClose={() => setDuzenle(null)} />}
     </div>
   );
 }

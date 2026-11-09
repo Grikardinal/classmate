@@ -39,7 +39,7 @@ Hak ediş ayrı modül anahtarıyla açılır. Finans kapalıyken yalnızca ders
 - Yoklama düzeltmesi yalnızca öğrenci durumlarını değiştirir; ders sayısını değiştirmez.
 - Etüt (karar 2026-11-08): kurum ayarı `Kurum.etutDersUcreti`, varsayılan 0, yalnızca genel yönetici değiştirir. Yalnızca "yapıldı" randevu sayılır; `sonuclar` varsa en az bir öğrenci gelmiş olmalı. Sonuç düzeltmesi hesaba kendiliğinden yansır. Ücret tüm ücret tiplerine eklenir.
 - Tutarlar kuruş tamsayısıyla hesaplanır; şube payları toplama tam eşittir. Sabit maaş ana şubeye, ders ücreti dersin şubesine, etüt randevunun şubesine yazılır.
-- Avans kendi şubesinin payından düşülür, artarsa diğer şubelerden. Finans gideri iptal edilen avans düşülmez.
+- Avans kendi şubesinin payından düşülür, artarsa diğer şubelerden; hak edişi aşan kısım sonraki aya devreder. Finans gideri iptal edilen avans düşülmez.
 - Akış: yok → onaylandı → ödendi, geri dönüş yok. Onay ay bitince verilir. Çok şubeli öğretmeni genel yönetici onaylar. Ödemeyi yalnızca genel yönetici işaretler.
 - Ödeme giderleri sunucuda hesaplanan şube dağılımıyla karşılaştırılır; uyuşmazsa reddedilir.
 - Pasif veya henüz başlamamış öğretmen için o ayda dersi yoksa satır (ve sabit maaş) çıkmaz.
@@ -51,17 +51,19 @@ Hak ediş ayrı modül anahtarıyla açılır. Finans kapalıyken yalnızca ders
 ## Bilinen sınırlar
 - Modelde TC, IBAN, ayrılış tarihi ve personel izni yok; bu yüzden ilgili kurallar da yok.
 - Ders ücreti şubeye göre farklılaşmıyor (gereksinimde "olabilir" deniyor).
-- Yedek öğretmen için ayrı oturum ataması yok; yoklama program satırındaki öğretmene yazılır.
+- Ödenmiş aydan sonra iptal edilen avans, donmuş devri geriye dönük değiştirmez.
 - Kart görevi değişince hesabın rolü ve şube kapsamı kendiliğinden değişmez (Bölüm 02 ekranından yapılır).
 - Grup rehberliği pasife almayı engellemez.
 - Toplu personel içe aktarmada (Bölüm 14) ekran denetimi kurum genelini görmez; sunucu yinelenen satırda bütün paketi reddeder.
 - Tek maaş ödemesi olan şubede sekreter gider tutarından kişiyi tahmin edebilir.
 
 ## Açık sorular
-1. **Ödenmiş aya sonradan gelen değişiklik:** Geç girilen yoklama veya etüt düzeltmesi ödenmiş ayın ekrandaki tutarını değiştirir, gider değişmez. Öneri: ödeme anında tutarı dondurup farkı sonraki aya "düzeltme" satırı olarak taşımak.
-2. **Fazla avans:** Avans hak edişi aşarsa ödenecek eksi görünür, fark sonraki aya taşınmaz. Öneri: farkı otomatik sonraki aya devretmek.
-3. **Ödeme gideri iptal edilirse:** Durum "ödendi" kalır. Öneri: gider iptalinde durumu "onaylandı"ya döndürmek.
-4. **Sabit maaşlı öğretmene etüt ücreti:** Şimdilik her ücret tipine ekleniyor. Öneri: ek iş sayıldığı için böyle kalsın; istenmezse tek satırla sabit tip hariç tutulur.
-5. **Ay ortasında başlayan veya ayrılan sabit maaşlı:** Tam ay yazılıyor. Öneri: gün oranlaması yerine genel yöneticinin elle düzeltebileceği bir alan.
-6. **Öğretmenin kendi hak edişini görmesi:** Şu an ekran yalnızca yöneticilerde; öğretmen sadece kendi ücret alanlarını ve avansını alır. Öneri: öğretmene salt okunur "Hak edişim" görünümü.
-7. **Yedek öğretmene ödeme:** Öneri: oturum bazlı yedek ataması eklenip yoklama `ogretmenId` alanının ona yazılması.
+- **Sabit maaşlı öğretmene etüt ücreti:** Ek iş sayılır, her ücret tipine eklenir (karar 2026-11-09, değişiklik yok).
+
+## Kapandı (2026-11-09)
+1. **Ödenmiş aya sonradan gelen değişiklik:** Ödemede tutar, ders ve etüt sayısı, birim ücretler sunucuda `hakedisDurum[...].donmus` alanına yazılır; ekran donmuş tutarı gösterir. Sonradan doğan fark ödeme anındaki birimle hesaplanır, sonraki ilk ödenmemiş aya "önceki ay farkı" olarak girer; `aktarilan` iki kez sayılmayı önler. Dondurulmamış eski satırda fark yoktur.
+2. **Fazla avans:** Ayın hak edişini aşan avans (ve net eksiye düşüren negatif fark veya düzeltme) sonraki aya devreder; net eksi çıkmaz. Pasif öğretmende kalan devir görünür kalır.
+3. **Ödeme gideri iptali:** `personelDenetle` hak edişi "onaylandı"ya döndürür, donmuş tutarı siler, aktarılan farkı geri açar. Ödemenin diğer şube giderleri aynı gerekçeyle birlikte iptal olur; kapsam dışı gider varsa müdür iptal edemez, genel yönetici yapar.
+5. **Ay ortası sabit maaş:** Oranlama yok. Yönetici (çok şubeli öğretmende genel yönetici) ay için işaretli tutar ve en az 3 karakter gerekçe girer; kim ve ne zaman sunucudan, "Hak ediş düzeltmesi" işlem kaydına yazılır, ödenmiş ayda yapılamaz.
+6. **Hak edişim:** Öğretmene salt okunur `/hak-edisim` sayfası. Veri `okumaSuz` içinde sunucuda hesaplanır (`Db.hakedisim`), koleksiyon değildir, geri yazılamaz; etüt ücreti ve gider gitmez.
+7. **Yedek öğretmen:** Oturum bazlı atama (`yedekAtamalari`, Bölüm 06). Yoklamadaki `ogretmenId` yedekten yazılır, ders hak edişte yedeğe sayılır.

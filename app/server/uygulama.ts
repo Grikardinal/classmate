@@ -82,7 +82,7 @@ function bosKurulum(): Db {
     gruplar: [],
     personel: [yonetici],
     kullanicilar: [{ id: "u0", personelId: "p0", rol: "genel-yonetici", subeIds: "all", eposta, aktif: true, sonGiris: null, ikiAdim: false }],
-    girisler: [], veliler: [], ogrenciler: [], kayitlar: [], program: [], tatiller: [], iptaller: [], yoklamalar: {}, izinler: [], adaylar: [],
+    girisler: [], veliler: [], ogrenciler: [], kayitlar: [], program: [], tatiller: [], iptaller: [], yedekAtamalari: [], yoklamalar: {}, izinler: [], adaylar: [],
     odevler: [], musaitlikler: [], randevular: [], paketler: [], gonderimler: [], duyurular: [], taksitler: [], tahsilatlar: [], giderler: [],
     virmanlar: [], iadeler: [], islemler: [], iceAktarmalar: [], kvkk: [], avanslar: [], hakedisDurum: {}, otomasyon: {},
     olaylar: varsayilanOlaylar.map((o) => ({ ...o })),

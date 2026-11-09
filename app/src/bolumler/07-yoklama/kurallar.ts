@@ -4,10 +4,10 @@
  * Sunucu da içe aktardığı için burada yalnızca göreli içe aktarma kullanılır.
  * Hata dönen fonksiyonlar Türkçe mesaj, sorun yoksa null döndürür.
  */
-import type { Db, Gonderim, Iptal, Kayit, Ogrenci, Oturum, ProgramSatiri, Rol, Tatil, Yoklama } from "../../data/model";
+import type { Db, Gonderim, Iptal, Kayit, Ogrenci, Oturum, ProgramSatiri, Rol, Tatil, YedekAtama, Yoklama } from "../../data/model";
 import { dakika, haftaBasi, haftaGunu, tarihEkle, yoklamaGecikti, type YoklamaDurumu } from "../../lib/kurallar";
 import type { Hata } from "../01-kurum-yapisi/kurallar";
-import { oturumKimligi, satirGecerliMi, tarihGecerli } from "../06-ders-programi/kurallar";
+import { oturumKimligi, oturumYedegi, satirGecerliMi, tarihGecerli, type YedekVerisi } from "../06-ders-programi/kurallar";
 
 export const YOKLAMA_DURUMLARI: YoklamaDurumu[] = ["geldi", "gelmedi", "gec", "izinli"];
 export const KONU_UZUNLUK = 200;
@@ -23,8 +23,8 @@ export const yoklamaYoneticisi = (rol: Rol) => rol === "genel-yonetici" || rol =
 
 /* ---------- Oturumun gerçekliği ---------- */
 
-export type OturumGercegi = { satir: ProgramSatiri; tarih: string; bas: string; bit: string; subeId: string; iptal: Iptal | null; tatil: Tatil | null };
-type OturumVerisi = Pick<Db, "program" | "gruplar" | "dersSaatleri" | "sezonlar" | "iptaller" | "tatiller">;
+export type OturumGercegi = { satir: ProgramSatiri; tarih: string; bas: string; bit: string; subeId: string; iptal: Iptal | null; tatil: Tatil | null; yedek: YedekAtama | null };
+type OturumVerisi = Pick<Db, "program" | "gruplar" | "dersSaatleri" | "sezonlar" | "iptaller" | "tatiller"> & YedekVerisi;
 
 /** Kimlik gerçek bir oturuma karşılık geliyor mu: satır var, gün tutuyor, satır yürürlükte, sezon içinde */
 export function yoklamaOturumu(d: OturumVerisi, oturumId: unknown): OturumGercegi | null {
@@ -41,6 +41,7 @@ export function yoklamaOturumu(d: OturumVerisi, oturumId: unknown): OturumGerceg
     satir, tarih: k.tarih, bas: h.baslangic, bit: h.bitis, subeId: g.subeId,
     iptal: d.iptaller.find((i) => i.oturumId === oturumId) ?? null,
     tatil: d.tatiller.find((t) => t.tarih === k.tarih && (!t.subeId || t.subeId === g.subeId)) ?? null,
+    yedek: oturumYedegi(d, String(oturumId)) ?? null,
   };
 }
 
@@ -97,7 +98,7 @@ export function yoklamaYazmaEngeli(y: Yoklama, eski: Yoklama | undefined, d: Yaz
   const o = yoklamaOturumu(d, y.oturumId);
   if (!o) return "Bu tarihte böyle bir ders yok.";
   if (y.grupId !== o.satir.grupId) return "Yoklama oturumu hatalı.";
-  if (b.rol === "ogretmen" && o.satir.ogretmenId !== b.personelId) return "Yalnızca kendi dersinizin yoklamasını alabilirsiniz.";
+  if (b.rol === "ogretmen" && (o.yedek?.ogretmenId ?? o.satir.ogretmenId) !== b.personelId) return "Yalnızca kendi dersinizin yoklamasını alabilirsiniz.";
   // Yoklaması alınmış derse sonradan tatil / iptal eklenemez (Bölüm 06); yalnızca ilk kayıt denetlenir, eski kayıt düzeltilebilir kalır
   if (!eski && o.tatil) return "Bu tarih tatil; yoklama alınamaz.";
   if (!eski && o.iptal) return "İptal edilen dersin yoklaması alınamaz.";

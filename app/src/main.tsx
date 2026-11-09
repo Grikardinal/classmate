@@ -21,6 +21,7 @@ const VeliPortali = React.lazy(() => import("@/bolumler/11-veli-portali"));
 const VeliPortaliUygulamasi = React.lazy(() => import("@/bolumler/11-veli-portali").then((m) => ({ default: m.VeliPortaliUygulamasi })));
 const YonetimPaneli = React.lazy(() => import("@/bolumler/12-yonetim-paneli"));
 const Personel = React.lazy(() => import("@/bolumler/13-personel"));
+const HakEdisim = React.lazy(() => import("@/bolumler/13-personel/HakEdisim"));
 const Altyapi = React.lazy(() => import("@/bolumler/14-altyapi"));
 
 function Yukleniyor() {
@@ -58,6 +59,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="iletisim" element={<Korumali kod="10"><Iletisim /></Korumali>} />
             <Route path="veli-portali" element={<Korumali kod="11"><VeliPortali /></Korumali>} />
             <Route path="personel" element={<Korumali kod="13"><Personel /></Korumali>} />
+            <Route path="hak-edisim" element={<HakEdisim />} />
             <Route path="altyapi" element={<Korumali kod="14"><Altyapi /></Korumali>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

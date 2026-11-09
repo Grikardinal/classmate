@@ -3,11 +3,12 @@
  * Örnek veri üzerinde istemcinin göndereceği değişiklik paketleriyle sınanır.
  */
 import { describe, expect, it } from "vitest";
-import { ornekVeriUret, type Db, type ProgramSatiri, type Yoklama } from "@/data/model";
+import { oturumlar, ornekVeriUret, type Db, type ProgramSatiri, type Yoklama } from "@/data/model";
+import { haftaGunu, tarihEkle } from "@/lib/kurallar";
 import { farkHesapla, farkUygula } from "@/data/fark";
 import { YetkiHatasi, okumaSuz, yazmaDenetle, type Aktor } from "../../../server/politika";
 import { otomasyonlariCalistir } from "../../../server/zamanlayici";
-import { programDegistir } from "./kurallar";
+import { ogretmenGruplariHesapla, oturumYedegi, programDegistir, programYazmaEngeli, yedekAtamaEngeli, yedekErisimi } from "./kurallar";
 
 const BUGUN = "2026-11-09";
 const ZAMAN = `${BUGUN}T10:00`;
@@ -218,5 +219,92 @@ describe("kararlar 2026-11-08", () => {
   });
   it("sezonu sürerken otomasyon programa dokunmaz", () => {
     expect(otomasyonlariCalistir(db).program).toBe(db.program);
+  });
+});
+
+describe("oturum bazlı yedek öğretmen (karar 2026-11-09)", () => {
+  const YBUGUN = "2026-11-09";
+  const YZAMAN = `${YBUGUN}T10:00`;
+  const h = ornekVeriUret();
+  const asil = h.program.find((p) => p.ogretmenId === "p4")!;
+  const tarih = (() => { let t = YBUGUN; while (haftaGunu(t) !== asil.gun) t = tarihEkle(t, 1); return t; })();
+  const oturum = `${asil.id}_${tarih}`;
+  const gecmisT = tarihEkle(tarih, -7);
+  const k: Db = { ...h, program: h.program.map((p) => ({ ...p, baslangic: "2026-09-01" })), tatiller: [], iptaller: [], randevular: [], yoklamalar: {}, yedekAtamalari: [] };
+  const a = (kid: string): Aktor => { const kullanici = k.kullanicilar.find((x) => x.id === kid)!; return { kullanici, personel: k.personel.find((p) => p.id === kullanici.personelId)! }; };
+  const ogretmen = (pid: string) => a(k.kullanicilar.find((x) => x.personelId === pid)!.id);
+  const satirSaat = k.dersSaatleri.find((x) => x.id === asil.saatId)!;
+  // Aynı saatte dersi olmayan, s1'de görevli aktif öğretmen
+  const bos = k.personel.find((p) => p.gorev === "ogretmen" && p.aktif && p.id !== "p4" && p.subeIds.includes("s1") && !k.program.some((x) => x.ogretmenId === p.id && x.gun === asil.gun && x.saatId === asil.saatId))!;
+  const yedek = (o = oturum, ogretmenId = bos.id) => ({ oturumId: o, ogretmenId, atayan: "sahte", zaman: "x" });
+  const yaz = (fn: (x: Db) => void, aktor: Aktor, kaynak: Db = k) => {
+    const t = { ...kaynak, yedekAtamalari: [...kaynak.yedekAtamalari], program: [...kaynak.program] } as Db;
+    fn(t);
+    const f = farkHesapla(kaynak, t);
+    return () => yazmaDenetle(kaynak, farkUygula(kaynak, f), f, aktor, YZAMAN);
+  };
+  const reddedilir = (f: () => unknown, m: RegExp) => expect(f).toThrow(m);
+  const ata = (y = yedek(), aktor = a("u0"), kaynak: Db = k) => yaz((x) => x.yedekAtamalari.push(y), aktor, kaynak);
+
+  it("yönetici atar; atayan ve zaman sunucudan", () => {
+    expect(ata()().koleksiyonlar.yedekAtamalari!.yaz[0]).toMatchObject({ oturumId: oturum, ogretmenId: bos.id, atayan: "Ahmet Er", zaman: YZAMAN });
+    expect(ata(yedek(), a("u1"))).not.toThrow();
+  });
+  it("öğretmen ve sekreter atayamaz", () => {
+    expect(ata(yedek(), ogretmen("p4"))).toThrow();
+    expect(ata(yedek(), a(k.kullanicilar.find((x) => x.rol === "sekreter")!.id))).toThrow();
+  });
+  it("başka şubenin dersine atanamaz (kapsam)", () => expect(ata(yedek(), a(k.kullanicilar.find((x) => x.rol === "sube-muduru" && x.subeIds !== "all" && !x.subeIds.includes("s1"))!.id))).toThrow(/kapsam/));
+  it("geçmiş tarih, asıl öğretmen, olmayan oturum, pasif ve başka şubeli öğretmen reddedilir", () => {
+    reddedilir(ata(yedek(`${asil.id}_${gecmisT}`)), /Geçmiş/);
+    reddedilir(ata(yedek(oturum, "p4")), /asıl/);
+    reddedilir(ata(yedek(`${asil.id}_${tarihEkle(tarih, 1)}`)), /böyle bir ders/);
+    reddedilir(ata(yedek(), a("u0"), { ...k, personel: k.personel.map((p) => (p.id === bos.id ? { ...p, aktif: false } : p)) }), /pasif/);
+    reddedilir(ata(yedek(), a("u0"), { ...k, personel: k.personel.map((p) => (p.id === bos.id ? { ...p, subeIds: ["s9"], anaSubeId: "s9" } : p)) }), /şubede/);
+  });
+  it("branş dışı atama yöneticiye açık", () => {
+    expect(yedekAtamaEngeli({ oturumId: oturum, ogretmenId: bos.id }, { ...k, personel: k.personel.map((p) => (p.id === bos.id ? { ...p, dersIds: [] } : p)) }, YBUGUN, "sube-muduru")).toBeNull();
+  });
+  it("o saatte dersi veya başka yedek görevi varsa çakışır; yedeğe devrettiği saatte serbesttir", () => {
+    const dolu = { ...k.program.find((p) => p.id !== asil.id)!, id: "cak", ogretmenId: bos.id, gun: asil.gun, saatId: asil.saatId, grupId: k.gruplar.find((g) => g.subeId === "s1" && g.id !== asil.grupId)!.id, baslangic: "2026-09-01", bitis: null };
+    const kk: Db = { ...k, program: [...k.program, dolu] };
+    reddedilir(ata(yedek(), a("u0"), kk), /dolu/);
+    expect(yedekAtamaEngeli({ oturumId: oturum, ogretmenId: bos.id }, { ...kk, yedekAtamalari: [{ oturumId: `cak_${tarih}`, ogretmenId: "p7", atayan: "", zaman: "" }] }, YBUGUN, "genel-yonetici")).toBeNull();
+    const ikinci = { ...dolu, id: "ik", ogretmenId: "p7" };
+    expect(yedekAtamaEngeli({ oturumId: `ik_${tarih}`, ogretmenId: bos.id }, { ...k, program: [...k.program, ikinci], yedekAtamalari: [yedek()] }, YBUGUN, "genel-yonetici")).toMatch(/dolu/);
+  });
+  it("etüt randevusuyla çakışır; yeni program satırı yedek göreviyle çakışır", () => {
+    const r = { ogretmenId: bos.id, tarih, bas: satirSaat.baslangic, bit: satirSaat.bitis, durum: "planli" as const };
+    expect(yedekAtamaEngeli({ oturumId: oturum, ogretmenId: bos.id }, { ...k, randevular: [r as never] }, YBUGUN, "genel-yonetici")).toMatch(/etüt/);
+    const yeni = { ...asil, id: "yn", ogretmenId: bos.id, grupId: k.gruplar.find((g) => g.subeId === "s1" && g.id !== asil.grupId && !k.program.some((p) => p.grupId === g.id && p.gun === asil.gun && p.saatId === asil.saatId))!.id, derslikId: k.derslikler.find((x) => x.subeId === "s1" && !k.program.some((p) => p.derslikId === x.id && p.gun === asil.gun && p.saatId === asil.saatId))!.id, baslangic: YBUGUN, bitis: null };
+    expect(programYazmaEngeli({ ...yeni, dersId: bos.dersIds[0] }, undefined, { ...k, yedekAtamalari: [yedek()] }, YBUGUN, { bransDisi: true })).toMatch(/dolu/);
+  });
+  it("yoklaması alınmış oturumun yedeği değişmez, kaldırılamaz; iptal ve tatil reddedilir", () => {
+    const yk = { ...k, yoklamalar: { [oturum]: { oturumId: oturum } as never }, yedekAtamalari: [yedek()] };
+    expect(yedekAtamaEngeli({ oturumId: oturum, ogretmenId: "p7" }, yk, YBUGUN, "genel-yonetici")).toMatch(/Yoklaması/);
+    reddedilir(yaz((x) => (x.yedekAtamalari = []), a("u0"), yk), /Yoklaması/);
+    expect(yedekAtamaEngeli(yedek(), { ...k, iptaller: [{ oturumId: oturum, neden: "x", tarih: YBUGUN }] }, YBUGUN, "genel-yonetici")).toMatch(/İptal/);
+    expect(yedekAtamaEngeli(yedek(), { ...k, tatiller: [{ id: "t", ad: "x", tarih, subeId: null } as never] }, YBUGUN, "genel-yonetici")).toMatch(/tatil/);
+  });
+  it("atama kaldırılabilir; veliye bildirim üretmez; oturumlar yedeği taşır", () => {
+    const kk = { ...k, yedekAtamalari: [yedek()] };
+    expect(yaz((x) => (x.yedekAtamalari = []), a("u0"), kk)).not.toThrow();
+    expect(ata()().koleksiyonlar.gonderimler).toBeUndefined();
+    const o = oturumlar(kk, tarih).find((x) => x.id === oturum)!;
+    expect([o.yedek?.ogretmenId, o.ogretmenId, o.satir.ogretmenId]).toEqual([bos.id, bos.id, "p4"]);
+  });
+  it("yedek gruba kalıcı erişim kazanmaz; erişim penceresi", () => {
+    const kk = { ...k, yedekAtamalari: [yedek()] };
+    expect(ogretmenGruplariHesapla(kk, bos.id, YBUGUN).has(asil.grupId) && !k.program.some((p) => p.ogretmenId === bos.id && p.grupId === asil.grupId)).toBe(false);
+    expect(yedekErisimi(kk, bos.id, tarihEkle(tarih, -1), 7).listeGruplari.size).toBe(0); // ders günü gelmeden öğrenci listesi yok
+    expect(yedekErisimi(kk, bos.id, tarih, 7).listeGruplari.has(asil.grupId)).toBe(true);
+    expect(yedekErisimi(kk, bos.id, tarihEkle(tarih, 8), 7).gruplar.size).toBe(0); // pencere bitti
+    expect(yedekErisimi({ ...kk, yoklamalar: { [oturum]: {} as never } }, bos.id, tarihEkle(tarih, 1), 7).gruplar.size).toBe(0); // yoklama alındı
+  });
+  it("eski veri: yedekAtamalari olmayan kayıt etkilenmez", () => {
+    expect(oturumYedegi({}, oturum)).toBeUndefined();
+    const { yedekAtamalari: _y, ...eski } = k;
+    void _y;
+    expect(oturumlar(eski as Db, tarih).find((x) => x.id === oturum)).toMatchObject({ yedek: null, ogretmenId: "p4" });
   });
 });

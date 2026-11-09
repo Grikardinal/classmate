@@ -33,7 +33,7 @@ export function YoklamaEkrani({ id, tarih, onKapat }: { id: string; tarih: strin
     let bildirilen = 0;
     const uyarilanlar: string[] = [];
     guncelle((x) => {
-      x.yoklamalar = { ...x.yoklamalar, [id]: { oturumId: id, tarih, satirId: o.satir.id, grupId: o.satir.grupId, ogretmenId: o.satir.ogretmenId, durumlar: durum, konu: konu.trim(), kayitZamani: `${BUGUN}T${SIMDI}` } };
+      x.yoklamalar = { ...x.yoklamalar, [id]: { oturumId: id, tarih, satirId: o.satir.id, grupId: o.satir.grupId, ogretmenId: o.ogretmenId, durumlar: durum, konu: konu.trim(), kayitZamani: `${BUGUN}T${SIMDI}` } };
       for (const ogrId of yeniGelmeyenler(durum, mevcut?.durumlar)) {
         // Dersin günü "bugün", 7 güne kadar geç girişte tarihli mesaj; daha eskisine mesaj gitmez
         if (olay) bildirilen += bildirimEkle(x, olay, ogrId, { saat: o.bas, ders: dersAdi(o.satir.dersId), tarih: tarihMetni(tarih) });
@@ -60,7 +60,7 @@ export function YoklamaEkrani({ id, tarih, onKapat }: { id: string; tarih: strin
       <div>
         <p className="text-sm text-muted-foreground">{tarihUzun(tarih)} · {o.bas}–{o.bit} · {derslikAdi(o.satir.derslikId)}</p>
         <h1 className="text-2xl font-semibold tracking-tight">{grupEtiket(d, o.satir.grupId)} · {dersAdi(o.satir.dersId)}</h1>
-        <p className="text-sm text-muted-foreground">{personelAdi(d, o.satir.ogretmenId)}</p>
+        <p className="text-sm text-muted-foreground">{personelAdi(d, o.ogretmenId)}{o.yedek ? " (yedek)" : ""}</p>
       </div>
 
       {kilit && <Alert tone="warning" icon={<AlertTriangle />}>{kilit}</Alert>}

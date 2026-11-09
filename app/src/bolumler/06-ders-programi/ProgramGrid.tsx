@@ -112,9 +112,9 @@ export function ProgramGrid({
                     >
                       <p className="truncate font-medium">{ds.ad}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {gorunum === "grup" ? personelAdi(d, satir.ogretmenId) : grupEtiket(d, satir.grupId)}
+                        {gorunum === "grup" ? `${personelAdi(d, oturum?.ogretmenId ?? satir.ogretmenId)}${oturum?.yedek ? " (yedek)" : ""}` : grupEtiket(d, satir.grupId)}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">{gorunum === "grup" ? derslikAdi(satir.derslikId) : personelAdi(d, satir.ogretmenId)}</p>
+                      <p className="truncate text-xs text-muted-foreground">{gorunum === "grup" ? derslikAdi(satir.derslikId) : `${personelAdi(d, oturum?.ogretmenId ?? satir.ogretmenId)}${oturum?.yedek ? " (yedek)" : ""}`}</p>
                       {(oturum?.iptal || tatil) && (
                         <span className="absolute right-1 top-1 rounded bg-danger px-1 text-[10px] font-medium text-white">{tatil ? "Tatil" : "İptal"}</span>
                       )}
