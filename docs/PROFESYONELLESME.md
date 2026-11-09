@@ -133,7 +133,7 @@ Bölümler **sırayla** ele alınır: bir bölüm bitip kontrol edilmeden sonrak
 ### Yayın bilgileri
 - Canlı adres: https://classmatekurs.app (Render hizmeti `classmate-demo`, alan adı ve DNS Vercel `grikardinal` ekibinde)
 - Tanıtım filmi: `app/public/tanitim.mp4`. Kaynak kod ve müzik depoda değil, `D:\classmate-alternatif-video` klasöründe; paketleri `D:\Remotion` üzerinden kullanır. Yapımcı adı veya içerik değişirse oradan yeniden üretilir.
-- Fiyatlar (yıllık, KDV dahil): 1 şube 24.000 ₺, 2 şube 42.000 ₺, 3 şube 57.000 ₺, sonraki her şube +15.000 ₺ (`app/src/tanitim/fiyat.ts`)
+- Fiyatlar (KDV dahil): yıllık 1 şube 24.000 ₺, 2 şube 42.000 ₺, 3 şube 57.000 ₺, sonraki her şube +15.000 ₺; aylık 2.400 / 4.200 / 5.700 ₺, sonraki her şube +1.500 ₺, asgari süre yok; yıllık alım 2 ay bedava (`app/src/tanitim/fiyat.ts`)
 
 ## Kontrol komutları (`app/` içinde)
 - `npm run check` — hepsini sırayla çalıştırır
