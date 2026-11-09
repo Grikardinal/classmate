@@ -65,7 +65,13 @@ export default function Tanitim() {
             </div>
           </section>
 
-          <section id="ozellikler" className="mx-auto max-w-6xl scroll-mt-6 px-4 py-14 sm:px-6">
+          <section aria-label="Tanıtım filmi" className="mx-auto max-w-4xl px-4 pb-10 sm:px-6">
+            <video className="aspect-video w-full rounded-2xl border bg-black shadow-glow" src="/tanitim.mp4" controls muted playsInline preload="metadata">
+              Tarayıcınız video oynatmayı desteklemiyor.
+            </video>
+          </section>
+
+          <section id="ozellikler"className="mx-auto max-w-6xl scroll-mt-6 px-4 py-14 sm:px-6">
             <h2 className="text-center font-display text-3xl font-extrabold tracking-tight">Kurumunuzun ihtiyaç duyduğu modüller</h2>
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {ozellikler.map(({ ikon: Ikon, ad, metin }) => (

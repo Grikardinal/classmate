@@ -172,7 +172,7 @@ describe("kapsam dışındaki şubeye devir (karar 2026-11-07)", () => {
     expect(okumaSuz(sonraki, MURAT).adaylar.some((x) => x.id === s1Acik.id)).toBe(true);
   });
   it("devirle aynı pakette başka alan değiştirilemez, not silinemez", () => {
-    reddedilir(dene(devret(s1Acik.id, "s2", { kaynak: "Google" }), GUL), /diğer bilgileri/);
+    reddedilir(dene(devret(s1Acik.id, "s2", { kaynak: `${s1Acik.kaynak} değişti` }), GUL), /diğer bilgileri/);
     reddedilir(dene(devret(s1Acik.id, "s2", { notlar: [] }), GUL), /notları/);
   });
   it("pasif şubeye, kayda dönmüş veya başka şubenin adayı devredilemez", () => {
